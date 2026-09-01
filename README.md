@@ -1,4 +1,3 @@
-HEAD
 # BreakRank
 
 # BreakRank
@@ -99,4 +98,4 @@ redistributed. This project is MIT licensed — see [LICENSE](LICENSE).
 ---
 
 Final-year AI/ML project · 2 people · built Aug 2026 – Apr 2027
-origin/main
+
