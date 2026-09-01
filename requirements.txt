@@ -1,0 +1,24 @@
+# BreakRank — ML pipeline dependencies
+# Install with:  pip install -r requirements.txt
+#
+# Versions are pinned with >= so you get current releases, but the code in
+# ml/ was tested against the versions in the comments (September 2026).
+
+griffe>=2.2.0            # API extraction + breaking-change detection (tested: 2.2.0)
+httpx>=0.27              # HTTP client for PyPI + GitHub
+tenacity>=8.2            # retry/backoff on flaky downloads
+packaging>=24.0          # correct version-number parsing and sorting
+
+pandas>=2.2              # dataframes
+numpy>=1.26              # arrays
+scikit-learn>=1.4        # metrics, calibration, preprocessing
+lightgbm>=4.3            # the model (macOS: needs `brew install libomp` first)
+matplotlib>=3.8          # evaluation plots
+
+pytest>=8.0              # tests
+python-dotenv>=1.0       # load .env locally
+
+# Added later in the project — uncomment when you get to them:
+# sentence-transformers>=3.0   # week 5, changelog text features
+# sqlalchemy>=2.0              # week 2+, Postgres access
+# psycopg[binary]>=3.1         # Postgres driver
