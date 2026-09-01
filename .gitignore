@@ -1,0 +1,34 @@
+# Data — never commit
+data/
+*.csv
+*.tar.gz
+*.zip
+!tests/fixtures/*.csv
+!data/.gitkeep
+
+# Models — only the current one
+artifacts/*
+!artifacts/ranker.txt
+!artifacts/.gitkeep
+
+# Secrets
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+.next/
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
