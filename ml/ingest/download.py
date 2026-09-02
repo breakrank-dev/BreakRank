@@ -92,10 +92,15 @@ def download_and_extract(url: str, dest: pathlib.Path) -> pathlib.Path | None:
         return None
     root = roots[0]  # sdists unpack into a single folder like click-8.2.0/
 
-    # Two common layouts:
+    # Three layouts in the wild, and you have to check for all of them:
     #   click-8.2.0/src/click/__init__.py   ->  search path is .../src
+    #   PyYAML-6.0.2/lib/yaml/__init__.py   ->  search path is .../lib
     #   six-1.16.0/six.py                   ->  search path is the root itself
-    return root / "src" if (root / "src").is_dir() else root
+    for nested in ("src", "lib"):
+        candidate = root / nested
+        if candidate.is_dir() and any(candidate.iterdir()):
+            return candidate
+    return root
 
 
 if __name__ == "__main__":

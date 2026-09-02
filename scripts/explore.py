@@ -18,7 +18,11 @@ import sys
 
 import pandas as pd
 
-CSV = pathlib.Path("data/day1_changes.csv")
+# Prefer the full pipeline's output; fall back to the day-1 sample.
+# Override with:  python scripts/explore.py --csv data/whatever.csv
+CANDIDATES = [pathlib.Path("data/changes.csv"),
+              pathlib.Path("data/day1_changes.csv")]
+CSV = next((p for p in CANDIDATES if p.exists()), CANDIDATES[0])
 
 # Plain-English meaning of each column, printed by the `row` view.
 COLUMNS = {
@@ -47,7 +51,12 @@ KIND_MEANING = {
     "ATTRIBUTE_CHANGED_TYPE": "A class attribute's declared type changed.",
     "RETURN_CHANGED_TYPE": "What the function gives back changed type.",
     "OBJECT_CHANGED_KIND": "A function became a class, or similar.",
+    "ATTRIBUTE_CHANGED_TYPE": "A class attribute's declared type changed.",
+    "CLASS_REMOVED_BASE": "A class stopped inheriting from something. "
+                          "isinstance() checks can start returning False.",
 }
+# All twelve kinds griffe can report are covered above. If a new one appears,
+# griffe added it — look it up rather than leaving the row unexplained.
 
 
 def load() -> pd.DataFrame:
@@ -88,7 +97,44 @@ def overview(df: pd.DataFrame) -> None:
     print(f"Everything else — {len(df) - len(serious)} rows — is mostly noise.")
     print("Separating those two groups automatically IS this project.")
     print("-" * 66)
+
+    concentration(df)
     print("\nNext:  python scripts/explore.py removed")
+
+
+def concentration(df: pd.DataFrame) -> None:
+    """
+    Is one package (or one upgrade) drowning out everything else?
+
+    Check this EVERY time before you believe any percentage above. On a
+    50-package run, pandas 2.3.3 -> 3.0.0 alone was 73% of all rows — so
+    "27% of changes are removals" was really "27% of pandas 3.0 is
+    removals", which is a different and much less interesting claim.
+    """
+    pkg = df["package"].value_counts()
+    top_pkg, top_n = pkg.index[0], pkg.iloc[0]
+    share = top_n / len(df)
+
+    print("\n" + "-" * 66)
+    print("CONCENTRATION CHECK")
+    print("-" * 66)
+    print(f"  {df['package'].nunique()} packages, median {pkg.median():.0f} rows each")
+    print(f"  Biggest: {top_pkg} with {top_n:,} rows = {share:.0%} of everything")
+
+    if {"version_from", "version_to"} <= set(df.columns):
+        pairs = df.groupby(["package", "version_from", "version_to"]).size()
+        (p, vf, vt), n = pairs.idxmax(), pairs.max()
+        print(f"  Biggest single upgrade: {p} {vf} -> {vt}, "
+              f"{n:,} rows = {n / len(df):.0%}")
+
+    if share > 0.30:
+        print(f"\n  ** {top_pkg} is {share:.0%} of your data. **")
+        print("  Any percentage printed above is mostly a fact about that one")
+        print("  package, not about Python. Train on this as-is and you get a")
+        print(f"  {top_pkg} model. Fixes: more packages, cap rows per upgrade,")
+        print("  or compute every metric per-release instead of pooled.")
+    else:
+        print("\n  No single package dominates. Percentages above are trustworthy.")
 
 
 def removed(df: pd.DataFrame) -> None:
