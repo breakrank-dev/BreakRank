@@ -99,3 +99,12 @@ redistributed. This project is MIT licensed — see [LICENSE](LICENSE).
 
 Final-year AI/ML project · 2 people · built Aug 2026 – Apr 2027
 
+## Deployment
+
+- Frontend: Vercel
+- API: Render (free tier)
+
+Originally planned for Hugging Face Spaces. Hugging Face moved the Docker
+SDK to a paid plan in July 2026, so the API was migrated to Render.
+A Dockerfile is retained in `api/` for local container runs and portability.
+
