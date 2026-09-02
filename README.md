@@ -1,5 +1,7 @@
 # BreakRank
 
+# BreakRank
+
 **Ranks Python dependency breaking changes by real-world impact.**
 
 Rule-based tools flag around 200 API changes per major release and about five
@@ -96,3 +98,4 @@ redistributed. This project is MIT licensed — see [LICENSE](LICENSE).
 ---
 
 Final-year AI/ML project · 2 people · built Aug 2026 – Apr 2027
+
