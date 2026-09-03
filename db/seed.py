@@ -1,6 +1,7 @@
 """Insert fake data so API endpoints can be built and tested.
 NOT real data. Delete before the demo."""
 import sys
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,15 +56,15 @@ def main():
                 text("""
                     INSERT INTO breakage
                         (release_id, symbol_path, kind, is_private,
-                         module_depth, is_top_level, in_dunder_all, explanation)
-                    VALUES (:r, :s, :k, :priv, :depth, :top, TRUE, :expl)
+                         module_depth, is_top_level, in_dunder_all, detail)
+                    VALUES (:r, :s, :k, :priv, :depth, :top, TRUE, :detail)
                     ON CONFLICT (release_id, symbol_path, kind) DO NOTHING
                 """),
                 {
                     "r": rel_id, "s": symbol, "k": kind, "priv": private,
                     "depth": symbol.count("."),
                     "top": symbol.count(".") <= 1,
-                    "expl": f"{symbol} was removed in this release.",
+                    "detail": json.dumps({"griffe_message": f"{symbol} was removed."}),
                 },
             )
 
