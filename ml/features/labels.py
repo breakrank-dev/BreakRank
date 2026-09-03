@@ -47,8 +47,27 @@ def root_leaf(symbol: str) -> tuple[str, str]:
     return parts[0], parts[-1]
 
 
+def _is_dunder_part(p: str) -> bool:
+    return p.startswith("__") and p.endswith("__") and len(p) > 4
+
+
 def add_labels(changes: pd.DataFrame, usage: pd.DataFrame) -> pd.DataFrame:
     df = changes.copy()
+
+    # --- corrected privacy flags (settled by data on Day 3) ---------------
+    # The ingest-time is_private flagged ANY leading underscore, which
+    # lumped __version__-style dunders in with true _internals. Measured:
+    # every one of the 161 private-flagged positives was a dunder, and the
+    # true-private list was empty. So split the confused flag into two
+    # honest ones, derived here from the symbol so no re-ingest is needed:
+    #   is_private -> underscore names that are NOT dunders (real internals)
+    #   is_dunder  -> __names__ (public by convention; __version__ churn)
+    parts_list = [s.split(".") for s in df["symbol"]]
+    df["is_dunder"] = [any(_is_dunder_part(p) for p in parts) for parts in parts_list]
+    df["is_private"] = [
+        any(p.startswith("_") and not _is_dunder_part(p) for p in parts)
+        for parts in parts_list
+    ]
 
     # --- exact match: the label ------------------------------------------
     exact = dict(zip(usage["symbol"], usage["user_count"]))
@@ -97,8 +116,15 @@ def sanity_report(df: pd.DataFrame) -> None:
     priv = df[df.is_private]["label"].mean() if df.is_private.any() else 0
     print("\nPrivate symbols should be NEAR ZERO. Nobody imports _internals" )
     print("on purpose, so if they show real usage, alias resolution is broken.")
-    if priv > 0.05:
+    if priv > 0.02:
         print(f"** {priv:.1%} of private-symbol rows are positive — investigate. **")
+
+    print("\nDunder (__name__) rows, tracked separately since Day 3:")
+    if df.is_dunder.any():
+        print(f"  {int(df.is_dunder.sum()):,} rows, "
+              f"{df[df.is_dunder]['label'].mean():.1%} positive — mostly "
+              f"__version__ churn: really used, rarely breaking. The model "
+              f"sees is_dunder explicitly and can learn to discount it.")
 
     print("\nMost-depended-on symbols that CHANGED (your headline examples):")
     # One symbol can appear many times — griffe emits a row per changed
