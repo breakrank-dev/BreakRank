@@ -36,6 +36,8 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
+from ml.contract import is_private_symbol  # noqa: E402  (frozen 3 Sep 2026)
+
 DATA = pathlib.Path("data")
 CHANGES = DATA / "changes.csv"
 USAGE = DATA / "usage.csv"
@@ -54,20 +56,28 @@ def _is_dunder_part(p: str) -> bool:
 def add_labels(changes: pd.DataFrame, usage: pd.DataFrame) -> pd.DataFrame:
     df = changes.copy()
 
-    # --- corrected privacy flags (settled by data on Day 3) ---------------
-    # The ingest-time is_private flagged ANY leading underscore, which
-    # lumped __version__-style dunders in with true _internals. Measured:
-    # every one of the 161 private-flagged positives was a dunder, and the
-    # true-private list was empty. So split the confused flag into two
-    # honest ones, derived here from the symbol so no re-ingest is needed:
-    #   is_private -> underscore names that are NOT dunders (real internals)
-    #   is_dunder  -> __names__ (public by convention; __version__ churn)
+    # --- privacy flags, per the frozen API contract -----------------------
+    # Day 3 settled by measurement that the original any-underscore flag was
+    # two things wearing one name (all 161 "private" positives were dunders).
+    # The API contract (change 1, 3 Sep 2026 — ml/contract.py) then froze
+    # the shared rule, which adds one twist our Day-3 fix did not have:
+    #   is_private -> any non-dunder _component, UNLESS the module's
+    #                 __all__ exports the leaf name. A package that puts
+    #                 _thing on its official signboard made it public.
+    #   is_dunder  -> __names__ (ours, internal ML feature: __version__
+    #                 churn is real usage but rarely a real break)
+    # The __all__ membership itself (in_dunder_all) is captured at ingest,
+    # because only the source on disk knows it; here we just apply it.
     parts_list = [s.split(".") for s in df["symbol"]]
     df["is_dunder"] = [any(_is_dunder_part(p) for p in parts) for parts in parts_list]
-    df["is_private"] = [
-        any(p.startswith("_") and not _is_dunder_part(p) for p in parts)
-        for parts in parts_list
-    ]
+    df["is_private"] = [is_private_symbol(s) for s in df["symbol"]]
+    if "in_dunder_all" in df.columns:
+        exported = df["in_dunder_all"].fillna(False).astype(bool)
+        df["is_private"] = df["is_private"] & ~exported
+    else:
+        print("note: this changes.csv predates the in_dunder_all column, so "
+              "the __all__ override cannot apply yet. The next "
+              "run_ingest.py --restart adds it.\n")
 
     # --- exact match: the label ------------------------------------------
     exact = dict(zip(usage["symbol"], usage["user_count"]))

@@ -12,8 +12,13 @@ Nothing here is machine learning yet. This is the machine that makes the data.
 import logging
 import pathlib
 import re
+import sys
 
 import griffe
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+
+from ml.contract import is_private_symbol  # noqa: E402  (frozen 3 Sep 2026)
 
 # griffe prints a lot of "could not resolve alias" warnings on real packages.
 # They are harmless — it just means one module referenced something it could
@@ -150,6 +155,41 @@ def load_all_modules(search_path, modules: list[str]) -> griffe.ModulesCollectio
     return loader.modules_collection
 
 
+def module_exports(mod: griffe.Module) -> set[str]:
+    """The names a module declares in __all__, as plain strings.
+
+    __all__ is a package's official signboard: "these names are my public
+    API, everything else is my business." The contract's is_private rule
+    honours it — a leading-underscore name the package explicitly exports
+    is public — so we have to read the signboard while the source is still
+    on disk. It cannot be recovered from the CSV later.
+
+    Empty set when there is no __all__, which is most packages. griffe
+    parses `__all__ = [...]` statically, without running any code; entries
+    built dynamically (`__all__ = submodule.__all__ + [...]`) come back as
+    expression objects, so take .name off anything that is not already a
+    string and drop what cannot be read statically. Missing a dynamic entry
+    makes in_dunder_all False where a human might argue True — wrong in the
+    honest direction (a public thing treated as private is hidden, not
+    invented), and recorded here so week 4 can measure it if it matters.
+    """
+    try:
+        raw = mod.exports
+    except Exception:
+        return set()
+    if not raw:
+        return set()
+    out: set[str] = set()
+    for entry in raw:
+        if isinstance(entry, str):
+            out.add(entry)
+        else:
+            name = getattr(entry, "name", None)
+            if isinstance(name, str) and name:
+                out.add(name)
+    return out
+
+
 def diff_versions(package_name: str, old_path, new_path,
                   module: str | None = None) -> list[dict]:
     """
@@ -205,6 +245,12 @@ def diff_versions(package_name: str, old_path, new_path,
     if errors and not breakages:
         raise RuntimeError("; ".join(errors))
 
+    # The OLD version's __all__ per top-level module — old because that is
+    # the version the changed symbol lived in. Keyed by module name, which
+    # is the first part of every symbol path that module's diff produces.
+    exports_by_root = {m: module_exports(old_col[m])
+                       for m in modules if m in old_col}
+
     rows = []
     for b in breakages:
         symbol = b.obj.path              # e.g. "click.decorators.HelpOption"
@@ -218,6 +264,11 @@ def diff_versions(package_name: str, old_path, new_path,
         if any(p == "tests" or p.startswith("test_") for p in parts):
             continue
 
+        # An alias can resolve into a sibling module (attrs.field lives in
+        # attr._make), so look the signboard up by the symbol's OWN root.
+        # A root we never loaded gets an empty set — no override, honestly.
+        dunder_all = exports_by_root.get(parts[0], set())
+
         rows.append(
             {
                 "package": package_name,
@@ -226,17 +277,20 @@ def diff_versions(package_name: str, old_path, new_path,
                 "kind": b.kind.name,
                 "explanation": ANSI.sub("", b.explain()),
                 # --- structural features (Part 4) ---
-                # A leading underscore anywhere means the author considered it
-                # private. Private things are fair game to change, so this is
-                # a strong negative signal.
-                #
-                # KNOWN WEAKNESS, worth fixing in week 4 and worth mentioning
-                # in an interview: this also flags dunders like __version__ and
-                # __all__, which are public by convention. Run the demo on
-                # jinja2 and you will see jinja2.__version__ marked private.
-                # A better rule ignores names that start AND end with "__".
-                # Leave it as-is for now — measure the fix, do not assume it.
-                "is_private": any(p.startswith("_") for p in parts),
+                # THE definition of private, frozen in the API contract
+                # (change 1, 3 Sep 2026 — see ml/contract.py): any component
+                # with a single leading underscore, dunders excluded, and
+                # membership in the module's __all__ overrides to public.
+                # The API hides is_private rows by default, so this exact
+                # rule decides what ~40% of the shared table means. The old
+                # any-underscore version of this line lumped __version__ in
+                # with true _internals; Day 3 measured the damage and the
+                # contract settled the fix.
+                "is_private": is_private_symbol(symbol, dunder_all),
+                # Was the leaf name on the module's export list? False also
+                # covers "module has no __all__ at all", which is most
+                # packages. Postgres column of the same name.
+                "in_dunder_all": parts[-1] in dunder_all,
                 # click.echo (depth 1) is used far more than
                 # click.parser._OptionParser.add (depth 3).
                 "module_depth": symbol.count("."),
@@ -272,4 +326,5 @@ if __name__ == "__main__":
           f"{len(rows)} candidate breaking changes\n")
     for r in rows[:15]:
         flag = "private" if r["is_private"] else "PUBLIC "
-        print(f"  [{flag}] {r['kind']:<26} {r['symbol']}")
+        star = "   <- in __all__" if r["in_dunder_all"] else ""
+        print(f"  [{flag}] {r['kind']:<26} {r['symbol']}{star}")
