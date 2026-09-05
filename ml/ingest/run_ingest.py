@@ -42,6 +42,7 @@ import concurrent.futures as cf
 import os
 import pathlib
 import shutil
+import signal
 import sys
 import time
 import traceback
@@ -50,22 +51,29 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from ml.ingest.api_extract import diff_versions, find_import_names  # noqa: E402
-from ml.ingest.download import download_and_extract, list_releases  # noqa: E402
+from ml.ingest.api_extract import diff_series, find_import_names  # noqa: E402
+from ml.ingest.download import (download_and_extract,  # noqa: E402
+                                list_releases_with_meta)
 from ml.ingest.packages import get_top_packages          # noqa: E402
 
 DATA = pathlib.Path("data")
 CHANGES = DATA / "changes.csv"
 FAILURES = DATA / "failures.csv"
+PACKAGES = DATA / "packages.csv"
 DONE = DATA / "done.txt"
 SDISTS = DATA / "sdists"
 
 CHANGE_COLS = [
     "package", "package_rank", "version_from", "version_to", "symbol", "kind",
-    "is_private", "in_dunder_all", "module_depth", "is_top_level",
+    "sub_target", "is_private", "in_dunder_all", "module_depth", "is_top_level",
     "name_length", "released_at", "explanation",
 ]
+# Maps one-to-one onto the API's `package` table.
+PACKAGE_COLS = ["package", "download_rank", "github_repo"]
 FAILURE_COLS = ["package", "stage", "detail", "error_type", "message"]
+
+# Concurrent sdist downloads inside ONE package's worker. See stage 2.
+DOWNLOAD_THREADS = 4
 
 
 # --------------------------------------------------------------- small helpers
@@ -98,7 +106,28 @@ def short(e: Exception, limit: int = 200) -> str:
 
 # ------------------------------------------------------------------ one package
 
-def process_package(name: str, rank: int, n_versions: int) -> tuple[list[dict], list[dict]]:
+class PackageTimeout(BaseException):
+    """Deliberately NOT an Exception subclass.
+
+    The alarm can fire anywhere, including inside the download loop that
+    wraps every version in `except Exception`. As a normal Exception the
+    timeout was caught there, logged as one version's download failure,
+    and then the loop carried on to the next version — with the alarm
+    already spent, so the package ran unbounded afterwards. A timeout that
+    a generic handler can swallow is not a timeout.
+
+    Inheriting from BaseException is exactly how KeyboardInterrupt and
+    SystemExit solve the same problem: control-flow signals must pass
+    through `except Exception` untouched.
+    """
+
+
+def _alarm(_sig, _frame):
+    raise PackageTimeout()
+
+
+def process_package(name: str, rank: int, n_versions: int,
+                    timeout_s: int = 600) -> tuple[list[dict], list[dict]]:
     """
     Diff every consecutive version pair of one package.
 
@@ -106,42 +135,94 @@ def process_package(name: str, rank: int, n_versions: int) -> tuple[list[dict], 
     file I/O, which is what lets several of these run in parallel processes
     without two workers appending to the same CSV at the same time.
 
-    Never raises — a package that explodes is recorded and the run
-    continues. That is the whole point.
+    Never raises except on timeout — a package that explodes is recorded
+    and the run continues. That is the whole point.
+
+    THE TIMEOUT, added after the Day-2 300-package run. cython alone burned
+    26 minutes and transformers 25, and because they were still going after
+    everything else had finished, seven of eight workers sat idle waiting
+    for them. Wall clock was 162 minutes for maybe 140 minutes of work.
+    A hard alarm bounds the unit of work, which is what makes the nightly
+    job's runtime something you can promise rather than hope for.
+
+    A package that blows the alarm is discarded WHOLE, not kept partially.
+    Half a package means its oldest version pairs and not its newest —
+    and released_at is a model feature, so a systematic lean towards old
+    releases in exactly the biggest packages would quietly bias the
+    temporal split. Same principle as the numpy alphabetical-prefix bug:
+    missing data is honest, a biased subset that looks like coverage is not.
+    The failure row records it, so the loss is visible in failures.csv
+    rather than invisible in changes.csv.
     """
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(timeout_s)
+    try:
+        return _process_package(name, rank, n_versions)
+    finally:
+        signal.alarm(0)
+        shutil.rmtree(SDISTS / name, ignore_errors=True)
+
+
+def _process_package(name: str, rank: int,
+                     n_versions: int) -> tuple[list[dict], list[dict], list[dict]]:
     failures: list[dict] = []
+    meta: list[dict] = []
     base = SDISTS / name
 
     # --- stage 1: what versions exist? -------------------------------------
+    # One PyPI request gives both the release list and the package metadata
+    # (github_repo). Fetching them separately would double the request count
+    # for a field already in the response.
     try:
-        releases = list_releases(name, last_n=n_versions)
+        releases, info = list_releases_with_meta(name, last_n=n_versions)
+        meta = [{"package": name, "download_rank": rank,
+                 "github_repo": info.get("github_repo")}]
     except Exception as e:
         failures.append({"package": name, "stage": "list_releases", "detail": "",
                          "error_type": type(e).__name__, "message": short(e)})
-        return [], failures
+        return [], failures, meta
 
     if len(releases) < 2:
         failures.append({"package": name, "stage": "list_releases",
                          "detail": f"{len(releases)} sdist releases",
                          "error_type": "TooFewReleases",
                          "message": "needs at least 2 versions with a source distribution"})
-        return [], failures
+        return [], failures, meta
 
-    # --- stage 2: download every version once ------------------------------
+    # --- stage 2: download every version once, all at the same time --------
+    # Six versions used to download one after another, and a download is
+    # almost entirely waiting on PyPI — the CPU sits idle through all of it.
+    # Threads are right here even though the outer pool needs processes:
+    # the GIL is released during network I/O, so six waits overlap. griffe
+    # parsing later is the part that needs real cores.
+    #
+    # Kept deliberately small. Twelve worker processes each opening six
+    # connections is 72 at once, and the Day-3 usage scan showed a burst of
+    # failures late in a 1,500-package run that looked a lot like PyPI
+    # throttling. Four is a speedup; seventy-two is a rate limit.
     paths: dict[str, pathlib.Path] = {}
-    for rel in releases:
-        try:
-            p = download_and_extract(rel["url"], base / rel["version"])
-            if p is None:
-                raise RuntimeError("could not work out the sdist layout")
-            paths[rel["version"]] = p
-        except Exception as e:
-            failures.append({"package": name, "stage": "download",
-                             "detail": rel["version"],
-                             "error_type": type(e).__name__, "message": short(e)})
+    dl = cf.ThreadPoolExecutor(max_workers=DOWNLOAD_THREADS)
+    try:
+        futs = {dl.submit(download_and_extract, rel["url"], base / rel["version"]): rel
+                for rel in releases}
+        for fut in cf.as_completed(futs):
+            rel = futs[fut]
+            try:
+                p = fut.result()
+                if p is None:
+                    raise RuntimeError("could not work out the sdist layout")
+                paths[rel["version"]] = p
+            except Exception as e:
+                failures.append({"package": name, "stage": "download",
+                                 "detail": rel["version"],
+                                 "error_type": type(e).__name__, "message": short(e)})
+    finally:
+        # wait=False so a package timeout is not held up by in-flight
+        # downloads finishing on their own schedule.
+        dl.shutdown(wait=False, cancel_futures=True)
 
     if not paths:
-        return [], failures
+        return [], failures, meta
 
     # --- stage 3: what is this thing actually called when you import it? ---
     # The PyPI name and the import name disagree for ~30% of packages
@@ -155,34 +236,55 @@ def process_package(name: str, rank: int, n_versions: int) -> tuple[list[dict], 
                          "message": "no importable module in the sdist — "
                                     "compiled-only or not a Python package"})
         shutil.rmtree(base, ignore_errors=True)
-        return [], failures
+        return [], failures, meta
     # --- stage 4: diff consecutive pairs -----------------------------------
-    rows: list[dict] = []
-    for old, new in zip(releases, releases[1:]):
-        vf, vt = old["version"], new["version"]
-        if vf not in paths or vt not in paths:
-            continue                      # already logged as a download failure
-        try:
-            found = diff_versions(name, paths[vf], paths[vt])
-        except Exception as e:
-            failures.append({"package": name, "stage": "griffe",
-                             "detail": f"{vf} -> {vt}",
-                             "error_type": type(e).__name__, "message": short(e)})
-            continue
+    # One pass down the version chain, parsing each version once instead of
+    # twice. Parsing is ~70% of the pipeline's total runtime (measured), so
+    # this is where the wall clock actually lives.
+    uploaded = {r["version"]: r["uploaded"] for r in releases}
 
-        for r in found:
-            r["package_rank"] = rank
-            r["version_from"] = vf
-            r["version_to"] = vt
-            r["released_at"] = new["uploaded"][:10]
-        rows.extend(found)
+    # A version we failed to download BREAKS THE CHAIN. Simply dropping it
+    # would leave 2.1.0 sitting next to 2.1.2 and we would diff those as if
+    # they were neighbours — a pair that never existed, and a direct
+    # violation of the consecutive-pairs rule the whole project rests on
+    # (anything introduced in 2.1.1 would be misattributed to 2.1.2).
+    # So split the releases into unbroken runs and diff each run separately.
+    segments, current = [], []
+    for r in releases:
+        if r["version"] in paths:
+            current.append((r["version"], paths[r["version"]]))
+        else:
+            if len(current) >= 2:
+                segments.append(current)
+            current = []
+    if len(current) >= 2:
+        segments.append(current)
+
+    # modules=None so diff_series takes the union across the chain rather
+    # than only the newest version's names (see its docstring).
+    rows: list[dict] = []
+    for segment in segments:
+        for vf, vt, found in diff_series(name, segment):
+            if isinstance(found, Exception):
+                failures.append({"package": name, "stage": "griffe",
+                                 "detail": f"{vf} -> {vt}",
+                                 "error_type": type(found).__name__,
+                                 "message": short(found)})
+                continue
+
+            for r in found:
+                r["package_rank"] = rank
+                r["version_from"] = vf
+                r["version_to"] = vt
+                r["released_at"] = uploaded[vt][:10]
+            rows.extend(found)
 
     # --- stage 5: clean up -------------------------------------------------
     # Delete the source now, while we still know it is safe to. Skipping this
     # is how a 300-package run fills a laptop and dies at package 180.
     shutil.rmtree(base, ignore_errors=True)
 
-    return rows, failures
+    return rows, failures, meta
 
 
 # ------------------------------------------------------------------------ main
@@ -197,10 +299,12 @@ def main() -> None:
                     help="wipe previous output and start from scratch")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 1),
                     help="packages to process at once (default: CPU cores - 1)")
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="seconds allowed per package before it is skipped")
     args = ap.parse_args()
 
     if args.restart:
-        for p in (CHANGES, FAILURES, DONE):
+        for p in (CHANGES, FAILURES, PACKAGES, DONE):
             p.unlink(missing_ok=True)
         shutil.rmtree(SDISTS, ignore_errors=True)
         print("cleared previous run\n")
@@ -214,11 +318,14 @@ def main() -> None:
         with CHANGES.open() as f:
             have = f.readline().strip().split(",")
         if have != CHANGE_COLS:
+            missing = [c for c in CHANGE_COLS if c not in have]
             sys.exit(
-                f"{CHANGES} was written by an older version of this pipeline "
-                f"({len(have)} columns; the code now writes {len(CHANGE_COLS)}: "
-                "in_dunder_all was added for the API contract).\n"
-                "Rerun with --restart to produce one uniform dataset."
+                f"{CHANGES} was written by an older version of this pipeline.\n"
+                f"  on disk: {len(have)} columns\n"
+                f"  now:     {len(CHANGE_COLS)} columns"
+                + (f" (new: {', '.join(missing)})" if missing else "") + "\n"
+                "Appending to it would misalign every later row without "
+                "raising an error. Rerun with --restart for one uniform dataset."
             )
 
     packages = get_top_packages(args.packages)
@@ -228,8 +335,8 @@ def main() -> None:
     workers = max(1, min(args.workers, len(todo) or 1))
     print(f"{len(packages)} packages requested, {len(done)} already done, "
           f"{len(todo)} to go")
-    print(f"{args.versions} versions each, {workers} in parallel. "
-          f"Output -> {CHANGES}\n")
+    print(f"{args.versions} versions each, {workers} in parallel, "
+          f"{args.timeout}s timeout each. Output -> {CHANGES}\n")
 
     started = time.time()
     total_rows = 0
@@ -245,7 +352,8 @@ def main() -> None:
     done_count = 0
     with cf.ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(process_package, p["name"], p["rank"], args.versions): p
+            pool.submit(process_package, p["name"], p["rank"], args.versions,
+                        args.timeout): p
             for p in todo
         }
         try:
@@ -253,17 +361,24 @@ def main() -> None:
                 pkg = futures[fut]
                 name = pkg["name"]
                 try:
-                    rows, failures = fut.result()
+                    rows, failures, meta = fut.result()
+                except PackageTimeout:
+                    # Expected for a handful of giants. Data, not a crash.
+                    rows, meta = [], []
+                    failures = [{"package": name, "stage": "timeout", "detail": "",
+                                 "error_type": "Timeout",
+                                 "message": f"exceeded {args.timeout}s"}]
                 except Exception:
                     # A bug in our own code, not in the package. Show it.
                     traceback.print_exc()
-                    rows = []
+                    rows, meta = [], []
                     failures = [{"package": name, "stage": "pipeline", "detail": "",
                                  "error_type": "UnexpectedError",
                                  "message": "see traceback above"}]
 
                 append_rows(CHANGES, rows, CHANGE_COLS)
                 append_rows(FAILURES, failures, FAILURE_COLS)
+                append_rows(PACKAGES, meta, PACKAGE_COLS)
                 all_failures.extend(failures)
                 total_rows += len(rows)
                 mark_done(name)

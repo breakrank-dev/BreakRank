@@ -94,7 +94,43 @@ def add_labels(changes: pd.DataFrame, usage: pd.DataFrame) -> pd.DataFrame:
     df["name_user_count"] = [
         by_name.get(root_leaf(s), 0) for s in df["symbol"]
     ]
-    return df
+
+    # --- the SCOPED relaxation: a second label, measured not assumed -----
+    # Downstream code writes `from pandas import read_csv`, recorded as
+    # pandas.read_csv. griffe reports the change where the function is
+    # DEFINED: pandas.io.parsers.readers.read_csv. Same function, two
+    # paths, and the exact join says no — so the strict label throws away
+    # 34 packages' worth of evidence about the single most famous symbol
+    # in the dataset.
+    #
+    # The obvious fix — match on (root, leaf) — is too loose. Every
+    # google.cloud client class carries DEFAULT_MTLS_ENDPOINT: 134 distinct
+    # changed symbols share that one leaf, so the rule would credit all 74
+    # users to each of them.
+    #
+    # So scope it. Relax ONLY where exactly one changed symbol in the
+    # package owns that leaf name, which is precisely the case where the
+    # re-export is unambiguous. Measured on 23,025 rows: recovers 462 rows
+    # (2.65% -> 4.66%, into the book's expected band) and the recovered
+    # rows are pandas.read_csv, httpx.get, pandas.concat, litellm.completion
+    # — the examples the project exists to find.
+    #
+    # This is kept as a SECOND label, not a replacement. Which one trains a
+    # better ranker is an experiment to run, not a thing to assert, and
+    # having both columns is what makes the experiment possible.
+    parts = df["symbol"].map(root_leaf)
+    df["_root"] = [p[0] for p in parts]
+    df["_leaf"] = [p[1] for p in parts]
+    df["leaf_owners"] = df.groupby(["_root", "_leaf"])["symbol"].transform("nunique")
+
+    unambiguous = (df["leaf_owners"] == 1) & (df["name_user_count"] > 0)
+    df["label_scoped"] = ((df["user_count"] > 0) | unambiguous).astype(int)
+    # What the scoped label would use as its count — the exact number when
+    # we have one, the by-name number only where the mapping is certain.
+    df["scoped_user_count"] = df["user_count"].where(
+        df["user_count"] > 0, df["name_user_count"].where(unambiguous, 0))
+
+    return df.drop(columns=["_root", "_leaf"])
 
 
 def sanity_report(df: pd.DataFrame) -> None:
@@ -149,6 +185,14 @@ def sanity_report(df: pd.DataFrame) -> None:
     caught = int(((df["user_count"] == 0) & (df["name_user_count"] > 0)).sum())
     print(f"\nRows the exact join misses but the (root, leaf) relaxation would")
     print(f"catch: {caught:,}. That number is the re-export gap, measured.")
+
+    if "label_scoped" in df:
+        gained = int((df["label_scoped"] > df["label"]).sum())
+        print(f"\nSCOPED label (relax only where one symbol owns the leaf):")
+        print(f"  {int(df['label_scoped'].sum()):,} positive "
+              f"({df['label_scoped'].mean():.2%})  —  {gained:,} rows recovered")
+        print("  Both labels are written to the CSV. Train on each and compare;")
+        print("  scripts/reexport_probe.py shows which rows the difference is.")
 
 
 def main() -> None:

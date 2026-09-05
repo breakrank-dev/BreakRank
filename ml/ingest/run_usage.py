@@ -85,6 +85,27 @@ class ScanTimeout(Exception):
     pass
 
 
+class ScanError(Exception):
+    """A worker failure that is guaranteed to survive the trip home.
+
+    Diagnosed after 'cannot pickle _thread.RLock object' appeared six times
+    in one run and three times across earlier runs, always on slow runs and
+    always on packages that were fine the next time.
+
+    A worker is a separate PROCESS. When it raises, the exception object is
+    pickled and sent to the parent — and some exceptions cannot be pickled.
+    tenacity's RetryError carries the failed Attempt, which carries the httpx
+    objects, which carry a thread lock. So a package that merely lost its
+    downloads to a slow network died with a confusing TypeError about locks,
+    and the real cause (the network) was never recorded.
+
+    The fix is not to catch less; it is to never send a live exception across
+    a process boundary. Flatten it to type-name plus text first. `from None`
+    matters too: the original stays attached as __cause__ otherwise, and
+    pickling it fails exactly the same way.
+    """
+
+
 def _alarm(_sig, _frame):
     raise ScanTimeout()
 
@@ -100,20 +121,28 @@ def scan_one(name: str, tracked: set[str], timeout_s: int) -> list[dict]:
     signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(timeout_s)
     try:
-        releases = list_releases(name, last_n=1)
-        if not releases:
-            raise RuntimeError("no sdist releases")
-        path = download_and_extract(releases[-1]["url"], dest)
-        if path is None:
-            raise RuntimeError("could not work out the sdist layout")
+        try:
+            releases = list_releases(name, last_n=1)
+            if not releases:
+                raise RuntimeError("no sdist releases")
+            path = download_and_extract(releases[-1]["url"], dest)
+            if path is None:
+                raise RuntimeError("could not work out the sdist layout")
 
-        # Which modules are this package's OWN? Anything it imports from
-        # itself is self-use and must not count.
-        own = set(find_import_names(path, name))
+            # Which modules are this package's OWN? Anything it imports from
+            # itself is self-use and must not count.
+            own = set(find_import_names(path, name))
 
-        used = scan_package(path, tracked - own)
-        return [{"scanner": name, "symbol": s} for s in used
-                if s.split(".")[0] not in own]
+            used = scan_package(path, tracked - own)
+            return [{"scanner": name, "symbol": s} for s in used
+                    if s.split(".")[0] not in own]
+        except ScanTimeout:
+            raise                       # plain, and the parent handles it
+        except Exception as e:
+            # Flatten before crossing the process boundary. See ScanError.
+            raise ScanError(
+                f"{type(e).__name__}: {' '.join(str(e).split())[:180]}"
+            ) from None
     finally:
         signal.alarm(0)
         shutil.rmtree(dest, ignore_errors=True)
@@ -180,11 +209,15 @@ def main() -> None:
                                         "error_type": "Timeout",
                                         "message": f"exceeded {args.timeout}s"}]
                 except Exception as e:
+                    # ScanError already carries "RealType: detail", so split it
+                    # back out — otherwise the failure table groups everything
+                    # under ScanError and hides which fix recovers most packages.
+                    msg = " ".join(str(e).split())[:200]
+                    kind = type(e).__name__
+                    if isinstance(e, ScanError) and ": " in msg:
+                        kind, msg = msg.split(": ", 1)
                     rows, fails = [], [{"package": name, "stage": "scan",
-                                        "error_type": type(e).__name__,
-                                        "message": " ".join(str(e).split())[:200]}]
-                    if type(e).__name__ == "UnexpectedError":
-                        traceback.print_exc()
+                                        "error_type": kind, "message": msg}]
 
                 if rows:
                     pd.DataFrame(rows).to_csv(PAIRS, mode="a",

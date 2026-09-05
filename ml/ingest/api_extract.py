@@ -13,6 +13,7 @@ import logging
 import pathlib
 import re
 import sys
+import warnings
 
 import griffe
 
@@ -20,10 +21,25 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.contract import is_private_symbol  # noqa: E402  (frozen 3 Sep 2026)
 
-# griffe prints a lot of "could not resolve alias" warnings on real packages.
-# They are harmless — it just means one module referenced something it could
-# not follow. Silence them so your own output stays readable.
-logging.getLogger("griffe").setLevel(logging.ERROR)
+# Real packages produce a torrent of harmless noise, and in a 500-package run
+# it buries the progress output completely — the 33-minute run this was added
+# after printed thousands of these around 500 lines that actually mattered.
+#
+# Two separate sources, and silencing one leaves the other:
+#
+#   1. griffe's logger. "Failed to get annotation expression", "Could not
+#      resolve alias", whole tracebacks for Python-2-era files it cannot
+#      parse. ERROR was not high enough — that is the level most of them
+#      use. Every one of these is a per-file detail we already capture
+#      properly: if a package genuinely fails, it lands in failures.csv
+#      with a stage and a reason, which is the record worth keeping.
+#
+#   2. Python's own SyntaxWarning, raised while compiling source that
+#      predates a syntax rule ("invalid escape sequence '\d'" in an old
+#      regex). We are reading other people's code, much of it a decade
+#      old. Their warnings are not our warnings.
+logging.getLogger("griffe").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 # b.explain() returns text with terminal colour codes baked in. Those look
 # like garbage in a CSV, so strip them.
@@ -35,6 +51,18 @@ NOT_THE_LIBRARY = {
     "test", "tests", "testing", "doc", "docs", "example", "examples",
     "benchmark", "benchmarks", "script", "scripts", "tools", "build", "dist",
     "setup", "conftest", "noxfile", "tasks",
+    # Scaffolding that sits beside the library in a compiled project and,
+    # once the src/lib layout fix let us look inside these sdists, started
+    # being mistaken for the library itself: shapely offered `versioneer`,
+    # orjson `include` and `pysrc`, uuid-utils `python`. Diffing those
+    # produces rows for symbols no downstream package can import — the
+    # pandas.tests problem again, guaranteed negatives padding the dataset.
+    #
+    # Safe to keep extending this list ONLY because of the exemption below:
+    # a folder whose name matches the distribution is never treated as
+    # noise, which is what `build` needed.
+    "versioneer", "include", "pysrc", "python", "bindings", "binding",
+    "native", "csrc", "vendor", "vendored", "third_party",
 }
 
 
@@ -88,10 +116,18 @@ def find_import_names(search_path, package_name: str = "") -> list[str]:
     if not root.is_dir():
         return []
 
+    target = _normalise(package_name)
+
     real, namespace = [], []
     for p in sorted(root.iterdir()):
         stem = p.stem
-        if _is_noise(stem):
+        # The noise filter must never fire on the package we came for.
+        # pypa's packaging tool is DISTRIBUTED AS `build`, and "build" was
+        # in the folders-that-are-not-the-library list — so `build/` was
+        # discarded as a build artefact and the package reported "no
+        # importable module". The same trap is set for anything published
+        # as tools, tasks, docs, scripts, dist or testing.
+        if _is_noise(stem) and _normalise(stem) != target:
             continue
 
         if p.is_dir():
@@ -215,7 +251,73 @@ def diff_versions(package_name: str, old_path, new_path,
 
     old_col = load_all_modules(old_path, modules)
     new_col = load_all_modules(new_path, modules)
+    return diff_collections(package_name, old_col, new_col, modules)
 
+
+def diff_series(package_name: str, versions: list[tuple[str, object]],
+                modules: list[str] | None = None):
+    """
+    Diff a whole chain of versions, loading each one EXACTLY ONCE.
+
+    `versions` is [(version_label, search_path), ...] oldest first. Yields
+    (version_from, version_to, rows) per consecutive pair.
+
+    Why this exists, measured rather than assumed. Profiling the pipeline:
+    griffe is 96% of the runtime, downloads are 4%. And inside griffe,
+    PARSING the source is 66-97% of the cost — walking the diff is cheap.
+
+    Calling diff_versions once per pair parses every middle version twice,
+    once as the "new" side of one pair and once as the "old" side of the
+    next. Six versions in five pairs = ten parses where six would do. This
+    keeps a rolling window of two collections — same peak memory as before,
+    40% fewer parses of the most expensive thing in the pipeline.
+
+    pandas is the case that makes it worth the code: 365 seconds of griffe
+    for six versions, against 8 seconds of downloading.
+    """
+    if len(versions) < 2:
+        return
+
+    # The module list is the UNION across every version in the chain, not
+    # just the newest one's. Packages rename and split their modules
+    # mid-history, and taking only the newest version's names would stop
+    # us finding the old name in the older pairs — the pipeline would run
+    # clean and quietly cover less than it reports.
+    #
+    # Safe to load every version against the whole union: find_import_names
+    # is a directory listing (cheap), load_all_modules skips modules that
+    # are not there, and each pair re-filters to what actually loaded in
+    # both. So a name that only exists in half the chain simply produces
+    # no rows for the other half.
+    if modules is None:
+        seen: dict[str, None] = {}
+        for _, path in versions:
+            for m in find_import_names(path, package_name):
+                seen.setdefault(m, None)
+        modules = list(seen)
+    if not modules:
+        raise RuntimeError(
+            f"no importable Python module found in {versions[-1][1]} — "
+            "probably a compiled-only or non-Python distribution"
+        )
+
+    prev_label, prev_path = versions[0]
+    prev_col = load_all_modules(prev_path, modules)
+    for label, path in versions[1:]:
+        col = load_all_modules(path, modules)
+        try:
+            rows = diff_collections(package_name, prev_col, col, modules)
+        except Exception as e:
+            # One bad pair must not kill the rest of the chain; the caller
+            # records it and we carry on from the version we just loaded.
+            rows = e
+        yield prev_label, label, rows
+        prev_label, prev_col = label, col   # the old side is dropped here
+
+
+def diff_collections(package_name: str, old_col, new_col,
+                     modules: list[str]) -> list[dict]:
+    """Rows for one pair of already-loaded griffe collections."""
     shared = [m for m in modules if m in old_col and m in new_col]
     if not shared:
         raise RuntimeError(
@@ -252,9 +354,41 @@ def diff_versions(package_name: str, old_path, new_path,
                        for m in modules if m in old_col}
 
     rows = []
+    seen: set[tuple[str, str, str]] = set()
     for b in breakages:
         symbol = b.obj.path              # e.g. "click.decorators.HelpOption"
         parts = symbol.split(".")
+        explanation = ANSI.sub("", b.explain())
+
+        # WHAT INSIDE the symbol changed. griffe reports one breakage per
+        # changed parameter, all sharing the function's path, so without
+        # this the rows are indistinguishable — and the database's
+        # uniqueness key (release_id, symbol_path, kind, sub_target) would
+        # quietly keep only the last one.
+        #
+        # Gate on the kind, not on "does old_value have a .name". Every
+        # griffe breakage carries an old_value with a name of some sort:
+        # for OBJECT_REMOVED it is the removed object itself, and reading
+        # it here would file `_exported` under sub_target, which is a lie
+        # a NOT NULL column would happily store forever.
+        sub_target = ""
+        if b.kind.name.startswith("PARAMETER"):
+            p = getattr(b.old_value, "name", None) or getattr(b.new_value, "name", None)
+            sub_target = p if isinstance(p, str) else ""
+        elif b.kind.name == "CLASS_REMOVED_BASE":
+            # MEASURED, and it contradicts the assumption this column was
+            # asked for: griffe does NOT emit one breakage per dropped base.
+            # old_value/new_value are the WHOLE base lists, so a class
+            # dropping two bases produces exactly one row and cannot
+            # collide with itself. Filled in anyway — it is real
+            # information, it costs nothing, and it keeps the key correct
+            # if griffe ever switches to per-base reporting.
+            olds = b.old_value or []
+            news = {getattr(x, "name", None) for x in (b.new_value or [])}
+            sub_target = ",".join(
+                str(getattr(x, "name", x)) for x in olds
+                if getattr(x, "name", None) not in news
+            )
 
         # Big packages ship their test suite inside the installed package —
         # numpy.random.tests.test_extending.required_version turned up in a
@@ -269,13 +403,30 @@ def diff_versions(package_name: str, old_path, new_path,
         # A root we never loaded gets an empty set — no override, honestly.
         dunder_all = exports_by_root.get(parts[0], set())
 
+        # A distribution can ship several top-level modules that alias into
+        # one another — pytest ships `pytest` AND `_pytest`, and `pytest`
+        # re-exports from `_pytest`. We diff both, so griffe walks the same
+        # underlying change twice and reports it twice under the SAME
+        # _pytest.* path. Measured: 17 of 1,140 rows in a 40-package run,
+        # all pytest. Identical explanation means identical change, so the
+        # second sighting is a double-count, not a second event.
+        fingerprint = (symbol, b.kind.name, sub_target, explanation)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+
         rows.append(
             {
                 "package": package_name,
                 "symbol": symbol,
                 # .name gives "OBJECT_REMOVED", not "BreakageKind.OBJECT_REMOVED"
                 "kind": b.kind.name,
-                "explanation": ANSI.sub("", b.explain()),
+                # "" for kinds that target the whole symbol (OBJECT_REMOVED
+                # and friends) — empty string, never null, because Postgres
+                # treats NULLs as distinct inside a UNIQUE key and that
+                # would silently break idempotent re-runs.
+                "sub_target": sub_target,
+                "explanation": explanation,
                 # --- structural features (Part 4) ---
                 # THE definition of private, frozen in the API contract
                 # (change 1, 3 Sep 2026 — see ml/contract.py): any component
@@ -326,5 +477,6 @@ if __name__ == "__main__":
           f"{len(rows)} candidate breaking changes\n")
     for r in rows[:15]:
         flag = "private" if r["is_private"] else "PUBLIC "
+        sub = f"  ({r['sub_target']})" if r["sub_target"] else ""
         star = "   <- in __all__" if r["in_dunder_all"] else ""
-        print(f"  [{flag}] {r['kind']:<26} {r['symbol']}{star}")
+        print(f"  [{flag}] {r['kind']:<26} {r['symbol']}{sub}{star}")
