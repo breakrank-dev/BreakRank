@@ -85,3 +85,23 @@ Input capped at 100 packages.
    naming the release that introduced each one.
 8. The API serves the newest `model_run` by `trained_at`, resolved at startup
    and cached. `MODEL_VERSION` env var pins a specific version for rollback.
+9.  `breakage` is keyed on (release_id, symbol_path, kind, sub_target).
+    Only PARAMETER_* kinds genuinely collide: two parameters removed from one
+    function produce two records sharing (release_id, symbol_path, kind).
+    CLASS_REMOVED_BASE does not collide — griffe emits one record with the full
+    base lists — but populates sub_target anyway for template use and
+    future-proofing. Empty string for all other kinds.
+10. `is_private` __all__ override uses the ROOT package's __all__, matched
+    against the symbol's leaf name. Known limitation: a leaf-name collision
+    between an exported symbol and an unrelated private one will false-positive.
+    Planned fix once the re-export resolver exists: a symbol is public if
+    reachable by any path with no private components.
+11. /analyze dedupes on (symbol_path, kind, sub_target), keeping the record
+    from the LATEST release in the range — not the highest-scoring one.
+    A symbol deprecated in 2.1.1 and removed in 2.2.0 is a removal to someone
+    upgrading from 2.1.0; the deprecation is history. Ordering across symbols
+    still uses the score. Two separate operations: latest release decides
+    which row survives, score decides where it sits in the list.
+12. package.github_repo is populated by the pipeline from PyPI's JSON
+    info.project_urls. Best-effort, nullable, never fails ingest. Retained as
+    the input to changelog/deprecation mining later.
