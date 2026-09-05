@@ -415,7 +415,13 @@ def score_everything() -> dict:
 
 def dry_run(changes, usage) -> None:
     rels = release_rows(changes)
-    fake = {(r["package"], r["version"]): 1 for r in rels}
+    # A DISTINCT id per release. It was `: 1` for every one of them, which
+    # was harmless until breakage_rows started deduplicating on release_id
+    # — then all 2,061 releases shared an id, every symbol that changed in
+    # two releases looked like a collision, and the preview reported 2,702
+    # drops against a true figure of 1. A stub that stops being a stub is
+    # worse than no stub.
+    fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
     rows, keys, dropped = breakage_rows(changes, fake)
 
     print("would write (no database touched):")
