@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from ml.db import engine
+from db.engine import engine
 
 MIGRATIONS = Path(__file__).parent / "migrations"
 
@@ -31,9 +31,17 @@ def main():
         if f.name in applied:
             print(f"skip   {f.name}")
             continue
+
+        sql = f.read_text().strip()
+        if not sql:
+            raise RuntimeError(
+                f"{f.name} is empty. Refusing to record an empty migration "
+                f"as applied - the file was probably never saved."
+            )
+
         print(f"apply  {f.name}")
         with engine.begin() as conn:
-            conn.execute(text(f.read_text()))
+            conn.execute(text(sql))
             conn.execute(
                 text("INSERT INTO schema_migration (filename) VALUES (:n)"),
                 {"n": f.name},
