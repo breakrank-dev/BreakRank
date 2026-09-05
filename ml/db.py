@@ -46,6 +46,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 
 import pandas as pd
@@ -131,6 +132,18 @@ def _text(row, field: str) -> str:
     return "" if v is None or v != v else str(v)
 
 
+# griffe prefixes every explanation with where it found the change:
+#   data/sdists/requests/2.34.0/.../adapters.py:193: HTTPAdapter.max_retries: ...
+# That is a path on whichever laptop ran the ingest, inside a temp
+# directory deleted seconds later. The API builds its user-facing sentence
+# out of griffe_message, so left alone this puts a stranger's filesystem
+# layout on the website and tells the reader nothing. Strip it at the
+# boundary rather than at ingest: changes.csv stays a faithful record of
+# what griffe said, and no re-ingest is needed to fix data already
+# collected.
+GRIFFE_LOCATION = re.compile(r"^\S*?\.pyi?:\d+:\s*")
+
+
 def detail_of(row) -> dict:
     """The variable payload — the keys the API renders sentences from.
 
@@ -138,7 +151,7 @@ def detail_of(row) -> dict:
     `parameter` appears in both because sub_target is part of what makes a
     breakage unique AND the API wants it for the sentence.
     """
-    d = {"griffe_message": _text(row, "explanation"),
+    d = {"griffe_message": GRIFFE_LOCATION.sub("", _text(row, "explanation")),
          "griffe_kind": str(row.kind)}
     sub = _text(row, "sub_target")
     if sub:
@@ -148,13 +161,38 @@ def detail_of(row) -> dict:
 
 
 def breakage_rows(changes: pd.DataFrame, release_id: dict):
-    """Rows to insert, plus the natural key of each for the score join."""
-    rows, keys = [], []
+    """Rows to insert, their natural keys, and what we dropped to get there.
+
+    DEDUPLICATED ON THE DATABASE'S KEY, deliberately, because leaving it to
+    Postgres does not do what it looks like it does. Two rows with the same
+    key inside one multi-row INSERT ... ON CONFLICT DO UPDATE raise
+    "ON CONFLICT DO UPDATE command cannot affect row a second time" — the
+    whole transaction dies. It is not a silent last-one-wins.
+
+    Measured on this dataset: exactly one collision in 23,025 rows.
+    pygments.lexers.c_cpp.CppLexer.tokens is reported twice for the same
+    release, once describing the 'keywords' part of that dict and once the
+    'statements' part — CppLexer inherits `tokens` from CFamilyLexer, so
+    griffe resolves it through two paths and reports both. They are
+    genuinely different messages about the same attribute, and the schema
+    has nowhere to put that distinction.
+
+    So one of them is dropped, the count is printed, and nobody has to
+    wonder later why the row count moved. Keeping the first is arbitrary
+    and safe here: a lexer's internal token table is not something
+    downstream code imports, so both rows are guaranteed negatives.
+    """
+    rows, keys, seen, dropped = [], [], set(), 0
     for r in changes.itertuples(index=False):
         rid = release_id.get((r.package, r.version_to))
         if rid is None:
             continue
         sub = _text(r, "sub_target")
+        dbkey = (rid, r.symbol, r.kind, sub)
+        if dbkey in seen:
+            dropped += 1
+            continue
+        seen.add(dbkey)
         rows.append({
             "release_id": rid, "symbol_path": r.symbol, "kind": r.kind,
             "sub_target": sub, "is_private": bool(r.is_private),
@@ -164,7 +202,7 @@ def breakage_rows(changes: pd.DataFrame, release_id: dict):
             "detail": json.dumps(detail_of(r)),
         })
         keys.append((r.package, r.version_to, r.symbol, r.kind, sub))
-    return rows, keys
+    return rows, keys, dropped
 
 
 # ----------------------------------------------------------------- schema
@@ -268,7 +306,7 @@ def write_all(conn, changes, usage, packages, has_sub, score_map) -> None:
               for r, i in zip(rels, ids) if i}
     print(f"  release       {len(rel_id):>7,}")
 
-    rows, keys = breakage_rows(changes, rel_id)
+    rows, keys, dropped = breakage_rows(changes, rel_id)
     cols = [c for c in BREAKAGE_COLS if has_sub or c != "sub_target"]
     if not has_sub:
         for r in rows:
@@ -378,7 +416,7 @@ def score_everything() -> dict:
 def dry_run(changes, usage) -> None:
     rels = release_rows(changes)
     fake = {(r["package"], r["version"]): 1 for r in rels}
-    rows, keys = breakage_rows(changes, fake)
+    rows, keys, dropped = breakage_rows(changes, fake)
 
     print("would write (no database touched):")
     print(f"  package       {changes['package'].nunique():>7,}")
@@ -386,12 +424,13 @@ def dry_run(changes, usage) -> None:
     print(f"  breakage      {len(rows):>7,}")
     print(f"  usage_index   {len(usage):>7,}")
 
-    dupes = len(keys) - len(set(keys))
-    print(f"\ndistinct (package, version, symbol, kind, sub_target): "
-          f"{len(set(keys)):,}")
-    if dupes:
-        print(f"** {dupes:,} rows share a key and would collapse. Investigate "
-              "before loading.")
+    print(f"\ndistinct (release, symbol, kind, sub_target): {len(rows):,}")
+    if dropped:
+        print(f"{dropped:,} row(s) dropped as duplicate keys before insert — "
+              "griffe\nreported the same symbol twice for one release with no "
+              "sub_target to\ntell them apart. Left to Postgres this is an "
+              "error, not an overwrite,\nso it is resolved here and counted. "
+              "See breakage_rows().")
     else:
         print("no key collisions — every change survives the insert.")
 
