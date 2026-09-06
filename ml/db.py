@@ -219,6 +219,17 @@ def connect():
                  "Put it in .env, which is gitignored. Get it from Varad over "
                  "a private channel — never in a commit, an issue, or a "
                  "screenshot.")
+
+    # Neon hands out "postgresql://...", and SQLAlchemy reads a bare
+    # "postgresql://" as "use psycopg2" — the OLD driver, which we do not
+    # install. The failure is ModuleNotFoundError: psycopg2, which reads
+    # like a missing dependency rather than a URL-scheme mismatch and
+    # sends you off installing the wrong package. Name the driver instead.
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            url = "postgresql+psycopg://" + url[len(prefix):]
+            break
+
     return create_engine(url, pool_pre_ping=True)
 
 
@@ -413,7 +424,7 @@ def score_everything() -> dict:
             for r in df.itertuples(index=False)}
 
 
-def dry_run(changes, usage) -> None:
+def dry_run(changes, usage, packages) -> None:
     rels = release_rows(changes)
     # A DISTINCT id per release. It was `: 1` for every one of them, which
     # was harmless until breakage_rows started deduplicating on release_id
@@ -424,11 +435,27 @@ def dry_run(changes, usage) -> None:
     fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
     rows, keys, dropped = breakage_rows(changes, fake)
 
+    # Must go through package_rows(), not changes['package'].nunique().
+    # Those two numbers are different and the difference is the point: the
+    # writer loads every package in packages.csv, INCLUDING the ones that
+    # produced no breaking change, because the package table's job is to
+    # record that we looked. Counting distinct packages in changes.csv
+    # gave 410 here against a real write of 500, so the preview quietly
+    # disagreed with the thing it exists to preview.
+    pkgs = package_rows(changes, packages)
+    analysed, broke = len(pkgs), changes["package"].nunique()
+
     print("would write (no database touched):")
-    print(f"  package       {changes['package'].nunique():>7,}")
+    print(f"  package       {analysed:>7,}")
     print(f"  release       {len(rels):>7,}")
     print(f"  breakage      {len(rows):>7,}")
     print(f"  usage_index   {len(usage):>7,}")
+
+    if analysed > broke:
+        print(f"\n{analysed - broke} of those {analysed} packages produced no "
+              f"breaking change at all.\nThey are written anyway: 'analysed, "
+              "found nothing' has to be\ndistinguishable from 'never "
+              "analysed' (decision 1).")
 
     print(f"\ndistinct (release, symbol, kind, sub_target): {len(rows):,}")
     if dropped:
@@ -462,7 +489,7 @@ def main() -> None:
           f"{changes['package'].nunique()} packages\n")
 
     if args.dry_run:
-        dry_run(changes, usage)
+        dry_run(changes, usage, packages)
         return
 
     score_map = score_everything() if args.scores else None

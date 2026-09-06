@@ -18,14 +18,21 @@ across 410 packages**, top 500 PyPI by download count, 6 releases each.
 |---|---|---|
 | positive rows | 611 (2.65%) | 1,073 (4.66%) |
 | test positives | 98 | 194 |
+| test positive rate — **the PR-AUC floor** | 0.0174 | 0.0344 |
 | semver baseline PR-AUC | 0.0227 | 0.0339 |
 | popularity baseline PR-AUC | 0.0884 | 0.1202 |
 | **ranker PR-AUC** | **0.1634** | **0.3465** |
+| lift over floor | 9.4× | 10.1× |
 | lift over best baseline | 1.85× | 2.88× |
+
+`label_scoped` is the shipped model, and §5.3 is why: under the strict
+label the ranker is provably a path-shape heuristic.
 
 Kill-date gate (≥20,000 labelled rows AND ranker beats the version-number
 baseline on PR-AUC): **cleared 22 days early**, 5 September against a
-27 September deadline.
+27 September deadline. The database went live 6 September (§8), so both
+halves of the project now talk through Postgres rather than through a
+person.
 
 PR-AUC across labels is **not comparable** — its floor is the positive
 rate, and the two labels have different ones. Compare lift over the
@@ -381,6 +388,34 @@ Test being sparser than train makes every reported number pessimistic,
 which is the right direction to be wrong in, but it should be said rather
 than found.
 
+### 5.5 The three numbers that make PR-AUC readable
+
+PR-AUC's floor is the **positive rate**, not 0.5 the way ROC-AUC's is. The
+shipped model is `lambdarank-label_scoped`; its test positive rate is
+**3.44%** over 5,638 rows. (§5.4's 1.74% is the *strict* label — the two
+floors differ by 2x and are not interchangeable.)
+
+| | value | vs floor |
+|---|---|---|
+| floor — positive rate | 0.0344 | 1.0x |
+| best baseline — popularity | 0.1202 | 3.5x |
+| **model** | **0.3465** | **10.1x** |
+
+2.88x the strongest baseline, 10x the floor. precision@10 is 0.2238
+against the same 3.44% base rate, a 6.5x lift — but read §5.1 before
+quoting that one anywhere.
+
+**Quote all three or none.** "PR-AUC 0.35" on its own is unreadable: it is
+excellent at this positive rate and mediocre at 30%. Note also that the
+baseline being beaten is `popularity`, not `semver` — the kill-date gate
+only required beating the version-number baseline, and popularity is the
+harder one, because "just sort by download count" is the objection the
+project exists to answer.
+
+The first `model_run` row written to Postgres carried no floor, and
+recovering the number afterwards meant reloading `features.csv` and
+re-deriving the split. `train.py` now writes `positive_rate` into `notes`.
+
 ---
 
 ## 6. Operational facts
@@ -401,6 +436,21 @@ than found.
   not a snapshot of current state. Do not put it in a report without
   deduplicating.
 
+- **Homebrew deleted the interpreter the venv was built on.** Mid-session,
+  `python3` stopped finding pandas. `.venv/bin/python3` was still listed by
+  `ls` but would not execute: it is a symlink chain ending at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12`, and `brew autoremove` had
+  taken `python@3.12` away as an unused dependency after an upgrade to
+  3.14.7. A dangling symlink is not executable, so the shell skipped it and
+  fell through to Homebrew's Python — which has none of our packages.
+  `zsh: no such file or directory` on a file you can see in `ls` is
+  reporting the missing *target*, not the link.
+
+  Rebuilt on 3.12 rather than 3.14 deliberately: every number in this file
+  was produced on 3.12.14, and moving to 3.14 would drag pandas and numpy
+  across major versions. `brew install python@3.12` explicitly (rather than
+  as a dependency) is what stops autoremove from doing it again.
+
 ---
 
 ## 7. Open, and where it goes
@@ -410,9 +460,88 @@ than found.
    Also settles Varad's decision-10 false-positive concern.
 2. **`was_deprecated_before`** (§3.3) — the click shim class.
 3. **Version-string handling** (§4.1) — report metrics with and without.
-4. **`ml/db.py`** — idempotent writes against migration 004.
-   `artifacts/metrics.json` is already shaped as a `model_run` row.
+4. ~~**`ml/db.py`**~~ — done, §8.
 5. **More test positives** — 98 is thin. A larger test fraction, or
    repeated temporal splits, would make §5.1 quotable.
 6. **PARAMETER_MOVED is 24% of the dataset and 0.6% positive.** Nobody has
    looked at why. Largest unexamined class.
+7. **Quiet releases are not recorded** (§8.3). A release we analysed and
+   found clean leaves no row anywhere, so it is indistinguishable from one
+   we never looked at — the exact distinction decision 1 exists to keep.
+   Fix is a PyPI re-fetch into `data/releases.csv`, ~2 min for 410
+   packages. Blocked on what the API wants those rows to say.
+8. **Wheel-only releases are an unmeasured off-by-one** (§8.2). Rare, but
+   it is the only remaining way `via_version` can name the wrong release.
+9. **Yanked releases are free human labels.** A maintainer yanking a
+   release is a person saying "this one shipped something bad" — an
+   independent signal, not distant supervision. `charset-normalizer 3.4.8`
+   is one. May be too rare to use; nobody has counted.
+
+---
+
+## 8. The database
+
+Loaded 6 Sep 2026. 500 packages, 2,061 releases, 23,024 breakages, 39,154
+usage rows, 23,024 predictions, one `model_run`.
+
+### 8.1 The loader's counts measure different things
+
+`breakage 23,024 sent, 23,030 in table` is not an error. "Sent" is what we
+built from `changes.csv`; "in table" is a `SELECT count` over the whole
+table. The six-row difference was **pre-existing fixture data** — Varad's
+`model_run v0-fake` slice, honestly named, covering a private symbol and a
+shared symbol path with two `sub_target`s so the API could be built before
+the pipeline produced anything. `scripts/db_extras.py` identifies them and
+proposes the deletion without running it.
+
+`package 500` against a dry run predicting 410 was **my preview being
+wrong**, not the writer. The writer loads every package in `packages.csv`
+including the 90 that broke nothing, because the package table's job is to
+record that we looked; the dry run counted distinct packages in
+`changes.csv`. A preview that does not predict the thing it previews is
+the same class of bug as the chain renderer in §8.2. Fixed.
+
+**Model versions sort as text.** `'v0-fake' > 'lambdarank-label_scoped'`,
+so `ORDER BY version DESC` picks the fixture over the real run. Future runs
+get dated versions; this one cannot be renamed because 23,024 predictions
+carry it as a foreign key.
+
+### 8.2 The pairs really are consecutive
+
+`scripts/verify_pairs.py`, written to answer Varad before loading. Every
+pair moves forward in PEP 440 order; no pair skips a release another pair
+covers. `boto3 1.43.84 -> 1.43.85 -> ... -> 1.43.89` — six consecutive
+patch releases, each diffed.
+
+The counts close on themselves: **1,580 pairs + 481 unbroken runs = 2,061
+releases**, and **481 runs = 410 packages + 71 chain breaks**. Two scripts,
+separate code paths, same 2,061.
+
+A version can be missing from a chain for **three** reasons, not two:
+
+1. **Never listed** — no non-yanked sdist. Leaves *no gap*; the chain steps
+   over it silently. Two sub-cases: **yanked** (correct to skip — nobody
+   upgraded through it; `charset-normalizer 3.4.8` shipped both wheel and
+   sdist and yanked the lot) and **wheel-only** (griffe has no source, so a
+   break introduced there is attributed to the next release that did ship
+   source — a real off-by-one, frequency unmeasured).
+2. **Listed, download failed** — leaves a gap. The chain is split so
+   2.1.0 is never diffed against 2.1.2. In `failures.csv`.
+3. **Listed, diffed, found nothing** — leaves a gap. Not in `failures.csv`.
+
+The first version of the chain renderer printed each pair's *end* version
+and assumed the next pair *started* there, drawing
+`typing-extensions 4.13.2 -> 4.14.0 -> 4.16.0` as unbroken while flagging
+the same package as broken two sections below. **A diagram that hides the
+thing it exists to prove is worse than no diagram**, and this one was about
+to be sent as evidence.
+
+### 8.3 What the database cannot yet say
+
+`changes.csv` holds only pairs that produced a change, so `release` has
+2,061 rows — every release that *broke something*, plus its neighbours.
+A release analysed and found clean is absent. Decision 1 wants
+"analysed, found nothing" to be distinguishable from "never analysed", and
+with the three cases above it is really a **three-way** distinction:
+analysed-and-clean, analysis-failed, and no-source-to-analyse. If that is a
+boolean in the schema it wants to be an enum. Open, §7.7.

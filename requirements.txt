@@ -18,7 +18,12 @@ matplotlib>=3.8          # evaluation plots
 pytest>=8.0              # tests
 python-dotenv>=1.0       # load .env locally
 
+# Database — added week 2 when ml/db.py started writing to Postgres.
+# psycopg is version 3, NOT psycopg2. SQLAlchemy reads a bare
+# "postgresql://" URL as "use psycopg2", so ml/db.py rewrites the prefix
+# to "postgresql+psycopg://" — see connect().
+sqlalchemy>=2.0          # engine, ON CONFLICT, schema introspection
+psycopg[binary]>=3.1     # Postgres driver ([binary] = no local libpq build)
+
 # Added later in the project — uncomment when you get to them:
 # sentence-transformers>=3.0   # week 5, changelog text features
-# sqlalchemy>=2.0              # week 2+, Postgres access
-# psycopg[binary]>=3.1         # Postgres driver
