@@ -185,13 +185,33 @@ def main() -> None:
               "the model is\n** close to a one-feature heuristic. Say so "
               "before anyone asks.")
 
+    # PR-AUC's floor is the POSITIVE RATE, not 0.5 the way ROC-AUC's is.
+    # Without it the number stored in model_run cannot be read by anyone
+    # who was not in the room when it was produced: 0.35 is excellent at a
+    # 3% positive rate and mediocre at 30%. The first run of this shipped
+    # a model_run row with no floor in it, and reconstructing the number
+    # afterwards meant reloading features.csv and re-deriving the split.
+    # Record the floor beside the score.
+    floor = float(test[label].mean())
     run = {"version": version, **{k: round(v, 6) for k, v in m.items()},
            "notes": f"label={label} objective={args.objective} "
                     f"trees={best} test_rows={len(test)} "
+                    f"positive_rate={floor:.4f} "
                     f"best_baseline={best_base}:{bb:.4f}"}
     (ART / "metrics.json").write_text(json.dumps(run, indent=2))
     print(f"\nartifacts/metrics.json — this is your model_run row:\n"
           f"{json.dumps(run, indent=2)}")
+
+    print(f"\nHow to say this out loud, with all three numbers:\n"
+          f"  PR-AUC {m['pr_auc']:.3f}, against a floor of {floor:.3f} "
+          f"(the positive rate)\n"
+          f"  and a best baseline of {bb:.3f} ({best_base}).\n"
+          f"  That is {m['pr_auc'] / floor:.1f}x the floor and "
+          f"{m['pr_auc'] / bb:.1f}x the strongest baseline.")
+    if m["pr_auc"] <= bb:
+        print("\n** The model does NOT beat its own baseline. Do not report "
+              "this as a\n** result. Fix the model or report the baseline "
+              "as the finding.")
 
 
 if __name__ == "__main__":
