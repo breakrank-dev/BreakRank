@@ -54,7 +54,29 @@ from ml.model.train import (fit_model, prepare, score_with,  # noqa: E402
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
 
+# PATH_SHAPE stays at the ORIGINAL THREE. public_depth and has_export_path
+# were briefly folded in here, which silently broke the one comparison this
+# script exists for: NOTES §5.3 reports "path shape alone = 105% under the
+# strict label, 47% under scoped", and a group that grew from three features
+# to five is not the same group. The 97% it then produced under label_alias
+# looked like a finding and was partly just a bigger bucket.
 PATH_SHAPE = ["module_depth", "name_length", "is_top_level"]
+
+# The alias graph's two features, kept SEPARATE on purpose, because they
+# answer a different question. module_depth says where a symbol is DEFINED.
+# public_depth says how far you have to reach to get at it — the shortest
+# name anyone can import. A model leaning on the first is using a proxy for
+# obscurity; a model leaning on the second is using reachability, which is
+# much closer to the thing we actually claim to predict.
+#
+# Worth watching for circularity, and saying so out loud: the usage index
+# records paths as downstream code writes them, and downstream code writes
+# short ones. So a symbol with a short public path has more ways to match
+# and matches on the kind of path the index is full of. That is a real
+# property of the ecosystem AND a property of how the label is built, and
+# this split is what lets the two be argued about with numbers.
+REACHABILITY = ["public_depth", "has_export_path"]
+
 POPULARITY = ["package_rank", "package_churn", "release_size"]
 PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
               "is_version_string", "has_sub_target"]
@@ -63,7 +85,7 @@ PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
 def main() -> None:
     ap = argparse.ArgumentParser(description="Feature ablations.")
     ap.add_argument("--label", default="label",
-                    choices=["label", "label_scoped"])
+                    choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank")
     args = ap.parse_args()
     label = args.label
@@ -78,11 +100,15 @@ def main() -> None:
     train, valid, _ = split_valid(full_train)
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
 
+    drop = lambda g: [f for f in everything if f not in g]  # noqa: E731
     runs = {
         "everything": everything,
-        "no path shape": [f for f in everything if f not in PATH_SHAPE],
-        "no popularity": [f for f in everything if f not in POPULARITY],
+        "no path shape": drop(PATH_SHAPE),
+        "no reachability": drop(REACHABILITY),
+        "no path+reach": drop(PATH_SHAPE + REACHABILITY),
+        "no popularity": drop(POPULARITY),
         "path shape only": PATH_SHAPE,
+        "reachability only": REACHABILITY,
         "popularity only": POPULARITY,
         "per-change only": PER_CHANGE,
     }
@@ -107,14 +133,27 @@ def main() -> None:
     print(t.round(4).to_string())
 
     print(f"\nfull model PR-AUC {base:.4f}")
-    for group, name in ((PATH_SHAPE, "no path shape"),
-                        (POPULARITY, "no popularity")):
+    for name in ("no path shape", "no reachability", "no path+reach",
+                 "no popularity"):
         lost = 1 - out[name]["pr_auc"] / base
-        label_txt = name.replace("no ", "")
-        print(f"  removing {label_txt:<12} costs {lost:>6.1%} of PR-AUC")
+        print(f"  removing {name.replace('no ', ''):<14} "
+              f"costs {lost:>6.1%} of PR-AUC")
 
-    solo = max(("path shape only", "popularity only", "per-change only"),
-               key=lambda k: out[k]["pr_auc"])
+    ps, rc = out["path shape only"]["pr_auc"], out["reachability only"]["pr_auc"]
+    print(f"\n  path shape alone   {ps:.4f}  ({ps / base:.0%} of full) "
+          f"— where the symbol is DEFINED")
+    print(f"  reachability alone {rc:.4f}  ({rc / base:.0%} of full) "
+          f"— how SHORT its public name is")
+    if rc > ps:
+        print("\n  Reachability beats definition-path shape. The model is")
+        print("  closer to 'how easy is this to import' than to 'how deep is")
+        print("  it buried' — which is the more defensible of the two, and")
+        print("  also the one with a circularity worth stating: the usage")
+        print("  index is full of short paths because that is what people")
+        print("  write, so short-named symbols have more ways to match.")
+
+    solo = max(("path shape only", "reachability only", "popularity only",
+                "per-change only"), key=lambda k: out[k]["pr_auc"])
     if out[solo]["pr_auc"] > 0.85 * base:
         print(f"\n** '{solo}' alone reaches {out[solo]['pr_auc'] / base:.0%} "
               f"of the full model.\n** The other features are close to "

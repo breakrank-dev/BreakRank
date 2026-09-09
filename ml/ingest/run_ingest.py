@@ -67,6 +67,13 @@ CHANGE_COLS = [
     "package", "package_rank", "version_from", "version_to", "symbol", "kind",
     "sub_target", "is_private", "in_dunder_all", "module_depth", "is_top_level",
     "name_length", "released_at", "explanation",
+    # Added 6 Sep 2026. Every path downstream code could write for this
+    # symbol, from the old version's alias graph (api_extract.export_index).
+    # Adding a column changes the header, so the resume guard below will
+    # refuse to append to an older changes.csv — which is correct: a file
+    # half-written with this column and half without would silently label
+    # the older half wrong.
+    "export_paths",
 ]
 # Maps one-to-one onto the API's `package` table.
 PACKAGE_COLS = ["package", "download_rank", "github_repo"]

@@ -55,12 +55,25 @@ LABELLED = DATA / "labelled.csv"
 OUT = DATA / "features.csv"
 
 # Anything computed from the usage index. Never a feature.
+#
+# alias_user_count and label_alias joined the list on 6 Sep 2026. They are
+# derived from usage.csv exactly like user_count is — the alias GRAPH is
+# clean, but the moment it is used to look up a usage number the result is
+# the answer, not a feature.
 LEAKY = {"user_count", "name_user_count", "scoped_user_count",
-         "label", "label_scoped", "leaf_owners"}
+         "alias_user_count", "label", "label_scoped", "label_alias",
+         "leaf_owners"}
 
 # The features themselves. Every one is knowable from griffe + PyPI alone.
 NUMERIC = [
     "module_depth",       # click.echo (1) vs click.parser._Opt.add (3)
+    # Where the symbol can be REACHED, not where it is defined: the
+    # shortest name a user can write. pandas.io.parsers.readers.read_csv
+    # is module_depth 4 and public_depth 1. NOTES §5.3 found module_depth
+    # was largely predicting our broken join; this is the honest version
+    # of the same idea, and it comes from the package's own alias graph
+    # with no downstream data involved.
+    "public_depth",
     "name_length",        # long names tend to be obscure
     "package_rank",       # 1 = most downloaded. The popularity prior.
     "release_size",       # how many changes shipped together
@@ -73,6 +86,7 @@ BOOLEAN = [
     "is_top_level",       # click.echo, the kind people import directly
     "is_version_string",  # the 36%-of-positives problem, made explicit
     "has_sub_target",     # a parameter changed, not the whole symbol
+    "has_export_path",    # re-exported under a shorter public name
 ]
 CATEGORICAL = ["kind", "bump"]
 
@@ -152,7 +166,7 @@ def main() -> None:
 
     print(f"\ntemporal split at {df.attrs['cutoff'].date()}")
     for name, part in df.groupby("split"):
-        for lab in ("label", "label_scoped"):
+        for lab in ("label", "label_scoped", "label_alias"):
             if lab in part:
                 print(f"  {name:<5} {len(part):>7,} rows   "
                       f"{lab:<13} {int(part[lab].sum()):>5} positive "

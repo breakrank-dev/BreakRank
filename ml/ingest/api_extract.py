@@ -226,6 +226,160 @@ def module_exports(mod: griffe.Module) -> set[str]:
     return out
 
 
+# ------------------------------------------------------- the re-export gap
+
+def alias_hops(obj, seen: set[int] | None = None,
+               hops: dict[str, str] | None = None, depth: int = 0
+               ) -> dict[str, str]:
+    """Every `alias path -> the path it names`, ONE hop, for one tree.
+
+    THE PROBLEM THIS SOLVES. griffe reports a breaking change at the
+    DEFINITION: `pandas.io.parsers.readers.read_csv`. Downstream code
+    imports `from pandas import read_csv` and our usage index records
+    `pandas.read_csv`. The two never join, so the most heavily used symbols
+    in the ecosystem are labelled negative, and `module_depth` ends up
+    predicting our own measurement error (NOTES §5.3).
+
+    NO RESOLUTION HAPPENS HERE, deliberately. `alias.target_path` is a
+    plain string built from the import statement; reading it does not make
+    griffe go and find the target, so none of the AliasResolutionError /
+    CyclicAliasError machinery can fire. That is the whole reason this is
+    cheap enough to run on every version.
+
+    Never recurse INTO an alias. Touching an alias's `.members` is what
+    triggers resolution, which is exactly what we are avoiding — and it is
+    the same cyclic-alias hazard that already truncates numpy's diff
+    (see diff_collections).
+    """
+    hops = {} if hops is None else hops
+    seen = set() if seen is None else seen
+    if id(obj) in seen or depth > 12:
+        return hops
+    seen.add(id(obj))
+    try:
+        members = getattr(obj, "members", {}) or {}
+    except Exception:
+        return hops
+    for member in members.values():
+        try:
+            if getattr(member, "is_alias", False):
+                target = getattr(member, "target_path", None)
+                if isinstance(target, str) and target:
+                    hops[member.path] = target
+            else:
+                alias_hops(member, seen, hops, depth + 1)
+        except Exception:
+            continue
+    return hops
+
+
+def resolve_alias_chains(hops: dict[str, str],
+                         max_hops: int = 10) -> dict[str, str]:
+    """Follow alias -> alias -> ... -> the real object.
+
+    ONE HOP IS NOT ENOUGH, and this is the trap. Measured on a fixture:
+
+        fakepkg.read_csv     -> fakepkg.io.read_csv           (still an alias)
+        fakepkg.io.read_csv  -> fakepkg.io.parsers.read_csv   (the function)
+
+    which is exactly pandas: `pandas.read_csv` -> `pandas.io.parsers.read_csv`
+    -> `pandas.io.parsers.readers.read_csv`. A one-hop map would join
+    against a path griffe never reports and SILENTLY DO NOTHING — no error,
+    no crash, just a fix that appears not to work.
+
+    Cycles are real, not theoretical: `a` imports from `b` while `b`
+    imports from `a` is legal Python, and numpy's cyclic aliases already
+    crash griffe's own diff walker partway through. A cycle contributes
+    nothing rather than raising.
+    """
+    out: dict[str, str] = {}
+    for start in hops:
+        current, walked, n = start, {start}, 0
+        while current in hops and n < max_hops:
+            current = hops[current]
+            n += 1
+            if current in walked:
+                current = None
+                break
+            walked.add(current)
+        if current and current != start:
+            out[start] = current
+    return out
+
+
+def export_index(collection, modules: list[str]) -> dict[str, list[str]]:
+    """`definition path -> [the paths users actually write]`, reversed.
+
+    Targets outside this distribution are dropped. Every `import` inside a
+    package registers as an alias, so the raw map is mostly stdlib —
+    measured on requests 2.34.1: 221 targets, of which the great majority
+    were things like `collections.OrderedDict` and `base64.b64encode`.
+    griffe only ever reports breakages at paths inside the modules being
+    diffed, so those entries can never be looked up. Dropping them is free
+    and keeps the index small on packages the size of pandas.
+    """
+    roots = {m.split(".")[0] for m in modules}
+    hops: dict[str, str] = {}
+    for m in modules:
+        if m in collection:
+            alias_hops(collection[m], hops=hops)
+    rev: dict[str, list[str]] = {}
+    for alias, target in resolve_alias_chains(hops).items():
+        if target.split(".")[0] in roots:
+            rev.setdefault(target, []).append(alias)
+    return rev
+
+
+def user_paths(symbol: str, rev: dict[str, list[str]]) -> list[str]:
+    """Every way downstream code could name `symbol`.
+
+    LONGEST-PREFIX REWRITING, because the alias is rarely on the thing that
+    changed. griffe reports `pandas.io.formats.style.Styler.where`; the
+    re-export is on `Styler`, not on `.where`. Matching only whole symbols
+    would catch re-exported functions and miss every method on a
+    re-exported class — and classes are where the methods are.
+
+    So each prefix of the symbol is checked and the remainder carried over:
+    `fakepkg.io.parsers.Frame.append` becomes `fakepkg.Frame.append`.
+
+    A symbol with no alias returns [] — this never invents a path.
+
+    ONLY SHORTER NAMES SURVIVE, and this filter is the whole difference
+    between signal and noise. Aliases run in both directions:
+
+        requests/__init__.py:  from .api import get
+            -> requests.get           names requests.api.get       SHORTER
+        packaging/metadata.py: from . import utils
+            -> packaging.metadata.utils names packaging.utils      LONGER
+
+    Both are real aliases and Python resolves both, but only the first is
+    a name a human writes. Without this filter the column fills with paths
+    like `packaging.metadata.utils.BuildTag` — measured at 55% of rows on
+    a 3-package run, which looks like coverage and is nothing of the kind.
+
+    Equal depth is kept only when the ROOT differs, which is the
+    `attr` / `attrs` case: attrs.exceptions.FrozenError.msg is a genuine
+    second name for the same thing, while attr.validators.attrib is just
+    _make.attrib imported into a sibling module.
+    """
+    out: set[str] = set()
+    parts = symbol.split(".")
+    depth, root = len(parts), parts[0]
+    for i in range(len(parts), 0, -1):
+        aliases = rev.get(".".join(parts[:i]))
+        if not aliases:
+            continue
+        tail = parts[i:]
+        for alias in aliases:
+            candidate = ".".join([alias, *tail])
+            cparts = candidate.split(".")
+            if len(cparts) < depth or (len(cparts) == depth
+                                       and cparts[0] != root):
+                out.add(candidate)
+    out.discard(symbol)
+    return sorted(out)
+
+
 def diff_versions(package_name: str, old_path, new_path,
                   module: str | None = None) -> list[dict]:
     """
@@ -353,6 +507,12 @@ def diff_collections(package_name: str, old_col, new_col,
     exports_by_root = {m: module_exports(old_col[m])
                        for m in modules if m in old_col}
 
+    # The OLD version's alias map, for exactly the reason __all__ is taken
+    # from the old version: it is how downstream code referred to the
+    # symbol BEFORE the upgrade removed it. Built once per pair, off a
+    # collection that is already in memory — no extra parsing.
+    aliases = export_index(old_col, modules)
+
     rows = []
     seen: set[tuple[str, str, str]] = set()
     for b in breakages:
@@ -448,6 +608,17 @@ def diff_collections(package_name: str, old_col, new_col,
                 "is_top_level": symbol.count(".") == 1,
                 # Longer names tend to be more obscure.
                 "name_length": len(parts[-1]),
+                # EVERY path downstream code could have written for this
+                # symbol, from the old version's alias graph. This is the
+                # exact join that replaces the leaf-name heuristic in
+                # labels.py: `pandas.read_csv` for a change griffe reports
+                # at `pandas.io.parsers.readers.read_csv`.
+                #
+                # Semicolon-joined because a CSV cell holds one string, and
+                # ";" cannot appear in a dotted Python path. Empty for most
+                # rows — a symbol that is never re-exported has no other
+                # name, and this column does not invent one.
+                "export_paths": ";".join(user_paths(symbol, aliases)),
             }
         )
 

@@ -110,7 +110,7 @@ def score_with(model, frame: pd.DataFrame, feats: list[str]):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the BreakRank ranker.")
     ap.add_argument("--label", default="label",
-                    choices=["label", "label_scoped"])
+                    choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank",
                     choices=["lambdarank", "binary"])
     ap.add_argument("--version", default=None,

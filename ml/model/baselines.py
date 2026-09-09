@@ -76,7 +76,7 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score the dumb baselines.")
     ap.add_argument("--label", default="label",
-                    choices=["label", "label_scoped"],
+                    choices=["label", "label_scoped", "label_alias"],
                     help="which label to score against")
     args = ap.parse_args()
 
