@@ -55,8 +55,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import evaluate, n_rankable  # noqa: E402
-from ml.model.train import (GROUP, fit_model, prepare,  # noqa: E402
-                            score_with, split_valid)
+from ml.model.train import (GROUP, fit_cv, fit_model,  # noqa: E402
+                            prepare, score_with, split_valid)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -71,7 +71,7 @@ MIN_TEST_POSITIVES = 30
 
 
 def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
-              objective: str) -> dict | None:
+              objective: str, stopping: str = "cv") -> dict | None:
     """Train and score at one cut date. None if the split is unusable."""
     when = pd.to_datetime(df["released_at"], errors="coerce")
     cutoff = when.dropna().quantile(q)
@@ -92,10 +92,17 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
         return {"cut": str(cutoff.date()), "q": q, "test_rows": len(test),
                 "test_pos": pos, "skipped": True}
 
-    model = fit_model(train, valid, feats, label, objective)
+    if stopping == "cv":
+        model, trees, _folds = fit_cv(full_train, feats, label, objective)
+        fit_on = full_train
+    else:
+        model = fit_model(train, valid, feats, label, objective)
+        trees = getattr(model, "best_iteration_", None) or 600
+        fit_on = train
+
     scored = test.copy()
     scored["model"] = score_with(model, test, feats)
-    scored = add_baseline_scores(train, scored, label)
+    scored = add_baseline_scores(fit_on, scored, label)
 
     m = evaluate(scored, "model", label)
     pop = evaluate(scored, "popularity", label)
@@ -108,7 +115,7 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
         "test_rows": len(test),
         "test_pos": pos,
         "floor": round(floor, 4),
-        "trees": getattr(model, "best_iteration_", None) or 600,
+        "trees": trees,
         "rankable10": n_rankable(test, label, 10),
         "pr_auc": round(m["pr_auc"], 4),
         "p_at_10": round(m["precision_at_10"], 4),
@@ -124,8 +131,8 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
 
 
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
-              objective: str) -> pd.DataFrame:
-    rows = [one_split(df, q, label, feats, objective) for q in CUTS]
+              objective: str, stopping: str = "cv") -> pd.DataFrame:
+    rows = [one_split(df, q, label, feats, objective, stopping) for q in CUTS]
     return pd.DataFrame([r for r in rows if r])
 
 
@@ -194,6 +201,10 @@ def main() -> None:
     ap.add_argument("--all-labels", action="store_true",
                     help="run all three and compare them honestly")
     ap.add_argument("--objective", default="lambdarank")
+    ap.add_argument("--stopping", default="cv", choices=["cv", "holdout"],
+                    help="cv picks the tree count by folds inside train; "
+                         "holdout is the old single-slice rule. Run both to "
+                         "see whether the fix actually fixed anything.")
     args = ap.parse_args()
 
     if not FEATURES.exists():
@@ -205,15 +216,16 @@ def main() -> None:
               else [args.label])
 
     print(f"\n{len(df):,} rows   {len(CUTS)} cut dates   "
-          f"{len(feats)} features   objective {args.objective}")
+          f"{len(feats)} features   objective {args.objective}   "
+          f"stopping {args.stopping}")
     print("Each cut refits the model AND the baselines, so lift is computed")
     print("within a split before anything is summarised.")
 
     summary = {}
     for label in labels:
-        t = run_label(df, label, feats, args.objective)
+        t = run_label(df, label, feats, args.objective, args.stopping)
         report(t, label)
-        out = DATA / f"stability_{label}.csv"
+        out = DATA / f"stability_{label}_{args.stopping}.csv"
         t.to_csv(out, index=False)
         print(f"\n  saved -> {out}")
         ok = t[~t["skipped"]]

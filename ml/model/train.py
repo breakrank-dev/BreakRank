@@ -107,6 +107,104 @@ def score_with(model, frame: pd.DataFrame, feats: list[str]):
     return raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
 
 
+# --------------------------------------------------- choosing a tree count
+
+# Expanding-window boundaries inside TRAIN. Starts at 40% rather than 20%
+# because a fold fitted on a fifth of the data stops early for reasons that
+# have nothing to do with the final model.
+CV_BOUNDS = [0.40, 0.55, 0.70, 0.85, 1.00]
+MIN_TREES = 20
+
+
+def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
+                  objective: str, cap: int = 600):
+    """Pick the tree count by expanding-window CV inside train.
+
+    THE PROBLEM. `split_valid` hands early stopping ONE slice — the newest
+    20% of train — and that slice decides everything. Measured (§5.6): the
+    chosen count ranged from 1 to 81 trees across seven cut dates, and the
+    two worst results in the whole stability table were both 1-tree fits:
+    label_scoped at 0.37x and the strict label at 0.57x, each LOSING to a
+    baseline that sorts by download count. A stopping rule that can end
+    training after one tree is not stopping early, it is not starting.
+
+    It happens because the validation slice is not representative. Train
+    runs 4.25% positive, that newest slice 6.39%, test 3.48% — validation
+    is roughly twice as dense in positives as the half we actually score
+    on, so "stopped improving" is measured against a distribution the
+    model is never judged against.
+
+    THE FIX, which is ordinary practice and not a trick: use several
+    validation folds to CHOOSE a number, then refit on all of train with
+    that number fixed. Each fold trains on everything before a date and
+    validates on the window after it, so no fold ever sees its own future.
+    The median across folds is what survives one bad slice — a single fold
+    collapsing to 1 tree moves a median of four almost not at all, which
+    is the entire point.
+
+    TEST IS NEVER TOUCHED. Every fold lives inside train. The temporal
+    train/test split is unchanged, and the tree count is a hyperparameter
+    chosen on training data, exactly like any other.
+    """
+    d = pd.to_datetime(full_train["released_at"], errors="coerce")
+    known = d.dropna()
+    if known.empty:
+        return cap, []
+
+    iters = []
+    for lo, hi in zip(CV_BOUNDS, CV_BOUNDS[1:]):
+        c_lo, c_hi = known.quantile(lo), known.quantile(hi)
+        sub = full_train[d <= c_lo].sort_values(GROUP)
+        val = full_train[(d > c_lo) & (d <= c_hi)].sort_values(GROUP)
+        # A fold with no positives on either side cannot rank anything and
+        # would contribute a meaningless number to the median.
+        if sub.empty or val.empty or not sub[label].sum() or not val[label].sum():
+            continue
+        try:
+            m = fit_model(sub, val, feats, label, objective)
+        except Exception:
+            continue
+        iters.append(int(getattr(m, "best_iteration_", None) or cap))
+
+    if not iters:
+        return cap, []
+    n = int(np.median(iters))
+    return max(n, MIN_TREES), iters
+
+
+def fit_fixed(train: pd.DataFrame, feats: list[str], label: str,
+              n_trees: int, objective: str = "lambdarank"):
+    """Refit on ALL of train with the tree count already decided.
+
+    No early stopping and no validation set, deliberately: the number was
+    chosen by cv_tree_count() and re-deciding it here on a slice would put
+    the §5.6 problem straight back.
+    """
+    common = dict(n_estimators=n_trees, learning_rate=0.05, num_leaves=31,
+                  min_child_samples=30, subsample=0.9, subsample_freq=1,
+                  colsample_bytree=0.9, random_state=0, verbose=-1)
+    if objective == "lambdarank":
+        model = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1],
+                               **common)
+        model.fit(train[feats], train[label], group=group_sizes(train))
+    else:
+        pos = max(int(train[label].sum()), 1)
+        model = lgb.LGBMClassifier(
+            objective="binary",
+            scale_pos_weight=(len(train) - pos) / pos, **common)
+        model.fit(train[feats], train[label])
+    return model
+
+
+def fit_cv(full_train: pd.DataFrame, feats: list[str], label: str,
+           objective: str = "lambdarank"):
+    """cv_tree_count + fit_fixed. Returns (model, n_trees, fold_iters)."""
+    n_trees, iters = cv_tree_count(full_train, feats, label, objective)
+    model = fit_fixed(full_train.sort_values(GROUP), feats, label,
+                      n_trees, objective)
+    return model, n_trees, iters
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the BreakRank ranker.")
     ap.add_argument("--label", default="label",
@@ -115,6 +213,11 @@ def main() -> None:
                     choices=["lambdarank", "binary"])
     ap.add_argument("--version", default=None,
                     help="model_run.version; defaults to label+objective")
+    ap.add_argument("--stopping", default="cv", choices=["cv", "holdout"],
+                    help="cv: pick the tree count by expanding-window CV "
+                         "inside train, then refit on all of it. holdout: "
+                         "the old single-slice early stopping, kept so the "
+                         "two can be compared rather than asserted.")
     args = ap.parse_args()
     label = args.label
     version = args.version or f"{args.objective}-{label}"
@@ -129,25 +232,41 @@ def main() -> None:
     train, valid, vcut = split_valid(full_train)
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
 
-    print(f"\nlabel {label}   objective {args.objective}")
+    print(f"\nlabel {label}   objective {args.objective}   "
+          f"stopping {args.stopping}")
     print(f"train {len(train):,} ({train[label].mean():.2%} pos)   "
           f"valid {len(valid):,} ({valid[label].mean():.2%} pos)   "
           f"test {len(test):,} ({test[label].mean():.2%} pos)")
-    print(f"validation is everything in train after {vcut.date()}\n")
+    print(f"the holdout validation slice is train after {vcut.date()}")
+    if valid[label].mean() > 1.5 * test[label].mean():
+        print(f"** that slice is {valid[label].mean() / test[label].mean():.1f}x "
+              "denser in positives than test — which is exactly\n"
+              "** why --stopping cv exists (§5.6).")
 
-    model = fit_model(train, valid, feats, label, args.objective)
-    best = getattr(model, "best_iteration_", None) or 600
-    print(f"stopped at {best} trees")
-    if best < 50:
-        print(f"** {best} trees is very few. Validation stopped improving "
-              "almost\n** immediately — either the signal is thin or the "
-              "validation half\n** is not representative. Check the positive "
-              "rates printed above.")
+    if args.stopping == "cv":
+        model, best, folds = fit_cv(full_train, feats, label, args.objective)
+        fit_on = full_train
+        print(f"\nCV folds chose {folds} trees -> median {best}, "
+              f"refitted on all {len(full_train):,} training rows")
+        if len(set(folds)) > 1 and max(folds) > 5 * max(min(folds), 1):
+            print(f"** the folds disagree by {max(folds) / max(min(folds), 1):.0f}x. "
+                  "The median is doing real work here;\n** any single slice "
+                  "could have handed back either end of that.")
+    else:
+        model = fit_model(train, valid, feats, label, args.objective)
+        best = getattr(model, "best_iteration_", None) or 600
+        fit_on = train
+        print(f"\nstopped at {best} trees")
+        if best < 50:
+            print(f"** {best} trees is very few. Validation stopped improving "
+                  "almost\n** immediately — either the signal is thin or the "
+                  "validation half\n** is not representative. Check the "
+                  "positive rates printed above.")
     print()
 
     scored = test.copy()
     scored["model"] = score_with(model, test, feats)
-    scored = add_baseline_scores(train, scored, label)
+    scored = add_baseline_scores(fit_on, scored, label)
 
     names = ["model", "popularity", "kind_prior", "semver", "griffe_all"]
     results = {n: evaluate(scored, n, label) for n in names}
@@ -193,11 +312,39 @@ def main() -> None:
     # afterwards meant reloading features.csv and re-deriving the split.
     # Record the floor beside the score.
     floor = float(test[label].mean())
+    notes = (f"label={label} objective={args.objective} "
+             f"stopping={args.stopping} trees={best} test_rows={len(test)} "
+             f"positive_rate={floor:.4f} "
+             f"best_baseline={best_base}:{bb:.4f}")
+
+    # CARRY THE RANGE INTO THE ROW ITSELF. pr_auc here is ONE cut date, and
+    # §5.6 measured that a single cut can sit anywhere in a band half as
+    # wide as the number itself — this run's 0.3924 is near the top of
+    # 0.309–0.438. The database is read by a website that will print
+    # whatever it finds, and a context-free metric on a public page is the
+    # exact failure this project spent two days documenting. `notes` is
+    # free text and reaches the API unchanged, so the range rides along
+    # with the number instead of living only in a notebook.
+    stab = DATA / f"stability_{label}_{args.stopping}.csv"
+    if stab.exists():
+        st = pd.read_csv(stab)
+        st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
+        if not st.empty:
+            lift = st["lift_vs_pop"].astype(float)
+            wins = int(st["beats_pop"].astype(bool).sum())
+            notes += (f" | across {len(st)} cut dates: beats {best_base} "
+                      f"{wins}/{len(st)}, lift median {lift.median():.2f}x "
+                      f"min {lift.min():.2f}x max {lift.max():.2f}x")
+        else:
+            print("note: stability file has no usable splits; the model_run "
+                  "row will carry a single-cut number with no range.")
+    else:
+        print(f"note: {stab} not found, so this model_run row will carry a "
+              "single-cut\nnumber with no range. Run ml/model/stability.py "
+              f"--label {label} --stopping {args.stopping} first.")
+
     run = {"version": version, **{k: round(v, 6) for k, v in m.items()},
-           "notes": f"label={label} objective={args.objective} "
-                    f"trees={best} test_rows={len(test)} "
-                    f"positive_rate={floor:.4f} "
-                    f"best_baseline={best_base}:{bb:.4f}"}
+           "notes": notes}
     (ART / "metrics.json").write_text(json.dumps(run, indent=2))
     print(f"\nartifacts/metrics.json — this is your model_run row:\n"
           f"{json.dumps(run, indent=2)}")

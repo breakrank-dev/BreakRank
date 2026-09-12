@@ -39,24 +39,33 @@ Three labels now, on the same rows (§9). `label_alias` is the shipped one.
 
 | label | beats popularity | median lift | **worst cut** | best cut |
 |---|---|---|---|---|
-| strict `label` | **4 / 7** | 1.08× | **0.57×** | 1.45× |
-| `label_scoped` | 6 / 7 | 1.74× | **0.37×** | 2.17× |
-| **`label_alias`** | **7 / 7** | 1.82× | **1.48×** | 3.12× |
+| strict `label` | **5 / 7** | 1.96× | **0.75×** | 2.39× |
+| `label_scoped` | 7 / 7 | 1.97× | 1.58× | 2.62× |
+| **`label_alias`** | **7 / 7** | **2.48×** | **1.79×** | 3.81× |
+
+(Figures with the fixed stopping rule, §5.7. The pre-fix numbers — where
+scoped collapsed to 0.37× and the strict label to 0.57× — are in §5.6.)
 
 The claim to make is **not** "3.12× the baseline". It is:
 
 > The ranker beats the strongest baseline at **every one of seven cut
-> dates**, by at least **1.48×**.
+> dates**, by a median of **2.48×** and never less than **1.79×**.
+> precision@10 runs 0.27–0.34, nDCG@20 0.64–0.69.
 
 Smaller number, far stronger statement — it cannot be dismantled by
 someone choosing a different date, which is exactly what dismantles the
 other two labels. The strict label **loses to popularity at three of
 seven dates**; scoped collapses to 0.37× at one.
 
-Read the **worst** column, not the median. Scoped and alias sit 0.08×
-apart on the median and are not distinguishable there; they are decided
-by the fact that one of them is sometimes worse than sorting by download
-count and the other never is.
+Read the **worst** column first. The strict label still loses to
+popularity at two of seven dates and is not shippable on any median.
+Scoped and alias both survive every cut now, and alias wins on worst case
+(1.79× vs 1.58×), on median (2.48× vs 1.97×, a gap wider than the 0.5×
+threshold below which this file treats a comparison as unreadable), and
+on spread — 0.129 against 0.243, so **the best model is also the most
+stable one**. The provenance argument (§9.3: 210 of scoped's positives
+have no import statement behind them) now agrees with the numbers instead
+of carrying them.
 
 Single-split reference numbers, 10 Sep cut (2026-08-10), kept because
 §5.3, §5.5 and §9 all quote them:
@@ -540,6 +549,52 @@ and overlap heavily in test, so they are not independent draws. The range
 is a *sensitivity* — how much the answer moves when the arbitrary choice
 moves — not a confidence interval, and must never be written with a `±`.
 
+### 5.7 Fixing the stopping rule (12 Sep, `--stopping cv`)
+
+§5.6 named the mechanism: one validation slice picks the tree count, and
+the two worst results in the table were both **1-tree fits**. So stop
+letting one slice decide. Four expanding-window folds *inside train* each
+propose a count, the **median** wins, and the model is then refitted on
+**all** of train with that number fixed — no early stopping at fit time,
+because re-deciding it on a slice would reinstate the problem. Every fold
+lives inside the training half; test is not involved at any point.
+
+The median is the mechanism, not a detail: one fold collapsing to 1 tree
+barely moves a median of four.
+
+| | holdout (one slice) | **cv (four folds)** |
+|---|---|---|
+| strict `label` | 4/7, median 1.08×, worst **0.57×** | 5/7, median 1.96×, worst 0.75× |
+| `label_scoped` | 6/7, median 1.74×, worst **0.37×** | **7/7**, median 1.97×, worst **1.58×** |
+| `label_alias` | 7/7, median 1.82×, worst 1.48× | **7/7**, median **2.48×**, worst **1.79×** |
+| trees chosen | **1 – 81** | **20 – 37** |
+| alias PR-AUC spread | 0.221 | **0.129** |
+
+**Every label improved.** That is the tell that this was a bug rather than
+a tuning preference: a broken stopping rule was *suppressing* the result,
+not inflating it. `label_scoped`'s worst case improved four-fold and its
+collapse disappeared entirely.
+
+Two legitimate effects are combined here and both should be stated. The
+count no longer depends on one unrepresentative slice — and `fit_fixed`
+trains on the whole training half, where the old path threw away a fifth
+of it to build a validation set it then used badly.
+
+**Why this changed the shipping decision's basis, not its outcome.**
+Before the fix, alias was chosen because scoped had a failure mode. After
+it, scoped has no failure mode either, and alias wins on the ordinary
+merits instead: better worst case (1.79× vs 1.58×), better median (2.48×
+vs 1.97×, a gap wider than the 0.5× this file treats as the readability
+threshold), and the **smallest spread of the three**. The label-provenance
+argument in §9.3 now agrees with the metrics rather than outvoting them.
+
+**Still open.** The strict label loses to popularity at 2 of 7 dates even
+with the fix, so nothing in the strict column is quotable. `rankable10`
+still falls to 5–9 pairs at the late cuts (§5.1). And the CV fold count,
+the 40% starting boundary and the 20-tree floor are all unexamined
+choices — they are stated in `train.py` rather than tuned, which is
+honest but not the same as justified.
+
 ---
 
 ## 6. Operational facts
@@ -582,7 +637,10 @@ moves — not a confidence interval, and must never be written with a `±`.
 0. ~~**Repeated temporal splits**~~ — done, §5.6. It cost the project
    three headline numbers and bought a defensible one. **New top item
    below.**
-0b. **EARLY STOPPING — now the top item.** Trees land anywhere from **1
+0b. ~~**Early stopping**~~ — done, §5.7. Every label improved; scoped's
+   0.37× collapse became 1.58×. Remaining: the fold count, the 40% start
+   boundary and the 20-tree floor are stated, not tuned.
+0c. **ORIGINAL TEXT, kept for the record — early stopping.** Trees land anywhere from **1
    to 81** across cuts, and the two worst splits in §5.6 are both 1-tree
    fits: `label_scoped` at 0.37× and the strict label at 0.57×. That is no
    longer "the numbers are noisy" — it is a specific, findable cause with
