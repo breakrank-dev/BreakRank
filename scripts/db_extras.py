@@ -160,7 +160,15 @@ def main() -> None:
     print("\n" + "=" * 68)
     print("  THE ROWS WE DID NOT SEND")
     print("=" * 68)
-    for k in extra:
+    # Print a sample, not all of them. This started life expecting 6 rows
+    # and printed every one in full; at 223 that is several screens of
+    # JSON nobody reads, and the classification below is the part that
+    # actually answers the question.
+    SHOW = 12
+    if len(extra) > SHOW:
+        print(f"showing {SHOW} of {len(extra)} — the breakdown below is the "
+              "part that matters\n")
+    for k in extra[:SHOW]:
         bid, detail, priv = in_db[k]
         pkg, ver, sym, kind, sub = k
         print(f"\nid {bid}   {pkg} {ver}")
@@ -181,20 +189,67 @@ def main() -> None:
         print("All in one package — consistent with hand-written fixtures "
               "rather\nthan a pipeline that half-ran.")
 
+    # CLASSIFY. Rows we did not send are not all the same thing, and an
+    # earlier version of this script said any package missing from
+    # changes.csv was "strong evidence these were inserted by hand". That
+    # is wrong and it pointed at the wrong conclusion: grpcio, brotli,
+    # safetensors and backports-zstd were never hand-inserted — they
+    # SUCCEEDED on an earlier run and failed on this one. The loader has
+    # no DELETE, so the table is the union of every run ever made.
+    #
+    # Three categories, three different correct actions:
     real_pkgs = set(changes["package"])
-    unknown = pkgs - real_pkgs
-    if unknown:
-        print(f"\n{len(unknown)} of those packages are not in changes.csv at "
-              f"all: {', '.join(sorted(unknown))}")
-        print("A package we never analysed appearing in the table is strong")
-        print("evidence these were inserted by hand.")
+    live_rel = set(zip(changes["package"], changes["version_to"])) | \
+               set(zip(changes["package"], changes["version_from"]))
+
+    # 1. Un-importable roots. `python.grpcio.grpc.StatusCode.OK` and
+    #    `bindings.python.py_src.tokenizers...` are directory names the
+    #    module detector walked into (NOTES 9.5). Nobody can import them,
+    #    so they are wrong regardless of which run produced them, and the
+    #    real fix is at ingest.
+    BAD_ROOTS = ("python.", "bindings.", "py_src.", "crates.", "_cffi_src.")
+    bad = [k for k in extra if k[2].startswith(BAD_ROOTS)]
+
+    # 2. The release is still in the current dataset but this row is not.
+    #    We re-analysed that exact release and did not produce this row,
+    #    so it is superseded — the safest thing here is deletion.
+    superseded = [k for k in extra
+                  if k not in bad and (k[0], k[1]) in live_rel]
+
+    # 3. The release has left the six-release window. These are TRUE
+    #    findings about real releases and deleting them makes the product
+    #    worse: someone upgrading litellm 1.95 -> 1.97 still wants to know
+    #    what 1.96 broke. Accumulation is the correct behaviour here.
+    aged_out = [k for k in extra if k not in bad and k not in superseded]
+
+    print("\n" + "-" * 68)
+    print("WHAT KIND OF EXTRA ARE THEY?")
+    print(f"  un-importable symbol root (NOTES 9.5):  {len(bad):>4}"
+          "   <- delete, these are wrong")
+    print(f"  release re-analysed, row not produced:  {len(superseded):>4}"
+          "   <- delete, superseded")
+    print(f"  release aged out of the window:         {len(aged_out):>4}"
+          "   <- KEEP, still true")
+    for name, group in (("un-importable", bad), ("superseded", superseded),
+                        ("aged out", aged_out)):
+        if group:
+            ps = sorted({k[0] for k in group})
+            print(f"\n  {name}: {', '.join(ps[:10])}"
+                  + (" ..." if len(ps) > 10 else ""))
 
     print("\n" + "-" * 68)
     print("NOT RUN — this is a suggestion, not an action. These rows are in")
     print("a table Varad also writes to, so agree with him before deleting")
     print("anything. If you both decide they are fixtures:\n")
-    print("  DELETE FROM breakage WHERE id IN ("
-          + ", ".join(str(in_db[k][0]) for k in extra) + ");")
+    removable = bad + superseded
+    if removable:
+        ids = ", ".join(str(in_db[k][0]) for k in removable)
+        print(f"  DELETE FROM prediction WHERE breakage_id IN ({ids});")
+        print(f"  DELETE FROM breakage   WHERE id IN ({ids});")
+        print(f"\n  That is {len(removable)} rows — the un-importable and the")
+        print(f"  superseded. The {len(aged_out)} aged-out rows are NOT in it.")
+    else:
+        print("  (nothing safe to delete automatically)")
     print("\nCheck the release and package tables afterwards too — a fixture")
     print("breakage usually arrives with a fixture release behind it.")
 
