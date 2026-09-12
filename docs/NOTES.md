@@ -7,8 +7,14 @@ report is due, and an examiner asking "how do you know?"
 Rule for this file: **no claim without the number that produced it.** If a
 line here says something is true, the run that showed it is named.
 
-Last updated after the Day-6 alias run. Dataset: **22,914 breakage rows
-across 406 packages**, top 500 PyPI by download count, 6 releases each.
+Last updated 12 Sep 2026, after the split-stability run. Dataset:
+**22,914 breakage rows across 406 packages**, top 500 PyPI by download
+count, 6 releases each.
+
+**Read §1's range table before quoting any single number from this file.**
+Several sections still cite one cut date because that is what produced
+them; §5.6 measured how far those numbers move when the date moves, and
+the answer is: a lot.
 
 ---
 
@@ -25,26 +31,47 @@ Three labels now, on the same rows (§9). `label_alias` is the shipped one.
 | test positive rate — **the PR-AUC floor** | 0.0172 | 0.0343 | **0.0348** |
 | ranker PR-AUC | 0.0981 | 0.2299 | **0.3301** |
 
-Full measured result for the shipped model, 9 Sep run:
+### The headline, stated the way it survives scrutiny
+
+**Every lift this project quoted before 12 Sep was the top of a range.**
+§5.6 refits at seven cut dates. Against the strongest baseline
+(popularity):
+
+| label | beats popularity | median lift | **worst cut** | best cut |
+|---|---|---|---|---|
+| strict `label` | **4 / 7** | 1.08× | **0.57×** | 1.45× |
+| `label_scoped` | 6 / 7 | 1.74× | **0.37×** | 2.17× |
+| **`label_alias`** | **7 / 7** | 1.82× | **1.48×** | 3.12× |
+
+The claim to make is **not** "3.12× the baseline". It is:
+
+> The ranker beats the strongest baseline at **every one of seven cut
+> dates**, by at least **1.48×**.
+
+Smaller number, far stronger statement — it cannot be dismantled by
+someone choosing a different date, which is exactly what dismantles the
+other two labels. The strict label **loses to popularity at three of
+seven dates**; scoped collapses to 0.37× at one.
+
+Read the **worst** column, not the median. Scoped and alias sit 0.08×
+apart on the median and are not distinguishable there; they are decided
+by the fact that one of them is sometimes worse than sorting by download
+count and the other never is.
+
+Single-split reference numbers, 10 Sep cut (2026-08-10), kept because
+§5.3, §5.5 and §9 all quote them:
 
 | | value | vs floor |
 |---|---|---|
 | floor — test positive rate | 0.0348 | 1.0× |
 | semver baseline (the kill-date gate) | 0.0389 | 1.1× |
 | best baseline — popularity | 0.1057 | 3.0× |
-| **ranker PR-AUC** | **0.3301** | **9.5×** |
+| ranker PR-AUC | 0.3301 | 9.5× |
 | precision@10 | 0.3313 | over 16 rankable pairs — see §5.1 |
 | nDCG@20 | 0.6148 | over 11 rankable pairs |
 
-**3.12× the strongest baseline**, and that baseline is popularity, not
-semver. The kill-date gate only required beating the version number.
-
-The strict and scoped PR-AUCs above come from `ablate.py`'s "everything"
-row on this dataset; their baselines were not re-measured on the 9 Sep
-data, so **only the alias column is a complete result**. PR-AUC is not
-comparable across labels in general — its floor is the positive rate —
-but scoped (0.0343) and alias (0.0348) happen to land within 0.0005 of
-each other here, so those two can be read side by side.
+That cut is the **second-best of seven** for this label. Quote it only
+alongside the range above.
 
 Kill-date gate (≥20,000 labelled rows AND ranker beats the version-number
 baseline on PR-AUC): **cleared 22 days early**, 5 September against a
@@ -465,6 +492,54 @@ The first `model_run` row written to Postgres carried no floor, and
 recovering the number afterwards meant reloading `features.csv` and
 re-deriving the split. `train.py` now writes `positive_rate` into `notes`.
 
+### 5.6 Does it survive a different date? (12 Sep, `ml/model/stability.py`)
+
+§5.4 said one arbitrary cut decides everything. This measures how much.
+Seven cut dates across the middle of the release history; at each one the
+model **and the baselines** are refitted, so lift is computed inside a
+split before anything is summarised. Carrying one cut's baselines across
+all seven would compare a moving model against a fixed target.
+
+| label | beats popularity | median lift | worst cut | best cut | PR-AUC spread |
+|---|---|---|---|---|---|
+| strict `label` | 4 / 7 | 1.08× | 0.57× | 1.45× | 0.070 |
+| `label_scoped` | 6 / 7 | 1.74× | 0.37× | 2.17× | 0.331 |
+| **`label_alias`** | **7 / 7** | 1.82× | **1.48×** | 3.12× | 0.221 |
+
+**Three findings, in order of how much they change what we can say.**
+
+**1. The strict label does not beat popularity.** It reported 1.85× on one
+cut; across seven it is 1.08× median and loses outright at three. Every
+conclusion drawn from the strict-label column — §5.3's original claim
+included — was drawn from a sample of one.
+
+**2. `label_scoped` has a failure mode `label_alias` does not.** They are
+0.08× apart on the median, which separates nothing. At the 2026-05-10 cut
+scoped scores **0.37×** — three times *worse* than sorting by download
+count — with early stopping firing at **1 tree**. Alias's worst cut is
+1.48×. A model that is sometimes worse than the dumb baseline cannot be
+shipped on the strength of its median, because you cannot tell in advance
+which day you are having. **That, not the ablation and not the median, is
+why `label_alias` ships.**
+
+**3. The baseline moves too, and nobody was watching it.** Popularity's
+own PR-AUC ranges **0.088 – 0.245** across the cuts. At the last two the
+test half is down to ~3,200 rows and popularity roughly doubles, so those
+splits are not merely noisier — they are a different problem, with a
+denser, more concentrated test half. Any single-split lift silently
+depends on this.
+
+**Two things this does not fix.** `rankable10` falls to **5 pairs** at the
+last cut, so precision@10 there is meaningless whatever it prints (§5.1).
+And early stopping still lands anywhere from **1 to 81 trees** — the two
+worst splits in the whole table are both 1-tree fits, which is now a
+specific, findable cause rather than general noise.
+
+**What the spread is not.** These splits share most of their training data
+and overlap heavily in test, so they are not independent draws. The range
+is a *sensitivity* — how much the answer moves when the arbitrary choice
+moves — not a confidence interval, and must never be written with a `±`.
+
 ---
 
 ## 6. Operational facts
@@ -504,13 +579,19 @@ re-deriving the split. `train.py` now writes `positive_rate` into `notes`.
 
 ## 7. Open, and where it goes
 
-0. **REPEATED TEMPORAL SPLITS — now the top item** (§5.4). One arbitrary
-   date decides everything, validation is twice as dense in positives as
-   test, early stopping lands anywhere between 1 and 120 trees, and §5.3's
-   headline claim turned out to be an artefact of exactly this. Cut at
-   several dates, report the spread. **No new feature is worth more than
-   this**, because right now a result cannot be distinguished from a
-   lucky cut.
+0. ~~**Repeated temporal splits**~~ — done, §5.6. It cost the project
+   three headline numbers and bought a defensible one. **New top item
+   below.**
+0b. **EARLY STOPPING — now the top item.** Trees land anywhere from **1
+   to 81** across cuts, and the two worst splits in §5.6 are both 1-tree
+   fits: `label_scoped` at 0.37× and the strict label at 0.57×. That is no
+   longer "the numbers are noisy" — it is a specific, findable cause with
+   two named victims. The validation slice is the newest 20% of train and
+   runs ~2× denser in positives than test (§5.4), so the stopping rule is
+   judging against a distribution the model is never scored on. Options,
+   cheapest first: a minimum tree count; stratifying validation to match
+   test's positive rate; or k-fold-style validation *within* the training
+   window instead of one tail slice.
 1. ~~**Alias resolver**~~ — done, §9. Recovered 392 rows by fact and
    identified 210 heuristic claims with no import statement behind them.
 2. **`was_deprecated_before`** (§3.3) — the click shim class.
