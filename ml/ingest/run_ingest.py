@@ -51,7 +51,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from ml.ingest.api_extract import diff_series, find_import_names  # noqa: E402
+from ml.ingest.api_extract import diff_series, resolve_layout  # noqa: E402
 from ml.ingest.download import (download_and_extract,  # noqa: E402
                                 list_releases_with_meta)
 from ml.ingest.packages import get_top_packages          # noqa: E402
@@ -74,6 +74,13 @@ CHANGE_COLS = [
     # half-written with this column and half without would silently label
     # the older half wrong.
     "export_paths",
+    # Added 12 Sep 2026. How many other classes inherit this exact change.
+    # griffe diffs `all_members`, so a method removed from a base class is
+    # reported once per subclass — 3,243 times for three ModuleUtilsMixin
+    # methods in transformers 5.17.0, which was 30% of the dataset. The
+    # rows are folded onto the defining class at extract time and the count
+    # lands here instead. NOTES §10.2.
+    "inherited_by",
 ]
 # Maps one-to-one onto the API's `package` table.
 PACKAGE_COLS = ["package", "download_rank", "github_repo"]
@@ -236,7 +243,7 @@ def _process_package(name: str, rank: int,
     # (typing-extensions -> typing_extensions, pyyaml -> yaml). Resolve it
     # once, from the newest version we managed to download.
     newest = max(paths, key=lambda v: [r["version"] for r in releases].index(v))
-    modules = find_import_names(paths[newest], name)
+    _root, modules = resolve_layout(paths[newest], name)
     if not modules:
         failures.append({"package": name, "stage": "resolve_module",
                          "detail": newest, "error_type": "NoPythonModule",

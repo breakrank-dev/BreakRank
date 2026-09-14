@@ -66,20 +66,35 @@ NOT_THE_LIBRARY = {
 }
 
 
+def _normalise(name: str) -> str:
+    """`typing-extensions` and `typing_extensions` are the same thing."""
+    return re.sub(r"[-_.]", "", name).lower()
+
+
+# Compared against NORMALISED names, below. Written however reads best.
+_NOISE_NORMALISED = {re.sub(r"[-_.]", "", n).lower() for n in NOT_THE_LIBRARY}
+
+
 def _is_noise(stem: str) -> bool:
-    """Test suites, docs and build scaffolding that sit beside the real code."""
+    """Test suites, docs and build scaffolding that sit beside the real code.
+
+    NORMALISE BEFORE COMPARING. This used to test the raw lowercased stem
+    against a set holding normalised entries, so `py_src` sailed past a
+    filter that literally contains `pysrc` — and the set's own
+    `third_party` entry could never have matched anything either. The
+    comparison and the data it compared against were in different formats.
+
+    Measured cost of that (NOTES §9.5): 129 tokenizers rows recorded as
+    `py_src.tokenizers.models.BPE.from_file`, a path nobody can import, so
+    every one was a guaranteed negative no matter how used the function is.
+    """
     low = stem.lower()
     return (
-        low in NOT_THE_LIBRARY
+        _normalise(stem) in _NOISE_NORMALISED
         or low.startswith(("test_", "tests_", "_test"))
         or low.endswith(("_test", "_tests"))
         or stem.startswith(".")
     )
-
-
-def _normalise(name: str) -> str:
-    """`typing-extensions` and `typing_extensions` are the same thing."""
-    return re.sub(r"[-_.]", "", name).lower()
 
 
 def find_import_names(search_path, package_name: str = "") -> list[str]:
@@ -118,7 +133,7 @@ def find_import_names(search_path, package_name: str = "") -> list[str]:
 
     target = _normalise(package_name)
 
-    real, namespace = [], []
+    real, namespace, scripts = [], [], []
     for p in sorted(root.iterdir()):
         stem = p.stem
         # The noise filter must never fire on the package we came for.
@@ -138,12 +153,83 @@ def find_import_names(search_path, package_name: str = "") -> list[str]:
                 # `protobuf` ships google/protobuf/ exactly like this.
                 namespace.append((p.name, len(list(p.rglob("*.py")))))
         elif p.suffix == ".py" and not stem.startswith("_"):
-            real.append((stem, 1))      # single-file libraries, e.g. six.py
+            scripts.append((stem, 1))   # six.py — or a build helper
+
+    # A STRAY TOP-LEVEL SCRIPT IS ONLY THE LIBRARY WHEN NOTHING ELSE IS.
+    # `six.py` and `typing_extensions.py` really are single-file libraries
+    # and must keep working. But `version.py` (dill, multiprocess),
+    # `runtests.py` (cython), `make_cffi.py` (zstandard), `grpc_version.py`
+    # and `protoc_lib_deps.py` (grpcio-tools) are build helpers sitting at
+    # the sdist root beside a perfectly good package directory, and every
+    # row they produced was a symbol nobody can import (NOTES §9.5).
+    #
+    # The rule that separates them without a blocklist: when a package
+    # directory exists, a loose script only counts if its name matches the
+    # distribution. When none exists, accept them all — that is the
+    # single-file case, and it is also how jsonref keeps `proxytypes.py`.
+    if scripts and (real or namespace):
+        scripts = [c for c in scripts if _normalise(c[0]) == target]
+    real += scripts
 
     candidates = real or namespace
-    target = _normalise(package_name)
     candidates.sort(key=lambda c: (_normalise(c[0]) != target, -c[1]))
     return [name for name, _ in candidates]
+
+
+def resolve_layout(search_path, package_name: str = "", max_depth: int = 3):
+    """(directory to import FROM, importable names in it), descending if needed.
+
+    download_and_extract knows about `src/` and `lib/`. It does not know
+    about `py_src/`, and tokenizers ships its Python at
+    `tokenizers-0.23.2/py_src/tokenizers/` — two levels below the root,
+    behind a directory the noise filter is right to reject as a MODULE but
+    wrong to reject as a CONTAINER.
+
+    Before the filter was fixed, that produced `py_src.tokenizers.models.
+    BPE.from_file`. After the fix and without this, the top level yields
+    nothing at all and tokenizers becomes a NoPythonModule failure — 129
+    rows traded for zero. The name and the path have to move together.
+
+    DESCEND ONLY WHEN THE TOP LEVEL IS EMPTY, never merely when it fails to
+    match the distribution name. protobuf is the case that rule protects:
+    it ships `google/protobuf/` with no __init__.py on `google`, so the top
+    level offers `google`, which does not match `protobuf` — and descending
+    would report `protobuf.*` for symbols the world imports as
+    `google.protobuf.*`.
+
+    Breadth-first, so the shallowest copy wins. tokenizers ships the same
+    package twice (`py_src/tokenizers` and `bindings/python/py_src/
+    tokenizers`), which is how one release once produced two rows for every
+    change under two different wrong roots.
+    """
+    root = pathlib.Path(search_path)
+    names = find_import_names(root, package_name)
+    if names or not root.is_dir():
+        return root, names
+
+    queue, seen = [(root, 0)], {root}
+    while queue:
+        here, depth = queue.pop(0)
+        if depth >= max_depth:
+            continue
+        try:
+            children = sorted(c for c in here.iterdir() if c.is_dir())
+        except OSError:
+            continue
+        for child in children:
+            if child in seen:
+                continue
+            seen.add(child)
+            try:
+                if not any(child.rglob("*.py")):
+                    continue
+            except OSError:
+                continue
+            found = find_import_names(child, package_name)
+            if found:
+                return child, found
+            queue.append((child, depth + 1))
+    return root, []
 
 
 def load_api(package_name: str, search_path) -> griffe.Module:
@@ -396,7 +482,9 @@ def diff_versions(package_name: str, old_path, new_path,
     Raises if either version fails to load. Callers running in bulk should
     catch, record the reason, and move on — see ml/ingest/run_ingest.py.
     """
-    modules = [module] if module else find_import_names(new_path, package_name)
+    new_path, found = resolve_layout(new_path, package_name)
+    old_path, _ = resolve_layout(old_path, package_name)
+    modules = [module] if module else found
     if not modules:
         raise RuntimeError(
             f"no importable Python module found in {new_path} — "
@@ -443,11 +531,21 @@ def diff_series(package_name: str, versions: list[tuple[str, object]],
     # are not there, and each pair re-filters to what actually loaded in
     # both. So a name that only exists in half the chain simply produces
     # no rows for the other half.
+    #
+    # RESOLVE THE PATH PER VERSION, not just the names. A package nested
+    # under a build directory (tokenizers ships py_src/tokenizers) has to
+    # be imported FROM that directory, and the nesting can differ between
+    # releases of the same package, so this cannot be decided once.
+    seen: dict[str, None] = {}
+    resolved = []
+    for label, path in versions:
+        here, names = resolve_layout(path, package_name)
+        resolved.append((label, here))
+        for m in names:
+            seen.setdefault(m, None)
+    versions = resolved
+
     if modules is None:
-        seen: dict[str, None] = {}
-        for _, path in versions:
-            for m in find_import_names(path, package_name):
-                seen.setdefault(m, None)
         modules = list(seen)
     if not modules:
         raise RuntimeError(
@@ -467,6 +565,150 @@ def diff_series(package_name: str, versions: list[tuple[str, object]],
             rows = e
         yield prev_label, label, rows
         prev_label, prev_col = label, col   # the old side is dropped here
+
+
+def sub_target_of(b) -> str:
+    """WHAT INSIDE the symbol changed, or "" for whole-symbol breakages.
+
+    griffe reports one breakage per changed parameter, all sharing the
+    function's path, so without this the rows are indistinguishable — and
+    the database's uniqueness key (release_id, symbol_path, kind,
+    sub_target) would quietly keep only the last one.
+
+    Gate on the KIND, not on "does old_value have a .name". Every griffe
+    breakage carries an old_value with a name of some sort: for
+    OBJECT_REMOVED it is the removed object itself, and reading it here
+    would file `_exported` under sub_target, which is a lie a NOT NULL
+    column would happily store forever.
+
+    Pulled out of the row loop on 12 Sep so fold_inherited() can key on the
+    same value the row will carry. Two parameters removed from one
+    inherited method are two changes, and a fold that ignored sub_target
+    would merge their counts.
+    """
+    if b.kind.name.startswith("PARAMETER"):
+        p = (getattr(b.old_value, "name", None)
+             or getattr(b.new_value, "name", None))
+        return p if isinstance(p, str) else ""
+    if b.kind.name == "CLASS_REMOVED_BASE":
+        # MEASURED, and it contradicts the assumption this column was asked
+        # for: griffe does NOT emit one breakage per dropped base.
+        # old_value/new_value are the WHOLE base lists, so a class dropping
+        # two bases produces exactly one row and cannot collide with
+        # itself. Filled in anyway — it is real information, it costs
+        # nothing, and it keeps the key correct if griffe ever switches to
+        # per-base reporting.
+        olds = b.old_value or []
+        news = {getattr(x, "name", None) for x in (b.new_value or [])}
+        return ",".join(
+            str(getattr(x, "name", x)) for x in olds
+            if getattr(x, "name", None) not in news
+        )
+    return ""
+
+
+def defining_path(obj) -> str | None:
+    """Where an INHERITED member is actually defined, or None if declared.
+
+    MEASURED on griffe 2.2.0, not assumed. griffe's diff walks
+    `old_obj.all_members`, and for a class that is
+    `{**inherited_members, **members}` — so every method a subclass
+    inherits is compared as if the subclass declared it. A member reached
+    that way comes back as an Alias whose `target_path` names the base
+    class's method and whose own `.path` has been re-parented onto the
+    subclass:
+
+        pkg.base.Mixin.gone     Function  declared
+        pkg.models.m0.M0.gone   Alias     target_path=pkg.base.Mixin.gone
+        pkg.models.m1.M1.gone   Alias     target_path=pkg.base.Mixin.gone
+        ... one per subclass
+
+    Reading `.target_path` is safe for the same reason the alias resolver
+    reads it (NOTES §9.1): it is a plain string filled in at parse time,
+    so nothing resolves and nothing can raise AliasResolutionError.
+
+    The `name in parent.members` test is what keeps a genuine re-export
+    inside a class body from being mistaken for inheritance — that member
+    is an Alias too, but it is declared where it sits.
+    """
+    if not getattr(obj, "is_alias", False):
+        return None
+    parent = getattr(obj, "parent", None)
+    if parent is None or not getattr(parent, "is_class", False):
+        return None
+    if obj.name in (getattr(parent, "members", {}) or {}):
+        return None
+    target = getattr(obj, "target_path", None)
+    return target if isinstance(target, str) and target else None
+
+
+def fold_inherited(breakages) -> tuple[list, dict[tuple[str, str, str], int]]:
+    """One logical change, one row — plus how many classes inherited it.
+
+    WHY THIS EXISTS, in one number: transformers 5.16.1 -> 5.17.0 produced
+    9,863 rows, 30% of the entire 32,405-row dataset, and 9,729 of them
+    were THREE methods. 5.17.0 dropped invert_attention_mask,
+    get_extended_attention_mask and create_extended_attention_mask_for_decoder
+    from ModuleUtilsMixin, and 3,242 model classes inherit that mixin, so
+    griffe reported each removal 3,243 times.
+
+    Every one of those rows is TRUE. None of them is a separate event. Left
+    alone they would have been 30% of the training data, all with near
+    identical features and all labelled 0 — one library's refactor setting
+    the positive rate for the whole dataset.
+
+    So fold them onto the class that defines the method and keep the count.
+    The count is not bookkeeping: a method 3,242 classes inherit is a
+    bigger break than one on a leaf class, and `inherited_by` gives the
+    ranker that in one number instead of 3,242 duplicate rows.
+
+    THE GUARD MATTERS MORE THAN THE FOLD. If the defining class is private
+    or lives in a module we never diffed, no row for the target exists and
+    folding onto it would delete a real public breakage. In that case keep
+    the SHALLOWEST inheriting path as the stand-in — a public subclass of a
+    private base is exactly the case where the subclass's name is the one
+    users wrote.
+
+    Returns (breakages to keep, {(path, kind, sub_target): inherited_by}).
+    """
+    declared = {(b.obj.path, b.kind.name, sub_target_of(b))
+                for b in breakages if defining_path(b.obj) is None}
+
+    counts: dict[tuple[str, str, str], int] = {}
+    orphans: dict[tuple[str, str, str], object] = {}
+    kept = []
+    for b in breakages:
+        target = defining_path(b.obj)
+        if target is None:
+            kept.append(b)
+            continue
+        key = (target, b.kind.name, sub_target_of(b))
+        counts[key] = counts.get(key, 0) + 1
+        if key in declared:
+            continue
+        prev = orphans.get(key)
+        # Tie-break on the path, not on iteration order, and this is not
+        # tidiness. griffe walks members in a dict order that is stable
+        # within a run but not across them, and when ten subclasses sit at
+        # the same depth "whichever came first" can pick a different one
+        # next time. The database keys breakage on the symbol path, so an
+        # unstable choice here writes a SECOND row on the next load instead
+        # of upserting the first. Sorting makes the stand-in reproducible.
+        if prev is None or ((b.obj.path.count("."), b.obj.path)
+                            < (prev.obj.path.count("."), prev.obj.path)):
+            orphans[key] = b
+    kept.extend(orphans.values())
+
+    # Re-key the counts onto the row that actually survives, so the row
+    # loop can look them up by its own (symbol, kind, sub_target).
+    inherited_by: dict[tuple[str, str, str], int] = {}
+    for key, n in counts.items():
+        if key in declared:
+            inherited_by[key] = n
+        else:
+            b = orphans[key]
+            inherited_by[(b.obj.path, b.kind.name, sub_target_of(b))] = n
+    return kept, inherited_by
 
 
 def diff_collections(package_name: str, old_col, new_col,
@@ -501,6 +743,12 @@ def diff_collections(package_name: str, old_col, new_col,
     if errors and not breakages:
         raise RuntimeError("; ".join(errors))
 
+    # Collapse inherited-member repeats BEFORE anything reads a path. Done
+    # here rather than in labels.py on purpose: a fold at label time would
+    # leave the raw rows in changes.csv and in the database, so the site
+    # would still show one removal 3,243 times.
+    breakages, inherited_by = fold_inherited(breakages)
+
     # The OLD version's __all__ per top-level module — old because that is
     # the version the changed symbol lived in. Keyed by module name, which
     # is the first part of every symbol path that module's diff produces.
@@ -520,35 +768,7 @@ def diff_collections(package_name: str, old_col, new_col,
         parts = symbol.split(".")
         explanation = ANSI.sub("", b.explain())
 
-        # WHAT INSIDE the symbol changed. griffe reports one breakage per
-        # changed parameter, all sharing the function's path, so without
-        # this the rows are indistinguishable — and the database's
-        # uniqueness key (release_id, symbol_path, kind, sub_target) would
-        # quietly keep only the last one.
-        #
-        # Gate on the kind, not on "does old_value have a .name". Every
-        # griffe breakage carries an old_value with a name of some sort:
-        # for OBJECT_REMOVED it is the removed object itself, and reading
-        # it here would file `_exported` under sub_target, which is a lie
-        # a NOT NULL column would happily store forever.
-        sub_target = ""
-        if b.kind.name.startswith("PARAMETER"):
-            p = getattr(b.old_value, "name", None) or getattr(b.new_value, "name", None)
-            sub_target = p if isinstance(p, str) else ""
-        elif b.kind.name == "CLASS_REMOVED_BASE":
-            # MEASURED, and it contradicts the assumption this column was
-            # asked for: griffe does NOT emit one breakage per dropped base.
-            # old_value/new_value are the WHOLE base lists, so a class
-            # dropping two bases produces exactly one row and cannot
-            # collide with itself. Filled in anyway — it is real
-            # information, it costs nothing, and it keeps the key correct
-            # if griffe ever switches to per-base reporting.
-            olds = b.old_value or []
-            news = {getattr(x, "name", None) for x in (b.new_value or [])}
-            sub_target = ",".join(
-                str(getattr(x, "name", x)) for x in olds
-                if getattr(x, "name", None) not in news
-            )
+        sub_target = sub_target_of(b)
 
         # Big packages ship their test suite inside the installed package —
         # numpy.random.tests.test_extending.required_version turned up in a
@@ -619,6 +839,17 @@ def diff_collections(package_name: str, old_col, new_col,
                 # rows — a symbol that is never re-exported has no other
                 # name, and this column does not invent one.
                 "export_paths": ";".join(user_paths(symbol, aliases)),
+                # How many OTHER classes inherit this exact change. 0 for
+                # the overwhelming majority — a plain function or a method
+                # nobody subclasses. 3,242 for the three ModuleUtilsMixin
+                # methods transformers 5.17.0 dropped.
+                #
+                # This is the number that replaces 3,242 duplicate rows, so
+                # it is a feature, not a diagnostic: breadth of blast
+                # radius inside the library, which is the one thing a
+                # single row could not otherwise say.
+                "inherited_by": inherited_by.get(
+                    (symbol, b.kind.name, sub_target), 0),
             }
         )
 
@@ -639,7 +870,7 @@ if __name__ == "__main__":
     old_path = download_and_extract(old_rel["url"], base / old_rel["version"])
     new_path = download_and_extract(new_rel["url"], base / new_rel["version"])
 
-    modules = find_import_names(new_path, package)
+    new_path, modules = resolve_layout(new_path, package)
     print(f"\nPyPI name '{package}' -> importable as {modules or 'NOTHING FOUND'}")
 
     rows = diff_versions(package, old_path, new_path)

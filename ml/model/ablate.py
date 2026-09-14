@@ -48,8 +48,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.model.metrics import evaluate  # noqa: E402
-from ml.model.train import (fit_model, prepare, score_with,  # noqa: E402
-                            split_valid, GROUP)
+from ml.model.train import (cv_tree_count, fit_fixed, prepare,  # noqa: E402
+                            score_with, GROUP)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -77,6 +77,14 @@ PATH_SHAPE = ["module_depth", "name_length", "is_top_level"]
 # this split is what lets the two be argued about with numbers.
 REACHABILITY = ["public_depth", "has_export_path"]
 
+# Added 12 Sep 2026, and kept on its own for the same reason REACHABILITY
+# is: it is a new IDEA, not a refinement of an old one. Every other feature
+# here describes the symbol; this one describes how far the change spreads
+# inside its own library. It arrived as a side effect of folding
+# inherited-member repeats (NOTES §10.2), so the honest thing is to test
+# whether it earns a slot rather than assume the number is free signal.
+BLAST_RADIUS = ["inherited_by"]
+
 POPULARITY = ["package_rank", "package_churn", "release_size"]
 PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
               "is_version_string", "has_sub_target"]
@@ -87,6 +95,9 @@ def main() -> None:
     ap.add_argument("--label", default="label",
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank")
+    ap.add_argument("--trees", type=int, default=None,
+                    help="fix the tree count for EVERY run. Default: the "
+                         "CV-chosen count for the full feature set.")
     args = ap.parse_args()
     label = args.label
 
@@ -97,8 +108,6 @@ def main() -> None:
 
     full_train = df[df.split == "train"].sort_values(GROUP)
     test = df[df.split == "test"].sort_values(GROUP)
-    train, valid, _ = split_valid(full_train)
-    train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
 
     drop = lambda g: [f for f in everything if f not in g]  # noqa: E731
     runs = {
@@ -106,6 +115,7 @@ def main() -> None:
         "no path shape": drop(PATH_SHAPE),
         "no reachability": drop(REACHABILITY),
         "no path+reach": drop(PATH_SHAPE + REACHABILITY),
+        "no blast radius": drop(BLAST_RADIUS),
         "no popularity": drop(POPULARITY),
         "path shape only": PATH_SHAPE,
         "reachability only": REACHABILITY,
@@ -113,16 +123,76 @@ def main() -> None:
         "per-change only": PER_CHANGE,
     }
 
+    # EVERY RUN GETS THE SAME NUMBER OF TREES, and this is the whole
+    # comparison. Until 14 Sep each subset chose its own count by early
+    # stopping on a holdout slice, and the counts came back 4, 10, 11, 27,
+    # 40, 47, 53, 59 — a fifteen-fold range. "Removing blast radius costs
+    # 25% of PR-AUC" was then indistinguishable from "that run happened to
+    # get 4 trees", because a 4-tree model is barely a model.
+    #
+    # It was also the holdout stopping rule that §5.7 already replaced
+    # everywhere else: the validation slice is 2x denser in positives than
+    # test, so it stops at the wrong place, and it was still in here.
+    #
+    # An ablation is a controlled experiment. The thing being varied is the
+    # FEATURE SET, so model size has to be held still — otherwise the table
+    # measures two things at once and reports it as one number.
+    # cv_tree_count returns (median, per-fold counts) — the folds are worth
+    # printing, not discarding, because their spread is the reason this
+    # whole fixed-count change exists.
+    if args.trees:
+        n_trees, folds = args.trees, []
+    else:
+        n_trees, folds = cv_tree_count(full_train, everything, label,
+                                       args.objective)
+
     print(f"\nlabel {label}   test {len(test):,} rows "
-          f"({test[label].mean():.2%} positive)\n")
+          f"({test[label].mean():.2%} positive)")
+    print(f"every run fixed at {n_trees} trees"
+          + (f" (CV median of {folds})" if folds else " (set by --trees)"))
+    print("Fixed on purpose: letting each subset pick its own size makes "
+          "the\ncolumns incomparable. See the note in the source.\n")
+
+    # ----------------------------------------------------------------
+    # CONTROLS. An ablation number means nothing without knowing how big
+    # a number this table produces when NOTHING is really removed.
+    #
+    # Measured 14 Sep: `inherited_by` had exactly zero gain — the model
+    # was offered it and never split on it — yet dropping it moved PR-AUC
+    # by 12.6%. Dropping a whole feature changes LightGBM's binning and
+    # column sampling, so the fit moves even when the feature was unused.
+    # Meanwhile "removing path shape costs 10.4%" was being read as a
+    # result. It was smaller than the noise.
+    #
+    # So: fit the full model, ask it which features it never split on, and
+    # drop each of those as a control run. Whatever those cost IS the
+    # floor, measured on this dataset with this tree count rather than
+    # guessed. Everything below it reads as nothing.
+    #
+    # Discovered, not hardcoded — which features go unused changes with
+    # the label and the data, and a stale list would be worse than none.
+    full_model = fit_fixed(full_train, everything, label, n_trees,
+                           args.objective)
+    gains = dict(zip(everything,
+                     full_model.booster_.feature_importance("gain")))
+    unused = [f for f in everything if gains.get(f, 0) <= 0]
+    for f in unused[:3]:
+        runs[f"control: drop {f}"] = drop([f])
+    if unused:
+        print(f"control runs added for {len(unused[:3])} feature(s) at zero "
+              f"gain: {', '.join(unused[:3])}")
+        print("Their cost is this table's noise floor, not a finding.\n")
+    else:
+        print("no zero-gain features — no control available, so treat "
+              "small\ndifferences below with corresponding suspicion.\n")
 
     out = {}
     for name, feats in runs.items():
-        model = fit_model(train, valid, feats, label, args.objective)
+        model = fit_fixed(full_train, feats, label, n_trees, args.objective)
         scored = test.copy()
         scored["s"] = score_with(model, test, feats)
         m = evaluate(scored, "s", label)
-        m["trees"] = getattr(model, "best_iteration_", None) or 600
+        m["trees"] = n_trees
         m["n_features"] = len(feats)
         out[name] = m
 
@@ -132,12 +202,33 @@ def main() -> None:
     t["vs_full"] = (t["pr_auc"] / base).round(2)
     print(t.round(4).to_string())
 
+    # The floor: the largest swing produced by removing a feature the model
+    # never used. Absolute value — a control can move PR-AUC UP as easily
+    # as down, and either direction is the same noise.
+    controls = [n for n in out if n.startswith("control: drop ")]
+    floor = max((abs(1 - out[n]["pr_auc"] / base) for n in controls),
+                default=0.0)
+
     print(f"\nfull model PR-AUC {base:.4f}")
+    if controls:
+        print(f"NOISE FLOOR {floor:>6.1%}  <- removing a feature the model "
+              "never split on")
+        print("             Every effect below this line is the fit moving, "
+              "not a finding.")
     for name in ("no path shape", "no reachability", "no path+reach",
-                 "no popularity"):
+                 "no blast radius", "no popularity"):
         lost = 1 - out[name]["pr_auc"] / base
+        verdict = ("" if not controls else
+                   "   <- BELOW THE NOISE FLOOR, read as nothing"
+                   if abs(lost) <= floor else
+                   f"   ({abs(lost) / floor:.1f}x the floor)")
         print(f"  removing {name.replace('no ', ''):<14} "
-              f"costs {lost:>6.1%} of PR-AUC")
+              f"costs {lost:>6.1%} of PR-AUC{verdict}")
+
+    for name in controls:
+        lost = 1 - out[name]["pr_auc"] / base
+        print(f"  CONTROL  {name.replace('control: drop ', ''):<14} "
+              f"moved {lost:>+6.1%}  (this feature had zero gain)")
 
     ps, rc = out["path shape only"]["pr_auc"], out["reachability only"]["pr_auc"]
     print(f"\n  path shape alone   {ps:.4f}  ({ps / base:.0%} of full) "

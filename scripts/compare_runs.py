@@ -34,6 +34,9 @@ import sys
 import pandas as pd
 
 DATA = pathlib.Path("data")
+# Defaults name the alias comparison this was written for; pass two paths
+# to compare any other pair. Every ingest change wants this run, and the
+# decisive section (3) does not care which two files it is given.
 OLD = DATA / "changes-prealias.csv"
 NEW = DATA / "changes.csv"
 
@@ -50,6 +53,11 @@ def load(path: pathlib.Path, label: str) -> pd.DataFrame:
 
 
 def main() -> None:
+    global OLD, NEW
+    if len(sys.argv) == 3:
+        OLD, NEW = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+    elif len(sys.argv) != 1:
+        sys.exit("usage: compare_runs.py [OLD.csv NEW.csv]")
     print()
     old = load(OLD, "before")
     new = load(NEW, "after")

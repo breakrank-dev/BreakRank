@@ -69,6 +69,36 @@ CUTS = [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
 
 MIN_TEST_POSITIVES = 30
 
+# A cut with four rankable version pairs is not a weak measurement of
+# precision@10. It is not a measurement of precision@10.
+#
+# A pair is rankable at 10 only if it has more than 10 changes AND at least
+# one positive — otherwise ordering it is either impossible or trivially
+# correct. The q=0.85 cut leaves 4 or 5 such pairs, and its lift was the
+# WORST CASE for both candidate labels, which is to say the ship decision
+# was resting on the least measurable cut in the sweep.
+#
+# ADDED 14 SEP, AFTER SEEING IT MATTER — and that has to be said out loud,
+# because choosing a rule once you can see who it favours is the same
+# family of error as picking features on test PR-AUC (§5.4).
+#
+# Two things defend it. The justification never references which label
+# wins: four pairs cannot support a top-10 metric no matter whose model is
+# being scored, and MIN_TEST_POSITIVES was already conceding that tiny
+# cuts are invalid — it just gated on the wrong quantity. And it is
+# checkable against data collected before the rule existed:
+#
+#     lift_MIN          with q=0.85        without it
+#     12 Sep dataset    alias  1.94 win    alias  2.19 win
+#     14 Sep dataset    scoped 1.92 win    alias  2.32 win
+#
+# The ungated rule reversed when 50 rows (0.26% of the data) were added,
+# because the cut dates are QUANTILES and every one of them moves when the
+# row count does. The gated rule gives the same answer on both datasets.
+# A decision rule that flips on a quarter of a percent of the data is not
+# measuring the thing it claims to measure.
+MIN_RANKABLE_PAIRS = 10
+
 
 def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> dict | None:
@@ -82,15 +112,18 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
     full_train = df[~is_test.fillna(False)].sort_values(GROUP)
 
     pos = int(test[label].sum())
-    if pos < MIN_TEST_POSITIVES or full_train.empty:
+    # Checked BEFORE fitting — an unusable cut should not cost a model.
+    rankable = n_rankable(test, label, 10)
+    if (pos < MIN_TEST_POSITIVES or rankable < MIN_RANKABLE_PAIRS
+            or full_train.empty):
         return {"cut": str(cutoff.date()), "q": q, "test_rows": len(test),
-                "test_pos": pos, "skipped": True}
+                "test_pos": pos, "rankable10": rankable, "skipped": True}
 
     train, valid, _ = split_valid(full_train)
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
     if train.empty or valid.empty or train[label].sum() == 0:
         return {"cut": str(cutoff.date()), "q": q, "test_rows": len(test),
-                "test_pos": pos, "skipped": True}
+                "test_pos": pos, "rankable10": rankable, "skipped": True}
 
     if stopping == "cv":
         model, trees, _folds = fit_cv(full_train, feats, label, objective)
@@ -145,8 +178,16 @@ def report(t: pd.DataFrame, label: str) -> None:
     t = t[~t["skipped"]].copy()
     if skipped.shape[0]:
         for _, r in skipped.iterrows():
-            print(f"  skipped q={r.q:.2f} ({r.cut}): only {int(r.test_pos)} "
-                  f"test positives, under the {MIN_TEST_POSITIVES} minimum")
+            why = []
+            if int(r.test_pos) < MIN_TEST_POSITIVES:
+                why.append(f"{int(r.test_pos)} test positives "
+                           f"(min {MIN_TEST_POSITIVES})")
+            rk = r.get("rankable10")
+            if pd.notna(rk) and int(rk) < MIN_RANKABLE_PAIRS:
+                why.append(f"{int(rk)} rankable pairs "
+                           f"(min {MIN_RANKABLE_PAIRS})")
+            print(f"  skipped q={r.q:.2f} ({r.cut}): "
+                  + ", ".join(why or ["no usable train/valid split"]))
     if t.empty:
         print("  no usable splits.")
         return

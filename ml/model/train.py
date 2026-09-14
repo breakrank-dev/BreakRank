@@ -297,8 +297,29 @@ def main() -> None:
                          "gain": model.booster_.feature_importance("gain")})
              .sort_values("gain", ascending=False))
     imp.to_csv(ART / "importance.csv", index=False)
-    print("\nwhat the model actually used:")
-    print(imp.head(8).to_string(index=False))
+    # EVERY feature, not the top 8. The truncated version was actively
+    # misleading on 14 Sep: `inherited_by` was absent from the printed
+    # table, which reads as "the model ignores it" — and that flatly
+    # contradicted an ablation saying its removal cost PR-AUC. The
+    # contradiction was in the printing, not the model.
+    #
+    # A feature at ZERO gain is the interesting case, not the boring one:
+    # the model was offered it and declined. That is worth seeing, and it
+    # is exactly what head(8) hides once the feature set passes eight.
+    imp["share"] = (imp["gain"] / max(imp["gain"].sum(), 1e-9) * 100).round(1)
+    print(f"\nwhat the model actually used, all {len(feats)} features:")
+    print(imp.to_string(index=False,
+                        formatters={"gain": "{:,.1f}".format,
+                                    "share": "{:>5.1f}%".format}))
+    unused = imp[imp["gain"] <= 0]["feature"].tolist()
+    if unused:
+        print(f"\n** {len(unused)} feature(s) at ZERO gain: "
+              f"{', '.join(unused)}")
+        print("** The model was offered these and never split on them. If "
+              "an\n** ablation says removing one changes PR-AUC, that "
+              "difference is\n** the fit moving, not the feature working — "
+              "treat it as the\n** table's noise floor and read every "
+              "smaller gap as nothing.")
     if imp.iloc[0]["gain"] > 0.6 * imp["gain"].sum():
         print(f"\n** {imp.iloc[0]['feature']} is over 60% of total gain — "
               "the model is\n** close to a one-feature heuristic. Say so "

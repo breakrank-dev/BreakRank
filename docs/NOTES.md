@@ -7,14 +7,25 @@ report is due, and an examiner asking "how do you know?"
 Rule for this file: **no claim without the number that produced it.** If a
 line here says something is true, the run that showed it is named.
 
-Last updated 12 Sep 2026, after the split-stability run. Dataset:
-**22,914 breakage rows across 406 packages**, top 500 PyPI by download
-count, 6 releases each.
+Last updated 14 Sep 2026. Dataset: **19,121 breakage rows across 415
+packages**, top 500 PyPI by download count, 6 releases each.
+
+That row count went **down** from 22,914 and the dataset got better: the
+fold in §10.2 removed 13,694 rows that were the same change counted once
+per inheriting class, and §10.6 recovered 8 packages a version filter had
+been hiding. Neither is a sampling change. Both are described where they
+happened.
 
 **Read §1's range table before quoting any single number from this file.**
 Several sections still cite one cut date because that is what produced
 them; §5.6 measured how far those numbers move when the date moves, and
 the answer is: a lot.
+
+**Sections dated before 14 Sep carry superseded figures.** They are kept
+because the reasoning in them is still how the conclusion was reached,
+and a findings notebook that quietly rewrites its own history is worth
+less than one that shows where it was wrong. Where a number has been
+replaced, the subsection says so at the top. §1 and §11 are current.
 
 ---
 
@@ -22,65 +33,104 @@ the answer is: a lot.
 
 Three labels now, on the same rows (§9). `label_alias` is the shipped one.
 
+**Everything in this section was recomputed on 14 Sep** against the
+19,121-row dataset — after the inherited-member fold (§10.2) removed
+13,694 duplicate rows, the pre-release fix (§10.6) recovered 8 packages,
+and the rankable-pairs gate (§11.2) dropped two cut dates that could not
+support a top-10 metric. Every earlier figure in this file predates at
+least one of those and should be read as superseded, not as a second
+opinion.
+
 | | strict `label` | `label_scoped` | **`label_alias`** |
 |---|---|---|---|
 | rule | exact path match | exact, or one symbol owns the leaf | exact, or a real export path |
 | basis | fact, and incomplete | **a guess** | fact, from griffe's alias graph |
-| positive rows | 611 (2.67%) | 1,074 (4.69%) | **1,003 (4.38%)** |
-| test positives | 98 | 195 | **198** |
-| test positive rate — **the PR-AUC floor** | 0.0172 | 0.0343 | **0.0348** |
-| ranker PR-AUC | 0.0981 | 0.2299 | **0.3301** |
+| positive rows | 607 (3.17%) | 1,075 (5.62%) | **972 (5.08%)** |
+| test positives | 89 | 186 | **170** |
+| test positive rate — **the PR-AUC floor** | 0.0186 | 0.0389 | **0.0356** |
+| ranker PR-AUC | 0.2835 | 0.3685 | **0.5137** |
 
 ### The headline, stated the way it survives scrutiny
 
-**Every lift this project quoted before 12 Sep was the top of a range.**
-§5.6 refits at seven cut dates. Against the strongest baseline
-(popularity):
+**No lift this project quotes is a single number.** §5.6 refits at seven
+cut dates and reports the range; §11.2 now discards any cut with fewer
+than 10 rankable version pairs, because precision@10 over four pairs is
+not a weak measurement of anything — it is not a measurement. Against the
+strongest baseline (popularity):
 
 | label | beats popularity | median lift | **worst cut** | best cut |
 |---|---|---|---|---|
-| strict `label` | **5 / 7** | 1.96× | **0.75×** | 2.39× |
-| `label_scoped` | 7 / 7 | 1.97× | 1.58× | 2.62× |
-| **`label_alias`** | **7 / 7** | **2.48×** | **1.79×** | 3.81× |
+| strict `label` | 5 / 5 | 2.15× | 1.85× | 3.14× |
+| `label_scoped` | 6 / 6 | 2.14× | 1.95× | 3.01× |
+| **`label_alias`** | **6 / 6** | **2.59×** | **2.32×** | 4.82× |
 
-(Figures with the fixed stopping rule, §5.7. The pre-fix numbers — where
-scoped collapsed to 0.37× and the strict label to 0.57× — are in §5.6.)
+The claim to make is **not** "4.8× the baseline". It is:
 
-The claim to make is **not** "3.12× the baseline". It is:
+> The ranker beats the strongest baseline at **every cut date with enough
+> rankable pairs to measure one** — six of seven — by a median of
+> **2.59×** and never less than **2.32×**.
 
-> The ranker beats the strongest baseline at **every one of seven cut
-> dates**, by a median of **2.48×** and never less than **1.79×**.
-> precision@10 runs 0.27–0.34, nDCG@20 0.64–0.69.
+Say "six of seven, the other two too small to measure", never "6/6".
+The excluded cuts are a limitation, not a rounding.
 
-Smaller number, far stronger statement — it cannot be dismantled by
-someone choosing a different date, which is exactly what dismantles the
-other two labels. The strict label **loses to popularity at three of
-seven dates**; scoped collapses to 0.37× at one.
+Read the **worst** column first, and know why. On 14 Sep the ungated
+worst case put `label_scoped` ahead (1.92× vs 1.79×) — the reverse of two
+days earlier — and the only thing that had changed was **50 rows, 0.26%
+of the data**. Cut dates are quantiles, so every one of them moves when
+the row count does. A decision rule that flips on a quarter of a percent
+is not measuring what it claims to. With the gate the ordering is stable
+across both datasets (§11.2 carries the table).
 
-Read the **worst** column first. The strict label still loses to
-popularity at two of seven dates and is not shippable on any median.
-Scoped and alias both survive every cut now, and alias wins on worst case
-(1.79× vs 1.58×), on median (2.48× vs 1.97×, a gap wider than the 0.5×
-threshold below which this file treats a comparison as unreadable), and
-on spread — 0.129 against 0.243, so **the best model is also the most
-stable one**. The provenance argument (§9.3: 210 of scoped's positives
-have no import statement behind them) now agrees with the numbers instead
-of carrying them.
+`label_alias` wins on worst case (2.32× vs 1.95×), on median (2.59× vs
+2.14×), and on spread — it is the only label whose cut-to-cut spread does
+**not** exceed half its median, so it is the one result in this file
+readable at the per-cut level. The provenance argument (§9.3: 210 of
+scoped's positives have no import statement behind them) agrees with the
+numbers rather than carrying them.
 
-Single-split reference numbers, 10 Sep cut (2026-08-10), kept because
-§5.3, §5.5 and §9 all quote them:
+Single-split reference numbers, 14 Sep cut (2026-08-15):
 
 | | value | vs floor |
 |---|---|---|
-| floor — test positive rate | 0.0348 | 1.0× |
-| semver baseline (the kill-date gate) | 0.0389 | 1.1× |
-| best baseline — popularity | 0.1057 | 3.0× |
-| ranker PR-AUC | 0.3301 | 9.5× |
-| precision@10 | 0.3313 | over 16 rankable pairs — see §5.1 |
-| nDCG@20 | 0.6148 | over 11 rankable pairs |
+| floor — test positive rate | 0.0356 | 1.0× |
+| semver baseline (the kill-date gate) | 0.0347 | 1.0× |
+| best baseline — popularity | 0.1065 | 3.0× |
+| ranker PR-AUC | 0.5137 | 14.4× |
+| precision@10 | 0.3400 | over 15 rankable pairs — see §5.1 |
+| nDCG@20 | 0.7466 | over 10 rankable pairs |
 
-That cut is the **second-best of seven** for this label. Quote it only
+That cut is the **second-best of six** for this label. Quote it only
 alongside the range above.
+
+### What the model is actually made of
+
+All 16 features, by gain, on the shipped model (§11.3 explains why the
+whole table is printed and not the top eight):
+
+`public_depth` 35.6% · `name_length` 13.4% · `package_rank` 12.2% ·
+`package_churn` 10.4% · `module_depth` 7.4% · `kind` 5.1% ·
+`release_size` 4.8% · `is_version_string` 3.9% · `has_sub_target` 2.9% ·
+`bump` 1.4% · `in_dunder_all` 1.2% · `is_dunder` 1.0% ·
+`has_export_path` 0.7% · `is_top_level` 0.1% · **`inherited_by` 0.0%** ·
+**`is_private` 0.0%**
+
+Two features at zero gain, and neither is embarrassing once stated:
+
+- **`inherited_by`** (§10.2) is real information the model does not want.
+  Passing one test and failing another is an acceptable outcome for a
+  feature; pretending otherwise is not. It keeps two jobs and neither is
+  "predictor": as a **database column** it belongs next to a finding on
+  the site — "this change affects 3,242 inheriting classes" is the kind
+  of thing a human reading a diff wants — and as a feature the model
+  ignores it is the ablation's **control** (§11.3), which is the only
+  reason that table knows what zero looks like. Left in the feature set
+  deliberately: LightGBM never splits on it, so it costs nothing, and
+  removing it would leave the noise floor resting on a single point.
+- **`is_private`** is *redundant*, not irrelevant. Private symbols really
+  are near-dead (0.34% positive against 3.26%), but `public_depth` and
+  `has_export_path` already carry that at finer resolution. Expect the
+  question — the frozen API contract's central rule having zero gain
+  looks alarming until you say why.
 
 Kill-date gate (≥20,000 labelled rows AND ranker beats the version-number
 baseline on PR-AUC): **cleared 22 days early**, 5 September against a
@@ -509,6 +559,15 @@ model **and the baselines** are refitted, so lift is computed inside a
 split before anything is summarised. Carrying one cut's baselines across
 all seven would compare a moving model against a fixed target.
 
+> **SUPERSEDED 14 Sep — kept as the record of what was measured on 12
+> Sep, not as a current figure.** Every number in this subsection comes
+> from the 21,336-row dataset, which contained roughly 3,600 inherited
+> duplicate rows (§10.2, §10.5) and was missing 8 OpenTelemetry packages
+> (§10.6). It also predates the rankable-pairs gate (§11.2), so its
+> seven cuts include two that cannot support precision@10 at all.
+> Current figures: §1. The comparison *within* this subsection — holdout
+> versus cv — remains valid, because both sides saw the same data.
+
 | label | beats popularity | median lift | worst cut | best cut | PR-AUC spread |
 |---|---|---|---|---|---|
 | strict `label` | 4 / 7 | 1.08× | 0.57× | 1.45× | 0.070 |
@@ -561,6 +620,15 @@ lives inside the training half; test is not involved at any point.
 
 The median is the mechanism, not a detail: one fold collapsing to 1 tree
 barely moves a median of four.
+
+> **SUPERSEDED 14 Sep — kept as the record of what was measured on 12
+> Sep, not as a current figure.** Every number in this subsection comes
+> from the 21,336-row dataset, which contained roughly 3,600 inherited
+> duplicate rows (§10.2, §10.5) and was missing 8 OpenTelemetry packages
+> (§10.6). It also predates the rankable-pairs gate (§11.2), so its
+> seven cuts include two that cannot support precision@10 at all.
+> Current figures: §1. The comparison *within* this subsection — holdout
+> versus cv — remains valid, because both sides saw the same data.
 
 | | holdout (one slice) | **cv (four folds)** |
 |---|---|---|
@@ -945,3 +1013,368 @@ failures as done**, so a plain re-run does nothing; the failed packages
 have to be removed from the ledger first. After that: **22,914 rows
 across 406 packages**, parity with the old dataset while carrying the new
 column.
+
+---
+
+## 10. The sdist layout fix, and what it uncovered (Day 8)
+
+### 10.1 `py_src` — three bugs in one filter
+
+`NOT_THE_LIBRARY` is a list of directory names that are never the
+package: `tests`, `docs`, `examples`, `bindings`, `crates`. `tokenizers`
+ships its Python under `bindings/python/py_src/tokenizers/`, and the
+filter contained `pysrc` — so `py_src` sailed straight past it and the
+extractor produced symbols like
+`bindings.python.py_src.tokenizers.models.BPE.from_file`. Nobody can
+import that. 87 such rows were in the database (NOTES §9.5).
+
+Three separate fixes, and only the second is the one people guess:
+
+1. **Normalise before comparing.** `re.sub(r"[-_.]", "", name).lower()`
+   on both sides, so `py_src`, `py-src` and `pysrc` are one name.
+2. **Descend when the top level is empty.** Some sdists nest the package
+   two or three directories down. `resolve_layout` now walks down —
+   **but only when the top level has nothing importable at all**, never
+   merely because the directory name does not match the distribution
+   name. `protobuf` is the case that rule protects: it ships
+   `google/protobuf/`, and a rule that descended on a name mismatch
+   would have thrown away the real package to go hunting for a directory
+   called `protobuf`.
+3. **Setup scripts lose to real packages.** When a directory holds both
+   a real package and loose scripts, the scripts are only kept if their
+   name matches the distribution.
+
+12/12 regression checks passed, and `compare_runs.py` section 3 —
+the section that exists to tell "our code changed the diff" from "PyPI
+moved" — showed 24 shared pairs differing by a net **−40 rows**, every
+one of them a junk root going away: `crates`, `runtests`, `grpc_version`,
+`make_cffi`, `version`. The fix removed exactly what it was meant to.
+
+### 10.2 Then one version pair produced 30% of the dataset
+
+The re-ingest came out at **32,405 rows**, up from 22,914. Section 3 had
+already exonerated the code, so the growth sat on new pairs — and almost
+all of it on one:
+
+```
+transformers 5.16.1 -> 5.17.0     9,863 rows
+```
+
+9,827 under `transformers.models`, 9,797 `OBJECT_REMOVED`, 487 of 509
+model subpackages implicated, 9,780 at exactly depth 5.
+
+**Two hypotheses, both killed by measurement before anything was
+changed.** Models deleted wholesale? No: 509 → 516 subpackages, net +7,
+zero removed. A half-failed load on the new side? No: 2,636 vs 2,680
+modules materialised against 2,637/2,681 `.py` files on disk, 74,390 vs
+75,638 members — the new side has *more*. I then guessed an import
+sweep, having seen griffe count `torch`, `nn` and `Callable` as members
+of `modeling_roberta`, and asked for the leaf names expecting
+`Optional`, `Union`, `dataclass`.
+
+The leaf names said something else. **Eleven distinct names in 9,781
+rows:**
+
+```
+invert_attention_mask                         3,243
+create_extended_attention_mask_for_decoder    3,243
+get_extended_attention_mask                   3,243
+rot_pos_emb                                      28
+fast_pos_embed_interpolate                       12
+...six more, single digits
+```
+
+3 × 3,243 = **9,729 of 9,781 rows are three methods.** They are
+`ModuleUtilsMixin` methods. transformers 5.17.0 removed them from that
+mixin, and 3,242 model classes inherit it.
+
+### 10.3 Why griffe reports it 3,243 times
+
+Not a bug, and not ours. Read at the source
+(`griffe/_internal/diff.py:623`):
+
+```python
+for name, old_member in old_obj.all_members.items():
+```
+
+and `all_members`, for a class, is
+`{**self.inherited_members, **self.members}`. So every method a subclass
+inherits is diffed as if the subclass declared it. Reproduced in a
+10-line fixture — one mixin, one removed method, ten subclasses:
+
+```
+rows produced: 11
+   pkg.base.Mixin.gone      Function  declared
+   pkg.models.m0.M0.gone    Alias     target_path=pkg.base.Mixin.gone
+   ... one per subclass
+```
+
+The defining row is a `Function`; every repeat is an `Alias` whose
+`target_path` names the definition and whose own `.path` has been
+re-parented onto the subclass. That `target_path` is a plain string
+filled in at parse time — the same property the alias resolver leans on
+(§9.1), so reading it resolves nothing and cannot raise.
+
+### 10.4 What we did about it
+
+Every one of those 9,729 rows is **true**. None of them is a separate
+event. Left alone they would have been 30% of the training data, all
+with near-identical features, all labelled 0 — one library's refactor
+setting the positive rate for the entire dataset, and the site showing
+one removal 3,243 times.
+
+`fold_inherited()` collapses them onto the defining class and keeps the
+count as a new column, **`inherited_by`**. Folding at extract time, not
+in `labels.py`, is deliberate: a fold at label time would leave the raw
+rows in `changes.csv` and in the database, so the product would still be
+wrong even if the model was not.
+
+The count is not bookkeeping. A method 3,242 classes inherit is a
+different kind of break from one on a leaf class, and `inherited_by`
+gives the ranker that in one number instead of 3,242 duplicate rows. It
+goes into the feature set on its own ablation group (`BLAST_RADIUS`) so
+it has to earn its place rather than be assumed useful.
+
+**The guard matters more than the fold.** griffe skips private members,
+so if the base class is private no row for the definition exists, and
+folding onto it would silently delete a real public breakage — a public
+subclass of a private mixin is exactly the case where the subclass's
+name is the one users wrote. In that case the fold keeps the shallowest
+inheriting path as a stand-in instead. Tie-broken on the path string,
+not on iteration order: `breakage` is keyed on `symbol_path`, and a
+stand-in that changed between runs would write a second row instead of
+upserting the first.
+
+`scripts/test_inherited.py` covers all three cases plus the stability
+property. No network, no sdists, under a second — run it before every
+ingest.
+
+### 10.5 What this costs, and what it does not
+
+> **CORRECTED 14 Sep.** The paragraph below claimed the Day 7 stability
+> result "was never contaminated by this". **That was wrong**, and the
+> measurement that disproved it is in this same section.
+>
+> The fold collapsed **13,694** repeats in total. transformers accounts
+> for roughly 10,100 of them. The other **~3,600 were in python-docx,
+> sympy, cython, pandas, matplotlib, mpmath, xlsxwriter and pyasn1** —
+> every one of which was in the Day 6 dataset the Day 7 numbers came
+> from. So **roughly 17% of that dataset was inherited duplicates.**
+>
+> transformers was the loud case, not the only one, and the claim was
+> made after checking only the loud one. Duplicate rows inside a
+> lambdarank group change the group structure the ranker optimises, so
+> the Day 7 figures were not wrong so much as **unverified**. They have
+> since been recomputed (§1): the result survived — `label_alias` still
+> beats popularity at every measurable cut — but "it survived" is a
+> finding, and "it was never at risk" was an assumption wearing a
+> finding's clothes.
+>
+> The original text is kept below. The error worth remembering is not
+> the number; it is checking the one package that was obviously
+> implicated and generalising from it.
+
+The transformers pair should fall from 9,863 rows to roughly 140. Every
+other package with a base class and many subclasses shrinks too, by an
+amount nobody has measured yet — that is the number the next run
+produces, and `compare_runs.py` section 3 will light up with differences
+this time, correctly, because the code genuinely did change the diff.
+
+Two things this does **not** invalidate. The Day 7 stability result
+(`label_alias` beating popularity at 7/7 cut dates, median lift 2.48×,
+worst 1.79×) was computed on the 21,336-row dataset, before transformers
+re-entered — so it was never contaminated by this. And the fold removes
+only rows that were duplicates of a row we keep. But the positive rate
+**will** move once 9,729 guaranteed negatives leave, and PR-AUC's floor
+is the positive rate — so every number in §1 and §5 has to be recomputed
+before it is quoted again, and the public write-up stays frozen until
+then.
+
+**What actually happened, measured:** 32,405 rows → **19,121**. The
+transformers pair went 9,863 → **107**. Across 1,558 shared version
+pairs, 63 changed and **every one of them fell** — zero pairs gained a
+row, which is the property the fold had to have and now demonstrably
+does.
+
+### 10.6 The pre-release filter was hiding eight packages
+
+`list_releases` skipped any version `packaging` calls a pre-release. That
+rule is right almost everywhere — nobody upgrades to `2.0.0rc1`, so
+diffing it would describe a change no user ever had.
+
+`Version("0.65b0").is_prerelease` is `True`. OpenTelemetry's
+instrumentation line has shipped `0.NNbM` for years and has never left
+beta: **that suffix is their release.** The pipeline discarded every
+version they have ever published, reported `TooFewReleases`, and moved
+on. Eight packages, ranks 79 to 386, all publishing real non-yanked
+sdists on every release.
+
+The fix is a fallback, not a relaxation: take stable releases when a
+package has two or more, and only then widen to include pre-releases.
+A package with real releases never sees its rc builds; a package that
+only ships betas stops being invisible. `is_prerelease` rides along on
+every row so the fallback is visible in the data instead of inferred
+from it. Dev releases (`1.2.3.dev4`) are excluded in **both** passes —
+and that needs its own check, because `is_devrelease` implies
+`is_prerelease`, so a single flag would have let dev builds in.
+
+Verified on three packages before any re-ingest: `opentelemetry-util-http`
+6 releases all flagged pre-release (the fix firing), `requests` 6 releases
+0 flagged (the guard holding), `torch` still 0 (the fallback not papering
+over a real absence).
+
+### 10.7 What the 25 failures actually are
+
+The question that prompted this: *transformers was excluded by a timeout —
+could that be happening to others?* The answer is no as asked, and yes as
+meant.
+
+Not as asked: failures are **not** concentrated among big packages.
+Median download rank of a failed package is 308 against 250 for the set;
+3 in the top 100, 3 in the bottom 100.
+
+As meant: the failure table's reasons had not earned their trust. Of the
+three failures ever investigated, **two were misclassified**. transformers
+was recorded as a 600s timeout and then finished in 3.1 minutes on retry —
+the binding constraint was memory contention across ten parallel workers
+loading 2,680-module trees, not elapsed time. `sniffio` was recorded as a
+griffe `RuntimeError` and ran clean on re-run.
+
+| | n | verdict |
+|---|---|---|
+| `types-*` stubs, C/Rust extensions | 8 | correct — `.pyi` or no Python at all |
+| wheel-only (torch, triton, onnxruntime, playwright, psycopg-binary) | 5 | correct — griffe needs source |
+| opentelemetry pre-release filter | 8 | **bug, fixed §10.6** |
+| griffe cyclic-alias crash (numpy, multiprocess) | 2 | real, known |
+| transformers, sniffio | 2 | misclassified, both recovered |
+
+13 of 25 are real limits of the method and belong in the write-up as
+such. The other 12 were recoverable and have been recovered. **A
+distribution that ships no sdist cannot be analysed by reading source** —
+that is a boundary, not a defect, and it is better stated than
+discovered.
+
+---
+
+## 11. Measuring the measurements (Day 9)
+
+Four bugs found on 14 Sep, none in the model, all in the things used to
+judge it. A wrong model is a bad afternoon; a wrong instrument is every
+number in the file.
+
+### 11.1 The ablation was varying two things at once
+
+Each ablation row chose its own tree count by early stopping, and the
+counts came back **4, 10, 11, 27, 40, 47, 53, 59** — a fifteen-fold
+range. "Removing blast radius costs 25% of PR-AUC" was then
+indistinguishable from "that row happened to stop at 4 trees".
+
+It was also still using the **holdout** stopping rule that §5.7 replaced
+everywhere else, on a validation slice 2.1× denser in positives than
+test.
+
+Now every row is fitted on all of train at one CV-chosen count. The check
+that it worked: the `everything` row went from 0.4365 to **0.5137**, the
+shipped model's exact score. An ablation whose baseline disagrees with
+the model it is ablating was never comparing anything.
+
+### 11.2 A decision rule that flipped on 0.26% of the data
+
+`lift_MIN` picked `label_alias` on 12 Sep and `label_scoped` on 14 Sep.
+Between those runs: **50 rows added, out of 19,121.**
+
+Both worst cases came from the `q=0.85` cut, which had **4 rankable
+version pairs**. A pair is rankable at 10 only if it has more than ten
+changes and at least one positive; precision@10 over four such pairs is
+not a weak measurement, it is not a measurement. `MIN_TEST_POSITIVES`
+already conceded that tiny cuts are invalid — it gated on the wrong
+quantity.
+
+`MIN_RANKABLE_PAIRS = 10`, checked before fitting:
+
+| `lift_MIN` | with the 4-pair cut | without it |
+|---|---|---|
+| 12 Sep dataset | alias 1.94 wins | **alias 2.19 wins** |
+| 14 Sep dataset | scoped 1.92 wins | **alias 2.32 wins** |
+
+The ungated rule reverses; the gated one does not. Cut dates are
+**quantiles**, so adding any rows moves all seven — two runs are not
+comparable cut-by-cut, and a rule resting on the smallest cut inherits
+all of that movement.
+
+**This rule was added after seeing that it mattered, and that has to be
+said out loud** — it is the same family of error as choosing features on
+test PR-AUC (§5.4). Two things defend it. The justification never
+references which label wins: four pairs cannot support a top-10 metric
+whoever is being scored. And it is checkable against data collected
+before the rule existed — the table above is exactly that check. It is
+still a post-hoc choice and the viva answer is "yes, and here is why it
+is not outcome-driven", not a denial.
+
+The cost is honest: five or six usable cuts instead of seven. Say **"six
+of seven, the other two too small to measure"**, never "6/6" alone.
+
+### 11.3 An ablation table with no idea what zero looks like
+
+`inherited_by` has **exactly zero gain** — the model was offered it and
+never split on it. Dropping it moved PR-AUC by **12.6%**, because
+removing a column changes LightGBM's binning and column sampling and the
+fit moves whether or not the feature was used.
+
+Meanwhile "removing path shape costs 10.4%" was being read as a result.
+It is smaller than what happens when nothing is really removed.
+
+So the ablation now fits the full model, asks which features it never
+split on, and drops each as a **control** — discovered, never hardcoded,
+since which features go unused changes with the label and the data. Their
+cost is the noise floor, and every effect at or below it prints as
+nothing.
+
+```
+NOISE FLOOR  12.6%
+  path shape     10.4%   BELOW THE FLOOR — read as nothing
+  reachability   26.7%   2.1x the floor
+  path+reach     44.0%   3.5x the floor
+  popularity     17.2%   1.4x the floor
+  CONTROL  inherited_by  +12.6%
+  CONTROL  is_private     +5.0%
+```
+
+**The floor is itself uncertain.** Two controls gave 5.0% and 12.6% — a
+2.5× range on a two-point estimate. `max()` is the conservative choice,
+but path shape at 10.4% lies *inside* that range: above one control,
+below the other. The defensible sentence is **"path shape cannot be
+distinguished from noise"**, not "path shape is nothing". The proper fix
+is standard and not yet done: add several columns of pure random noise as
+features and ablate each, giving a floor with a distribution rather than
+two points.
+
+What survives the floor: **reachability at 2.1× and path+reach at 3.5×.**
+That is the finding. §5.3 was reaching for it and got there with a wrong
+number ("105%"); this is the same conclusion with an instrument that
+knows its own resolution.
+
+### 11.4 The gain table was truncated, and it read as a claim
+
+`imp.head(8)` on a 16-feature model. `inherited_by` was absent from the
+printed table, which reads as "the model ignores it" — flatly
+contradicting an ablation saying its removal cost PR-AUC. The
+contradiction was in the *printing*.
+
+All 16 print now, with shares, and any feature at zero gain is named
+explicitly. A feature the model declined is the interesting case, not the
+boring one, and it is exactly what `head(8)` hides once the feature set
+passes eight.
+
+### 11.5 What none of this changed
+
+The result. `label_alias` beat popularity at every measurable cut before
+these fixes and after them. What changed is that the numbers now come
+from instruments that agree with each other: the ablation's baseline
+equals the shipped model, the gain table is complete, the ablation knows
+its noise floor, and the decision rule survives a 0.26% perturbation of
+the data.
+
+Worth keeping in view: **three of the four bugs in this section were in
+code written to check the model, not to build it.** The instinct to
+verify was right; the instruments needed verifying too.

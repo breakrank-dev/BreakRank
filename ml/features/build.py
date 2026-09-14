@@ -74,6 +74,14 @@ NUMERIC = [
     # of the same idea, and it comes from the package's own alias graph
     # with no downstream data involved.
     "public_depth",
+    # Blast radius INSIDE the library: how many classes inherit this exact
+    # change. 0 for almost everything; 3,242 for the ModuleUtilsMixin
+    # methods transformers 5.17.0 dropped. This column is what replaced
+    # 9,729 duplicate rows (NOTES §10.2), and it is a feature rather than
+    # bookkeeping because a method thousands of classes inherit is a
+    # different kind of break from one on a leaf class. Knowable from
+    # griffe alone — no downstream data touches it.
+    "inherited_by",
     "name_length",        # long names tend to be obscure
     "package_rank",       # 1 = most downloaded. The popularity prior.
     "release_size",       # how many changes shipped together
@@ -107,6 +115,15 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_version_string"] = leaf.isin(VERSION_LEAVES)
 
     df["has_sub_target"] = df.get("sub_target", "").fillna("").ne("")
+
+    # Written by the extractor (api_extract.fold_inherited). Defaulted here
+    # rather than assumed present so a changes.csv from before 12 Sep still
+    # builds — it scores every row 0, which is what "we did not measure
+    # this" should look like, not a crash and not a silent NaN column.
+    if "inherited_by" not in df.columns:
+        df["inherited_by"] = 0
+    df["inherited_by"] = (pd.to_numeric(df["inherited_by"], errors="coerce")
+                          .fillna(0).astype(int))
 
     # Context features: a change is easier to notice in a release of three
     # than in a release of eight hundred.

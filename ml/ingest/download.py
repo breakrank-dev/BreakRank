@@ -84,30 +84,61 @@ def list_releases_with_meta(package: str, last_n: int = 15) -> tuple[list[dict],
     info = data.get("info") or {}
     meta = {"package": package, "github_repo": find_github_repo(info)}
 
-    out = []
-    for version, files in data["releases"].items():
-        try:
-            v = Version(version)
-        except InvalidVersion:
-            continue  # some ancient packages have unparseable version strings
-        if v.is_prerelease or v.is_devrelease:
-            continue
+    def collect(allow_prerelease: bool) -> list[dict]:
+        found = []
+        for version, files in data["releases"].items():
+            try:
+                v = Version(version)
+            except InvalidVersion:
+                continue  # some ancient packages have unparseable versions
+            if not allow_prerelease and (v.is_prerelease or v.is_devrelease):
+                continue
+            # A dev build is never "what users upgraded to", even in the
+            # fallback. 0.65b0 is OpenTelemetry's release; 1.2.3.dev4 is
+            # nobody's.
+            if v.is_devrelease:
+                continue
 
-        sdist = next(
-            (f for f in files if f["packagetype"] == "sdist" and not f.get("yanked")),
-            None,
-        )
-        if sdist:
-            out.append(
-                {
+            sdist = next(
+                (f for f in files
+                 if f["packagetype"] == "sdist" and not f.get("yanked")),
+                None,
+            )
+            if sdist:
+                found.append({
                     "version": version,
                     "parsed": v,
                     "url": sdist["url"],
                     "uploaded": sdist["upload_time_iso_8601"],
-                }
-            )
+                    "is_prerelease": bool(v.is_prerelease),
+                })
+        found.sort(key=lambda r: r["parsed"])
+        return found
 
-    out.sort(key=lambda r: r["parsed"])  # sort by real version order, not string order
+    # STABLE FIRST, PRE-RELEASES ONLY IF THERE IS NOTHING ELSE.
+    #
+    # The plain filter is right almost everywhere: nobody upgrades to
+    # 2.0.0rc1, so diffing it would describe a change no user ever
+    # experienced. But `packaging` calls 0.65b0 a pre-release, and that
+    # beta suffix IS OpenTelemetry's release — their instrumentation line
+    # has shipped that way for years and never left beta.
+    #
+    # Measured 14 Sep: 9 of 13 TooFewReleases failures were
+    # opentelemetry-*, every one of which publishes a real, non-yanked
+    # sdist on every release. The pipeline threw all of them away and then
+    # reported the package as having no releases.
+    #
+    # So: take stable releases when a package has enough of them, and fall
+    # back to including pre-releases ONLY when it does not. A package with
+    # real releases never sees its rc builds; a package that only ships
+    # betas stops being invisible. `is_prerelease` rides along on every row
+    # so the fallback is visible in the data rather than inferred from it.
+    out = collect(allow_prerelease=False)
+    if len(out) < 2:
+        widened = collect(allow_prerelease=True)
+        if len(widened) > len(out):
+            out = widened
+
     return out[-last_n:], meta
 
 
@@ -115,8 +146,9 @@ def list_releases(package: str, last_n: int = 15) -> list[dict]:
     """
     The last N real releases of `package` that ship an sdist, oldest first.
 
-    Skips pre-releases (2.0.0rc1), dev releases, and yanked files —
-    none of those represent "what users actually upgraded to".
+    Skips dev releases and yanked files always. Skips pre-releases too —
+    UNLESS the package has fewer than two stable ones, in which case they
+    come back rather than the package vanishing. See the note above.
     """
     return list_releases_with_meta(package, last_n)[0]
 
