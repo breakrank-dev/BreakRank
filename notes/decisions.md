@@ -296,3 +296,40 @@ without touching code or data.
 - Measure the hot query with `EXPLAIN ANALYZE` in week 5, once there's real
   data, and record before/after index figures here.
 - Remove the seed data before the demo.
+
+### Rotated DATABASE_URL
+Connection string was pasted into a chat log while coordinating with the
+pipeline side. No evidence of misuse, but rotated the neondb_owner password
+and updated .env, the GitHub Actions secret, Render's environment, and the
+pipeline side. Secrets move over direct message only, never in a commit,
+issue, PR comment, or assistant conversation.
+
+## [date] — Migration 005 and the fixture rename
+
+### release.analysis_status is an enum, not a boolean
+A release can be absent from our data for five different reasons, and
+"analysed and found nothing" is a useful answer the schema could not express.
+Collapsing it to present/absent would make "safe to upgrade" indistinguishable
+from "we never looked".
+
+### n_changes denormalised onto release
+The homepage ranks releases by how much changed. A GROUP BY over 19,000
+breakage rows per request is wasteful when the value only changes when the
+pipeline runs.
+
+### positive_rate is nullable
+Older model runs genuinely do not have one. NOT NULL DEFAULT 0 would assert a
+floor of zero, which is false — same principle as returning null for an
+unscored breakage rather than 0.0.
+
+### Fixtures moved to a 'breakrank-fixture' package
+They were under 'pandas', which the real pipeline also loads. Worse, the
+fixture claims DataFrame.append was removed in 2.2.0 — it went in 2.0. On a
+site whose claim is "we tell you which release broke you", a fixture leaking
+into a demo must not make a false statement about a real package. Renamed
+rather than deleted so the migration-004 regression case survives.
+
+### Fixture model_run trained_at pinned to 2020-01-01
+Seeded with DEFAULT now(), the fixture became the newest model run on every
+re-seed and silently won ORDER BY trained_at DESC. Pinning makes it
+structurally incapable of being selected rather than relying on care.
