@@ -111,3 +111,15 @@ Input capped at 100 packages.
     precision@10 is never quoted without its n.
     Preferred page copy: "Beats a popularity baseline at 6 of 7 evaluation
     cut dates, by a median of 2.59x and never less than 2.32x."
+14. The usage index is built from import statements, so it observes
+    module-level symbols far better than methods called on instances.
+    Measured: 12.34% positive rate for module-level rows vs 1.12% for
+    methods, across 6,748 and 12,373 rows. This is a limit of observation,
+    not of impact — DataFrame.append being removed broke thousands of
+    codebases and our label barely registers it.
+
+    The ranker still works inside the blind spot (methods PR-AUC 0.3021
+    against a floor of 0.0120), so the model orders changes rather than
+    sorting symbol kinds. But the About page must name this limitation
+    rather than let an examiner find it, and no page may claim coverage
+    of method-level changes equal to module-level.
