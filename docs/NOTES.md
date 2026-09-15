@@ -102,6 +102,32 @@ Single-split reference numbers, 14 Sep cut (2026-08-15):
 That cut is the **second-best of six** for this label. Quote it only
 alongside the range above.
 
+### The score went up. The model did not. (§11.5)
+
+PR-AUC was 0.3465 on 5 Sep and is 0.5137 now, and **that rise is
+arithmetic, not skill.** Measured with the cut date held fixed and only
+the duplicates differing:
+
+| | before the fold | after |
+|---|---|---|
+| floor (positive rate) | 0.0112 | 0.0356 |
+| PR-AUC | 0.4439 | 0.5137 |
+| **lift over popularity** | **4.88×** | **4.82×** |
+
+Lift over popularity is flat. The floor rose 3.18× because 13,694
+guaranteed negatives left the dataset, and PR-AUC's floor *is* the
+positive rate — so the score rose without the ranker changing.
+
+**Never present the PR-AUC increase as an improvement.** The true
+sentence is less flattering and considerably stronger: *the dataset was
+30% duplicates, every duplicate was a guaranteed negative, and they were
+depressing the measured score of a model that was already this good.*
+
+Ignore vs-floor when comparing the two: it reads 39.6× → 14.4×, which
+looks like a collapse and is only a smaller ratio over a bigger floor.
+Lift is the one measure comparable across datasets, because the baseline
+is refit inside each.
+
 ### What the model is actually made of
 
 All 16 features, by gain, on the shipped model (§11.3 explains why the
@@ -1366,7 +1392,155 @@ explicitly. A feature the model declined is the interesting case, not the
 boring one, and it is exactly what `head(8)` hides once the feature set
 passes eight.
 
-### 11.5 What none of this changed
+### 11.5 Did the model improve, or did the data get honest?
+
+Varad asked this on 15 Sep, and it is the right question: PR-AUC moved in
+the same step that removed 13,694 rows, which is exactly the shape of a
+number nobody should take at face value.
+
+`scripts/fold_effect.py` answers it by holding everything still except
+the duplicates — same label, same features, same CV stopping rule, and
+**the same cut date**. That last part is the one that is easy to get
+wrong: the normal split cuts at a *quantile of the rows*, so 32,405 rows
+and 19,121 rows would cut at different dates and be scored on different
+test halves. That comparison would measure the split as much as the fold.
+
+```
+                        before       after
+  rows                  32,405      19,121
+  floor                 0.0112      0.0356
+  PR-AUC                0.4439      0.5137
+  vs floor               39.6x       14.4x
+  lift over popularity   4.88x       4.82x
+  trees (CV median)         72          25
+```
+
+**Lift is flat. The model did not improve.** Two of those rows are traps
+and both were nearly quoted:
+
+- **PR-AUC rose 16%** — because the floor rose 3.18×. Removing guaranteed
+  negatives raises the score with no change in skill.
+- **vs-floor fell 39.6× → 14.4%** — and this is *not* a regression. A
+  smaller floor mechanically inflates the ratio, the same way the method
+  subset's 25.2× is not evidence the model prefers methods. Neither raw
+  PR-AUC nor vs-floor is comparable across datasets with different
+  positive rates. Lift over popularity is, because the baseline is refit
+  inside each dataset and the floor cancels.
+
+#### The line that ties this to §11.6
+
+```
+  test rows       15,182 -> 4,778
+  test positives     170 ->   170
+```
+
+**10,404 test rows removed, not one of them a positive.** Every folded
+row was a negative — which is precisely what the label's method
+blindness predicts. One mechanism produces both findings:
+
+> griffe reports a base-class change once per subclass → those rows are
+> all methods → an import-based label cannot see methods → all 13,694
+> are guaranteed negatives → the positive rate is dragged to 1.12% →
+> PR-AUC reads lower than the model deserves.
+
+The CV also chose **72 trees** on the amplified data against 25 now: a
+model three times larger, to fit a dataset that was a third duplicates.
+
+Caveat that applies to the whole subsection: the two runs share most of
+their training data. This is a sensitivity check, not a significance
+test. There is no p-value here and there should not be one.
+
+### 11.6 The label cannot see methods, and that is 65% of the data
+
+This started as Varad's question — *why does `inherited_by` have literally
+zero gain, when a change hitting 3,242 classes is intuitively
+high-impact?* — and the answer turned out to be much larger than the
+feature.
+
+```
+  inherited_by = 0    18,604 rows    5.22% positive
+  inherited_by > 0       517 rows    0.00% positive
+```
+
+Not "low". **Zero.** Against a 5.22% base rate you would expect about 27;
+the odds of none by chance are around 10⁻¹². So it is structural, and the
+structure is this:
+
+```
+  method on a class   12,373 rows    1.12% positive
+  module-level         6,748 rows   12.34% positive
+```
+
+**Eleven times.** The usage index is built from **import statements**.
+People write `from pandas import read_csv`. Nobody writes
+`from pandas import DataFrame.append` — they call it on an object. So the
+scanner sees module-level symbols and is close to blind to methods.
+
+That 1.12% is not a fact about methods. `DataFrame.append` being removed
+broke thousands of codebases. **It is a fact about what we can observe**,
+and 65% of the dataset sits on the wrong side of it.
+
+`inherited_by` has zero gain because it identifies a subgroup that is
+100% negative *by construction*, and `public_depth` and friends already
+push those rows down. The feature is fine. The label is narrow.
+
+#### The worry that follows, and the test for it
+
+`public_depth` is the top feature at 35.6% of gain. Module-level symbols
+have low `public_depth`; methods have higher. So `public_depth` might be
+encoding *"is this the kind of symbol our label can observe"* — which
+would make the headline feature a proxy for our own blind spot, the same
+class of error as §5.3 in a form §5.3 did not cover.
+
+`scripts/label_blindspot.py` scores the shipped model separately on each
+half — one model, trained on everything, split only at scoring time,
+because training a specialist per subset answers "could a model do this?"
+rather than "what is this model doing?".
+
+| | rows | floor | PR-AUC | vs floor |
+|---|---|---|---|---|
+| module-level | 1,437 | 0.0905 | 0.6036 | 6.7× |
+| **methods** | **3,341** | **0.0120** | **0.3021** | **25.2×** |
+
+**It ranks inside the blind spot.** The model is ordering changes, not
+sorting symbol kinds, so the result survives with the limitation stated.
+
+Three numbers from that run that must **not** be quoted, two of them
+produced by my own script before it was fixed:
+
+- **"32× lift over popularity" among methods.** Popularity scores 0.0094
+  there against a 0.0120 floor — *worse than chance*. Dividing by it
+  manufactures a large number from an unstable near-zero denominator.
+- **precision@10 among methods.** It rested on **3 rankable version
+  pairs**, and §11.2 had just established that under 10 is not a
+  measurement. The script quoted one anyway until it was fixed.
+- **"25.2× beats 6.7×, so the model is better at methods."** No. A rarer
+  positive class yields a larger ratio for the same real skill. Each
+  number says only *within this group, far above chance* — they are not
+  comparable to each other.
+
+#### That popularity is worse than chance among methods is a finding
+
+Big packages ship enormous numbers of methods and almost no labelled
+ones, so sorting by download count **actively misleads** in exactly the
+half of the data where the label is weakest. The baseline this project
+exists to beat does worse than a coin flip on two-thirds of the rows.
+
+#### What would fix it, and whose job it is
+
+A Track B change, not a model change: the usage scanner would have to
+record attribute-access call sites — seeing `df.append(...)` and knowing
+`df` is a `DataFrame`. That is name resolution, not AST walking, and it
+is not happening before the demo. A cheap partial version exists —
+record `X.method()` wherever `X` is a name imported from a tracked
+package, with no type inference at all — and is worth scoping.
+
+Until then this is a **named limitation**, stated in the report rather
+than discovered by an examiner: *our labels measure import-time usage.
+Method-level breaking changes are systematically under-counted, and we
+can put a number on it — 1.12% against 12.34%.*
+
+### 11.7 What none of this changed
 
 The result. `label_alias` beat popularity at every measurable cut before
 these fixes and after them. What changed is that the numbers now come
@@ -1377,4 +1551,15 @@ the data.
 
 Worth keeping in view: **three of the four bugs in this section were in
 code written to check the model, not to build it.** The instinct to
-verify was right; the instruments needed verifying too.
+verify was right; the instruments needed verifying too — and §11.5 and
+§11.6 were both written by *pointing an instrument at itself*, which is
+the only technique in this file that has never yet produced a wrong
+answer.
+
+What §11.5 and §11.6 did change is the **claim**, not the result. The
+ranker is as good as it was; the score it was previously given was
+depressed by duplicate negatives, and the half of the dataset it is
+scored on most heavily is the half our label can actually see. Both
+belong in the report as stated limitations. Neither is a reason to
+restate the headline in §1, which is still: *beats popularity at every
+cut date large enough to measure, median 2.59×, never below 2.32×.*
