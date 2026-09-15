@@ -105,3 +105,9 @@ Input capped at 100 packages.
 12. package.github_repo is populated by the pipeline from PyPI's JSON
     info.project_urls. Best-effort, nullable, never fails ingest. Retained as
     the input to changelog/deprecation mining later.
+13. /stats and the About page never display pr_auc without positive_rate
+    beside it. PR-AUC's floor is the positive rate (0.0356), not 0.5 —
+    alone, 0.514 reads as poor; against its floor it is 14x.
+    precision@10 is never quoted without its n.
+    Preferred page copy: "Beats a popularity baseline at 6 of 7 evaluation
+    cut dates, by a median of 2.59x and never less than 2.32x."
