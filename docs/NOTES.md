@@ -33,78 +33,100 @@ replaced, the subsection says so at the top. §1 and §11 are current.
 
 Three labels now, on the same rows (§9). `label_alias` is the shipped one.
 
-**Everything in this section was recomputed on 14 Sep** against the
-19,121-row dataset — after the inherited-member fold (§10.2) removed
-13,694 duplicate rows, the pre-release fix (§10.6) recovered 8 packages,
-and the rankable-pairs gate (§11.2) dropped two cut dates that could not
-support a top-10 metric. Every earlier figure in this file predates at
-least one of those and should be read as superseded, not as a second
-opinion.
+> **FROZEN 16 Sep 2026, tag `dataset-20260916`.** 17,014 rows, 416
+> packages, 1,601 version pairs. Every number below and in the public
+> write-up cites that tag.
+>
+> This section was rewritten four times in five days, and **not one of
+> those rewrites was caused by a modelling decision.** The six-release
+> window is defined relative to *today*, so each re-ingest produced a
+> different dataset: the headline lift read 2.48×, 2.59×, 4.82× and
+> 2.25× as releases shipped underneath it. `databricks-sdk` alone moved
+> the dataset by 1,901 rows overnight.
+>
+> That is correct behaviour for a live site and impossible for a report
+> with a submission date. So the two are now separate: re-ingests keep
+> the site current and are never quoted; the report cites the frozen tag.
+> §15.4 has the reasoning.
 
 | | strict `label` | `label_scoped` | **`label_alias`** |
 |---|---|---|---|
 | rule | exact path match | exact, or one symbol owns the leaf | exact, or a real export path |
 | basis | fact, and incomplete | **a guess** | fact, from griffe's alias graph |
-| positive rows | 607 (3.17%) | 1,075 (5.62%) | **972 (5.08%)** |
-| test positives | 89 | 186 | **170** |
-| test positive rate — **the PR-AUC floor** | 0.0186 | 0.0389 | **0.0356** |
-| ranker PR-AUC | 0.2835 | 0.3685 | **0.5137** |
+| positive rows | 609 (3.58%) | 1,113 (6.54%) | **1,019 (5.99%)** |
+| test positives | 132 | 292 | **278** |
+| test positive rate — **the PR-AUC floor** | 0.0313 | 0.0693 | **0.0660** |
+| ranker PR-AUC | 0.2262 | 0.2296 | **0.3866** |
 
 ### The headline, stated the way it survives scrutiny
 
 **No lift this project quotes is a single number.** §5.6 refits at seven
-cut dates and reports the range; §11.2 now discards any cut with fewer
-than 10 rankable version pairs, because precision@10 over four pairs is
-not a weak measurement of anything — it is not a measurement. Against the
-strongest baseline (popularity):
+cut dates and reports the range; §11.2 discards any cut with fewer than
+10 rankable version pairs, because precision@10 over four pairs is not a
+weak measurement of anything — it is not a measurement.
 
-| label | beats popularity | median lift | **worst cut** | best cut |
-|---|---|---|---|---|
-| strict `label` | 5 / 5 | 2.15× | 1.85× | 3.14× |
-| `label_scoped` | 6 / 6 | 2.14× | 1.95× | 3.01× |
-| **`label_alias`** | **6 / 6** | **2.59×** | **2.32×** | 4.82× |
+`label_alias`, against the strongest baseline (popularity), on its own
+six usable cuts:
 
-The claim to make is **not** "4.8× the baseline". It is:
+| | value |
+|---|---|
+| beats popularity | **6 of 7 cut dates** (the seventh too small to measure) |
+| median lift | **1.99×** |
+| worst cut | **1.45×** |
+| best cut | 2.76× |
 
 > The ranker beats the strongest baseline at **every cut date with enough
 > rankable pairs to measure one** — six of seven — by a median of
-> **2.59×** and never less than **2.32×**.
+> **1.99×** and never less than **1.45×**.
 
-Say "six of seven, the other two too small to measure", never "6/6".
-The excluded cuts are a limitation, not a rounding.
+Say "six of seven, the other two too small to measure", never "6/6". The
+excluded cuts are a limitation, not a rounding.
 
-Read the **worst** column first, and know why. On 14 Sep the ungated
-worst case put `label_scoped` ahead (1.92× vs 1.79×) — the reverse of two
-days earlier — and the only thing that had changed was **50 rows, 0.26%
-of the data**. Cut dates are quantiles, so every one of them moves when
-the row count does. A decision rule that flips on a quarter of a percent
-is not measuring what it claims to. With the gate the ordering is stable
-across both datasets (§11.2 carries the table).
+### Why `label_alias` and not one of the others
 
-`label_alias` wins on worst case (2.32× vs 1.95×), on median (2.59× vs
-2.14×), and on spread — it is the only label whose cut-to-cut spread does
-**not** exceed half its median, so it is the one result in this file
-readable at the per-cut level. The provenance argument (§9.3: 210 of
-scoped's positives have no import statement behind them) agrees with the
-numbers rather than carrying them.
+**On the five cuts all three labels share** — which is the only fair
+comparison, and the code now enforces it (§15.1):
 
-Single-split reference numbers, 14 Sep cut (2026-08-15):
+| label | lift median | **lift MIN** |
+|---|---|---|
+| strict `label` | 1.90× | 1.81× |
+| `label_scoped` | 1.38× | 1.27× |
+| **`label_alias`** | **2.05×** | **1.92×** |
+
+Two numbers, two jobs, and they must not be mixed. **Which label ships**
+is decided on shared cuts: 1.92×. **How good the shipped model is** comes
+from `label_alias` on its own six cuts: median 1.99×, min 1.45×. That
+second set is what `metrics.json` carries.
+
+The comparison had to be fixed before it could be read. Taken over each
+label's own cuts, the rule picked the strict `label` — because `label`
+was skipped at one cut for having too few rankable pairs and so never
+faced the hardest one. A worst case measured over different exams is not
+a comparison (§15.1, and the same class of error as §11.2 and §13.2).
+
+The provenance argument agrees with the numbers rather than carrying
+them: §9.3 found 220 of scoped's positives have no import statement
+behind them.
+
+Single-split reference numbers, frozen cut (2026-07-28):
 
 | | value | vs floor |
 |---|---|---|
-| floor — test positive rate | 0.0356 | 1.0× |
-| semver baseline (the kill-date gate) | 0.0347 | 1.0× |
-| best baseline — popularity | 0.1065 | 3.0× |
-| ranker PR-AUC | 0.5137 | 14.4× |
-| precision@10 | 0.3400 | over 15 rankable pairs — see §5.1 |
-| nDCG@20 | 0.7466 | over 10 rankable pairs |
-
-That cut is the **second-best of six** for this label. Quote it only
-alongside the range above.
+| floor — test positive rate | 0.0660 | 1.0× |
+| semver baseline (the kill-date gate) | 0.0622 | 0.9× |
+| best baseline — popularity | 0.1722 | 2.6× |
+| ranker PR-AUC | 0.3866 | 5.9× |
+| precision@10 | 0.2231 | over 26 rankable pairs — see §5.1 |
+| nDCG@20 | 0.6289 | over 18 rankable pairs |
 
 ### The score went up. The model did not. (§11.5)
 
-PR-AUC was 0.3465 on 5 Sep and is 0.5137 now, and **that rise is
+*Figures in this subsection are from the 14 Sep dataset, and stay that
+way deliberately: it is a controlled experiment about the FOLD, and both
+sides of it saw the same data. Re-running it on the frozen dataset would
+answer a different question.*
+
+PR-AUC was 0.3465 on 5 Sep and 0.5137 after the fold, and **that rise was
 arithmetic, not skill.** Measured with the cut date held fixed and only
 the duplicates differing:
 
@@ -1562,7 +1584,8 @@ depressed by duplicate negatives, and the half of the dataset it is
 scored on most heavily is the half our label can actually see. Both
 belong in the report as stated limitations. Neither is a reason to
 restate the headline in §1, which is still: *beats popularity at every
-cut date large enough to measure, median 2.59×, never below 2.32×.*
+cut date large enough to measure, median 1.99×, never below 1.45×,
+on the frozen dataset.*
 
 ---
 
