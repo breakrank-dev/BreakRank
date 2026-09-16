@@ -1766,3 +1766,90 @@ pair rather than the release.
   exact mirror of the `DEFAULT now()` bug Varad found in his seed, where
   the fixture silently became newest on every reseed. Same bug, opposite
   direction, both fixed while there is still only one real model.
+
+---
+
+## 14. "We checked and nothing broke" is now an answer (Day 11)
+
+`data/releases.csv` — one row per release **considered**, not one per change
+found. This is the file that closes the gap §12.2 found from the outside
+and Varad's `analysis_status` enum was designed around.
+
+```
+analysed        1,601  ┐ 2,405 pairs actually diffed
+analysed_clean    804  ┘
+no_baseline       487    one per segment: nothing to compare against
+analysis_failed    59
+pre_release       262  ┐
+dev_release       148  │ 499 filtered before analysis, reason kept
+yanked             54  │
+no_source          35  ┘
+                -----
+                3,450  release rows, 3,450 distinct — the ledger closes
+```
+
+### 14.1 The number that did not exist
+
+**804 clean pairs.** `scripts/window_gaps.py` could see only **27** from
+the outside and said so explicitly: a release only becomes invisible when
+*both* its adjacent pairs are clean, so the count of clean releases is a
+lower bound on the count of clean pairs. It is 30× larger.
+
+That caveat was written before the number was knowable. Being right about
+the *direction* of an unmeasurable quantity is worth more than a guess at
+its size, and stating it as a bound is what made the 804 verifiable
+rather than surprising.
+
+### 14.2 Two independent paths, one number
+
+```
+n_changes sum   17,014
+changes.csv     17,014
+```
+
+`n_changes` is accumulated per pair inside the ingest; `changes.csv` is
+written row by row. Nothing links them except both being correct. An
+exact match is the check worth having before a homepage ranks releases by
+that column.
+
+### 14.3 `no_baseline` is per SEGMENT, not per package
+
+The oldest release in a chain has no predecessor, so it is not clean —
+nothing was compared. But a failed download *splits* the chain (§2.1),
+and the release immediately after a gap has no comparable predecessor
+either. Both get `no_baseline`.
+
+487 of them across 500 packages: more than one per package, which is the
+failed downloads showing up exactly where they should.
+
+Varad rejected `analysed_clean` for this case before seeing any of the
+data, on the grounds that it *"would have the site say 'safe to upgrade'
+about a release we never compared"*. That is the same pair-not-release
+distinction as the `live_rel` bug in §13.2, caught from the schema side
+instead of the audit side.
+
+### 14.4 The bug in shipping it, and the check that should have caught it
+
+Changing `_process_package` to return four values instead of three, I
+updated three of its five return paths. The two I missed were the
+early exits for "every download failed" and "no importable module" — so
+8 packages died with `ValueError: not enough values to unpack` and were
+recorded as `pipeline / UnexpectedError` instead of
+`resolve_module / NoPythonModule`.
+
+The run still completed, because `main` catches per-package exceptions by
+design. **A pipeline built to survive one package exploding will happily
+survive its own author breaking every path that explodes.**
+
+Fixed, and verified with an AST walk over the function rather than by
+testing one path:
+
+```python
+sizes = {len(n.value.elts) for n in ast.walk(fn)
+         if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple)}
+assert sizes == {4}
+```
+
+Arity is a structural property, so check it structurally. Running the
+happy path proves nothing about the five error paths, and the error paths
+are where a resumable pipeline spends its interesting moments.
