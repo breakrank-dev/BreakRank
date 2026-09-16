@@ -364,8 +364,15 @@ def main() -> None:
               "single-cut\nnumber with no range. Run ml/model/stability.py "
               f"--label {label} --stopping {args.stopping} first.")
 
+    # positive_rate IS A TOP-LEVEL FIELD, not just a phrase inside notes.
+    # It has been in the notes string since day 5 — recoverable only by
+    # parsing prose, which is no way to store half a result. PR-AUC's floor
+    # IS the positive rate, so a stored pr_auc without it cannot be read by
+    # anyone who was not in the room. Migration 005 gave it a column and
+    # the API contract (decision 13) forbids showing one without the other,
+    # so this key is what that rule reads.
     run = {"version": version, **{k: round(v, 6) for k, v in m.items()},
-           "notes": notes}
+           "positive_rate": round(floor, 6), "notes": notes}
     (ART / "metrics.json").write_text(json.dumps(run, indent=2))
     print(f"\nartifacts/metrics.json — this is your model_run row:\n"
           f"{json.dumps(run, indent=2)}")

@@ -1563,3 +1563,206 @@ scored on most heavily is the half our label can actually see. Both
 belong in the report as stated limitations. Neither is a reason to
 restate the headline in §1, which is still: *beats popularity at every
 cut date large enough to measure, median 2.59×, never below 2.32×.*
+
+---
+
+## 12. What the analysed window actually contains (Day 10)
+
+Varad's review note was fair: *"wheel-only releases are probably rare"
+does not survive a review; "0.x% of releases, documented" does.*
+
+`scripts/window_gaps.py` takes the version range actually analysed for
+each of the 415 packages, asks PyPI for everything published inside it,
+and accounts for every release that is **not** in `changes.csv`.
+
+```
+  releases inside our analysed windows   2,470
+  in changes.csv                         2,081   84.3%
+
+  no sdist                                   3   0.12%   the off-by-one
+  yanked                                    38   1.54%   correct
+  pre-release                              207   8.38%   correct (§10.6)
+  dev release                              114   4.62%   correct
+  left no row (analysed, nothing found)     27   1.09%   quiet releases
+  unexplained                                0
+```
+
+### 12.1 The off-by-one is 0.12%, and it is one package
+
+griffe reads source, so a release shipping only a wheel cannot be
+analysed and a break introduced in it is attributed to the next release
+that did publish an sdist. **Three releases in 2,470, all of them
+`pure-eval`.** Real, documented, and small enough to state in a sentence
+rather than hedge around.
+
+### 12.2 The consistency check found the quiet-release gap
+
+The `unexplained` bucket was paranoia: a release with a real sdist, not a
+pre-release, not yanked, inside our window, that we did not analyse
+should be **impossible**, because `list_releases` takes the last six
+*eligible* releases and anything between them would have been among
+those six.
+
+It printed **27**. None has a logged failure; none appears anywhere in
+`changes.csv`.
+
+They were analysed and nothing broke. **A version pair with zero
+breaking changes writes zero rows**, so a release whose *both* adjacent
+pairs were clean disappears from the data entirely. `termcolor`,
+`tabulate`, `toolz`, `pkginfo` — small stable libraries doing the right
+thing, and the dataset cannot say so.
+
+That is the same gap the quiet-releases question has been circling since
+Day 5, arriving from a direction nobody was watching. A script written to
+count wheel-only releases found it as a side effect of refusing to let a
+category go unexplained.
+
+**The 1.09% is a LOWER BOUND and must be quoted as one.** It counts
+invisible *releases*, which need two clean pairs each. Clean *pairs* are
+strictly more numerous and cannot be counted from outside at all.
+
+### 12.3 Four of five enum values now have a source
+
+Varad's `analysis_status` needs five values. After this run:
+
+| value | source |
+|---|---|
+| `analysed` | `changes.csv` |
+| `analysis_failed` | `failures.csv` |
+| `no_source` | `window_gaps.csv` — the 3 above |
+| `yanked` | `window_gaps.csv` — the 38 above |
+| **`analysed_clean`** | **nothing. This is the outstanding work.** |
+
+The fix is not a mapping. `run_ingest` has to emit a row per release it
+**considered**, with a status and a change count, rather than only rows
+for changes it found. Until it does, *"we checked and it is safe"* and
+*"we never looked"* are the same absence — which is the one answer a
+dependency tool should be able to give confidently and currently cannot.
+
+---
+
+## 13. The audit that nearly deleted 591 true findings (Day 11)
+
+Migration 005 landed, the database reloaded against it, and then the
+clean-up nearly did more damage than the mess it was cleaning.
+
+### 13.1 A guard that fired on "unusual", not on "known bad"
+
+`db_prune.py` refuses to delete more than 5% of the table. After the
+reload it wanted **18.3%**, and refused.
+
+It had no idea what was wrong. It only knew the number was far outside
+normal, and that made a human look — which is the entire value of the
+guard. Had the bug affected 4% of rows instead, the delete would have
+gone through, ~900 true findings would have vanished, and **nothing
+downstream would ever have complained**: a missing breakage row looks
+exactly like a change that never happened.
+
+**A guard that only fires on conditions you already thought of catches
+nothing you have not already imagined.** This one fired on a shape.
+
+### 13.2 The bug was a meaning mismatch, not a logic error
+
+Both audit scripts decided whether a row was *superseded* — "we
+re-analysed that release and did not produce this row" — using:
+
+```python
+live_rel = set(zip(package, version_to)) | set(zip(package, version_from))
+```
+
+That reads naturally: *is this release still in our data?* It is the
+wrong question.
+
+**Every breakage row hangs off `version_to`.** `breakage_rows()` attaches
+each row via `release_id[(package, version_to)]`, so a row for release V
+was produced by the pair `previous -> V`. "Superseded" can therefore only
+mean *we re-ran that pair and it did not produce this row* — which
+requires V to be a **version_to** today.
+
+When the six-release window rolls forward, V becomes the OLDEST version
+in it and appears only as a `version_from`. The release is still "live",
+but the pair that produced its rows was never re-analysed. We know
+nothing about those rows — and the script called them superseded.
+
+Caught by reading the sample rows, not the summary. The breakdown said
+*"4,198 superseded"* and looked entirely plausible. The twelve example
+rows above it said `anthropic.AI_PROMPT: Public object was removed` — a
+public, module-level removal, which a fold that only touches inherited
+methods has no way to supersede. **Same failure as the Day 5 chain
+renderer: a summary that was internally consistent and wrong, with only
+the raw rows disagreeing.**
+
+Fixing it moved **591 rows** from *delete* to *keep*.
+
+| | before fix | after |
+|---|---|---|
+| superseded (delete) | 4,198 | 3,607 |
+| aged out (keep) | 198 | **789** |
+
+### 13.3 Proving the remaining 3,607 really were superseded
+
+"Close to what I expected" is how three bugs survived this week, so the
+3,607 got their own test rather than a nod.
+
+If the fold caused a row to disappear, **the same change is still in
+today's data** — same package, same release, same kind, same leaf name —
+recorded on the defining class instead of the inheriting one. The leaf
+survives; the path moves.
+
+```
+superseded rows: 3,607
+  same package+version+kind+LEAF under a different path today:  3,586  (99.4%)
+  no counterpart at all:                                            21
+```
+
+And the 21 are not mysterious either:
+
+```
+cython 3.3.0         runtests.TAG_EXCLUDERS
+zstandard 0.24.0     make_cffi.HEADERS
+grpcio-tools 1.82.1  grpc_version.PROTOBUF_VERSION
+python-dateutil      updatezinfo.main
+```
+
+`runtests`, `make_cffi`, `grpc_version`, `protoc_lib_deps`,
+`updatezinfo` — build and test scripts, removed by the Day 8 layout fix
+(§10.1), which `compare_runs` section 3 had already named as its intended
+removals. A second deliberate change, showing up in a different audit.
+
+Every one of the 3,745 deleted rows is accounted for by a fix we made on
+purpose. Final state: **19,909 rows — 19,120 current plus 789 aged-out**,
+0 superseded, 0 un-importable, Varad's `breakrank-fixture` rows untouched.
+
+### 13.4 The same confusion, from two directions, in one day
+
+Varad rejected `analysed_clean` for the oldest release in a window and
+added `no_baseline` instead, because *"recording it as analysed_clean
+would have the site say 'safe to upgrade' about a release we never
+compared"*.
+
+That is **this bug**, arrived at independently from the schema side. A
+release is not a unit of analysis; **a pair is.** A release with no
+predecessor has nothing to be clean about, and a release that is only
+ever a `version_from` has no rows of its own to supersede.
+
+Two people found the same distinction on the same day from opposite ends,
+which is the strongest argument available for keying `n_changes` on the
+pair rather than the release.
+
+### 13.5 Three loader fixes that shipped with the reload
+
+- **`inherited_by` and `positive_rate` are written**, detected rather
+  than assumed: `check_schema` returns a capability dict, and any optional
+  column the database lacks is dropped from **both** the column list and
+  the row dicts. A bound parameter with no column to land in fails a
+  transaction exactly as hard as the reverse.
+- **`positive_rate` is a field in `metrics.json`**, not a phrase inside
+  the notes string. A floor recoverable only by parsing prose is half a
+  result. A fallback still parses the old string, because a run produced
+  by an older `train.py` is still a valid run.
+- **`trained_at` is no longer set to `now()` on conflict.** Re-scoring an
+  *older* model version would have stamped it newest, and the API picks
+  the current model with `ORDER BY trained_at DESC LIMIT 1`. This is the
+  exact mirror of the `DEFAULT now()` bug Varad found in his seed, where
+  the fixture silently became newest on every reseed. Same bug, opposite
+  direction, both fixed while there is still only one real model.

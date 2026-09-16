@@ -65,7 +65,13 @@ METRICS, RANKER = ART / "metrics.json", ART / "ranker.txt"
 BATCH = 2000
 BREAKAGE_COLS = ["release_id", "symbol_path", "kind", "sub_target",
                  "is_private", "module_depth", "is_top_level",
-                 "in_dunder_all", "detail"]
+                 "in_dunder_all", "inherited_by", "detail"]
+
+# Columns that exist only after a migration. Each is dropped from the
+# insert when the database does not have it, so one loader serves both
+# schemas and the two halves of this project deploy on their own
+# schedules rather than in lockstep.
+OPTIONAL_COLS = ("sub_target", "inherited_by")
 
 
 # ------------------------------------------------------------ shaping rows
@@ -89,6 +95,18 @@ def package_rows(changes: pd.DataFrame, packages) -> list[dict]:
              .rename(columns={"package": "name",
                               "package_rank": "download_rank"}).copy())
         p["github_repo"] = None
+    # DEDUPLICATE ON NAME, for exactly the reason breakage_rows() does.
+    # data/packages.csv is APPEND-ONLY: every resumed or retried run adds
+    # its packages again, so after one 500-package run plus a 36-package
+    # retry the file holds 532 rows for 500 names. Two rows with the same
+    # name inside one multi-row INSERT ... ON CONFLICT DO UPDATE raise
+    # "cannot affect row a second time" and take the whole transaction
+    # with them — it is not a silent last-one-wins.
+    #
+    # keep="last" because a later run saw the package more recently: its
+    # github_repo and download_rank come from the fresher PyPI response.
+    p = p.drop_duplicates("name", keep="last")
+
     p = p[["name", "download_rank", "github_repo"]].astype(object)
     return p.where(pd.notna(p), None).to_dict("records")
 
@@ -199,6 +217,12 @@ def breakage_rows(changes: pd.DataFrame, release_id: dict):
             "module_depth": int(r.module_depth),
             "is_top_level": bool(r.is_top_level),
             "in_dunder_all": bool(getattr(r, "in_dunder_all", False)),
+            # How many other classes inherit this exact change (NOTES
+            # §10.2). Zero for ~97% of rows. A DISPLAY signal, not a model
+            # feature — it has literally zero gain (§11.6) — but "this
+            # change affects 3,242 inheriting classes" is exactly what a
+            # human scanning a diff wants to know.
+            "inherited_by": int(getattr(r, "inherited_by", 0) or 0),
             "detail": json.dumps(detail_of(r)),
         })
         keys.append((r.package, r.version_to, r.symbol, r.kind, sub))
@@ -233,7 +257,7 @@ def connect():
     return create_engine(url, pool_pre_ping=True)
 
 
-def check_schema(conn, allow_lossy: bool) -> bool:
+def check_schema(conn, allow_lossy: bool) -> dict[str, bool]:
     from sqlalchemy import text
 
     have: dict[str, set[str]] = {}
@@ -266,7 +290,24 @@ def check_schema(conn, allow_lossy: bool) -> bool:
                      "copy for testing.")
         print("!" * 68 + f"\n{msg}Loading anyway because you asked.\n"
               + "!" * 68 + "\n")
-    return has_sub
+
+    # Migration 005 (15 Sep) added inherited_by to breakage and
+    # positive_rate to model_run. DETECTED, NOT ASSUMED: this loader runs
+    # against whatever is deployed, and naming a column that does not
+    # exist fails the whole transaction. Writing them when they are there
+    # and staying quiet when they are not is what lets the two halves of
+    # this project deploy on their own schedules.
+    caps = {
+        "sub_target": has_sub,
+        "inherited_by": "inherited_by" in have["breakage"],
+        "positive_rate": "positive_rate" in have["model_run"],
+    }
+    for name in ("inherited_by", "positive_rate"):
+        if not caps[name]:
+            print(f"  note: {name} not present — migration 005 is not applied,"
+                  f"\n        so that value is not written. Everything else "
+                  "loads normally.")
+    return caps
 
 
 # ------------------------------------------------------------------ writes
@@ -287,7 +328,7 @@ def executemany(conn, sql: str, rows: list[dict]) -> None:
         conn.execute(stmt, rows[i:i + BATCH])
 
 
-def write_all(conn, changes, usage, packages, has_sub, score_map) -> None:
+def write_all(conn, changes, usage, packages, caps, score_map) -> None:
     from sqlalchemy import text
 
     pkgs = package_rows(changes, packages)
@@ -317,11 +358,17 @@ def write_all(conn, changes, usage, packages, has_sub, score_map) -> None:
               for r, i in zip(rels, ids) if i}
     print(f"  release       {len(rel_id):>7,}")
 
+    has_sub = caps["sub_target"]
     rows, keys, dropped = breakage_rows(changes, rel_id)
-    cols = [c for c in BREAKAGE_COLS if has_sub or c != "sub_target"]
-    if not has_sub:
-        for r in rows:
-            r.pop("sub_target", None)
+    # Drop any optional column this database does not have, from both the
+    # column list and the row dicts — a bound parameter with no column to
+    # land in is as fatal as a column with no parameter.
+    cols = [c for c in BREAKAGE_COLS
+            if c not in OPTIONAL_COLS or caps.get(c)]
+    for c in OPTIONAL_COLS:
+        if not caps.get(c):
+            for r in rows:
+                r.pop(c, None)
     conflict = "release_id, symbol_path, kind" + (", sub_target" if has_sub
                                                   else "")
     # executemany, not RETURNING per row: 23,000 round trips is minutes of
@@ -348,8 +395,14 @@ def write_all(conn, changes, usage, packages, has_sub, score_map) -> None:
               "survive the uniqueness key.\n  ** That is the sub_target "
               "problem — see migration 004.")
 
+    # Same guard, same reason. usage.csv has never carried a duplicate
+    # symbol, but it is written by a resumable scanner and nothing in the
+    # schema stops it, so this costs nothing and removes a way for one
+    # transaction to die at row 38,000.
     urows = (usage.rename(columns={"symbol": "symbol_path"})
-             [["symbol_path", "user_count"]].to_dict("records"))
+             [["symbol_path", "user_count"]]
+             .drop_duplicates("symbol_path", keep="last")
+             .to_dict("records"))
     executemany(conn, """
         INSERT INTO usage_index (symbol_path, user_count, computed_at)
         VALUES (:symbol_path, :user_count, now())
@@ -366,17 +419,61 @@ def write_all(conn, changes, usage, packages, has_sub, score_map) -> None:
 
     # RULE 2: model_run must exist before anything references its version.
     run = json.loads(METRICS.read_text())
-    conn.execute(text("""
+
+    # THE FLOOR, AS A COLUMN. PR-AUC's floor is the positive rate, so a
+    # stored pr_auc without it cannot be read by anyone who was not in the
+    # room (§1, day 5). It has been inside the `notes` string since then,
+    # recoverable only by parsing prose. Migration 005 gave it a column.
+    # The API contract (decision 13) now forbids displaying one without
+    # the other, so this is the value that rule depends on.
+    # A metrics.json written before 16 Sep has the floor only inside the
+    # notes prose. Parse it out rather than writing NULL — a file produced
+    # by an older train.py is still a valid model run, and silently
+    # storing an unreadable score is the exact failure this column exists
+    # to end.
+    if run.get("positive_rate") is None:
+        found = re.search(r"positive_rate=([0-9.]+)", run.get("notes", "") or "")
+        run["positive_rate"] = float(found.group(1)) if found else None
+        if found:
+            print(f"  note: positive_rate recovered from the notes string "
+                  f"({run['positive_rate']}).\n        Re-run "
+                  "ml/model/train.py to write it as a field.")
+        elif caps.get("positive_rate"):
+            print("  ** metrics.json has no positive_rate and none could be "
+                  "parsed from\n  ** notes. pr_auc will be stored without its "
+                  "floor, which makes it\n  ** unreadable. Re-run "
+                  "ml/model/train.py before serving this run.")
+    extra = ", positive_rate" if caps.get("positive_rate") else ""
+    extra_val = ", :positive_rate" if caps.get("positive_rate") else ""
+    extra_set = ("\n                positive_rate = EXCLUDED.positive_rate,"
+                 if caps.get("positive_rate") else "")
+
+    # trained_at IS NOT TOUCHED ON CONFLICT, and that is a fix rather than
+    # an omission. It used to be set to now() on every update, so
+    # re-running --scores against an OLDER model version would stamp it as
+    # the newest — and the API picks the current model with
+    # `ORDER BY trained_at DESC LIMIT 1`. One re-score of a superseded run
+    # would have put it back on the site.
+    #
+    # This is the mirror of the bug Varad found on his side: his seed used
+    # DEFAULT now(), so the fixture silently became newest on every reseed.
+    # Same bug, opposite direction, both fixed before there were two real
+    # models to confuse.
+    conn.execute(text(f"""
         INSERT INTO model_run (version, pr_auc, precision_at_10, ndcg_at_20,
-                               notes)
-        VALUES (:version, :pr_auc, :precision_at_10, :ndcg_at_20, :notes)
+                               notes{extra})
+        VALUES (:version, :pr_auc, :precision_at_10, :ndcg_at_20,
+                :notes{extra_val})
         ON CONFLICT (version) DO UPDATE
             SET pr_auc = EXCLUDED.pr_auc,
                 precision_at_10 = EXCLUDED.precision_at_10,
-                ndcg_at_20 = EXCLUDED.ndcg_at_20,
-                notes = EXCLUDED.notes, trained_at = now()
+                ndcg_at_20 = EXCLUDED.ndcg_at_20,{extra_set}
+                notes = EXCLUDED.notes
     """), run)
-    print(f"  model_run     {run['version']}")
+    pr = run.get("positive_rate")
+    print(f"  model_run     {run['version']}"
+          + (f"   positive_rate {pr}" if caps.get("positive_rate") and pr
+             else ""))
 
     preds = [{"breakage_id": br_id[k], "model_version": run["version"],
               "score": float(s)}
@@ -444,6 +541,12 @@ def dry_run(changes, usage, packages) -> None:
     # disagreed with the thing it exists to preview.
     pkgs = package_rows(changes, packages)
     analysed, broke = len(pkgs), changes["package"].nunique()
+    raw = 0 if packages is None else len(packages)
+    if raw > analysed:
+        print(f"note: data/packages.csv holds {raw:,} rows for {analysed:,} "
+              f"packages — {raw - analysed} duplicate(s) from resumed or\n"
+              "retried runs, collapsed before insert. Left in place they "
+              "would abort the\nwhole transaction, not overwrite quietly.\n")
 
     print("would write (no database touched):")
     print(f"  package       {analysed:>7,}")
@@ -495,8 +598,8 @@ def main() -> None:
     score_map = score_everything() if args.scores else None
     engine = connect()
     with engine.begin() as conn:
-        has_sub = check_schema(conn, args.allow_missing_sub_target)
-        write_all(conn, changes, usage, packages, has_sub, score_map)
+        caps = check_schema(conn, args.allow_missing_sub_target)
+        write_all(conn, changes, usage, packages, caps, score_map)
     print("\ndone. Every write above is idempotent — rerun it any time.")
 
 

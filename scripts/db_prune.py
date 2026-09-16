@@ -69,6 +69,11 @@ def main() -> None:
         description="Delete un-importable and superseded breakage rows.")
     ap.add_argument("--yes", action="store_true",
                     help="actually delete. Without it this only reports.")
+    ap.add_argument("--max-share", type=float, default=MAX_SHARE,
+                    help=f"refuse if the prune exceeds this share of the "
+                         f"table (default {MAX_SHARE:.0%}). Raise it ONLY "
+                         "after reading the classification and agreeing "
+                         "with every category.")
     args = ap.parse_args()
 
     from sqlalchemy import text
@@ -78,8 +83,31 @@ def main() -> None:
     fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
     _rows, keys, _dropped = breakage_rows(changes, fake)
     ours = set(keys)
-    live_rel = (set(zip(changes["package"], changes["version_to"]))
-                | set(zip(changes["package"], changes["version_from"])))
+    # A BREAKAGE ROW HANGS OFF version_to, NOT off the release generally:
+    # breakage_rows() attaches every row via release_id[(package,
+    # version_to)], so a row for release V was produced by the pair
+    # (previous -> V).
+    #
+    # So "superseded" can only mean: we re-ran THAT PAIR and it did not
+    # produce this row. That requires V to be a version_to in the current
+    # changes.csv. If V appears only as a version_from — which is what
+    # happens when the six-release window rolls forward and V becomes the
+    # OLDEST version in it — then the pair (previous -> V) was never
+    # re-analysed, and we know nothing about whether its rows are still
+    # correct.
+    #
+    # Until 16 Sep this set was version_to UNION version_from, which made
+    # every such row look superseded. Measured on the 16 Sep load: that
+    # classed 4,198 rows for deletion, including things like
+    # `anthropic.AI_PROMPT was removed in 1.0.0` — a true, public,
+    # module-level finding that nothing in this run contradicts. Deleting
+    # it would have silently made the product worse to satisfy a
+    # tidiness rule.
+    #
+    # Aged-out rows are KEPT (NOTES §8): someone upgrading litellm
+    # 1.95 -> 1.97 still wants to know what 1.96 broke, and our window is
+    # a property of OUR ingest, not of their upgrade.
+    live_rel = set(zip(changes["package"], changes["version_to"]))
 
     engine = connect()
     with engine.connect() as conn:
@@ -119,11 +147,31 @@ def main() -> None:
         print("\nNothing to do.")
         return
 
-    if len(doomed) / max(total, 1) > MAX_SHARE:
-        sys.exit(f"\nREFUSING: that is more than {MAX_SHARE:.0%} of the table.\n"
-                 "Something is wrong upstream — a stale changes.csv, the "
-                 "wrong database,\nor a half-finished ingest. Check before "
-                 "deleting anything.")
+    share = len(doomed) / max(total, 1)
+    if share > args.max_share:
+        # THE GUARD IS THE POINT, so raising it has to be a decision
+        # somebody makes in a command, not a constant somebody edits.
+        #
+        # There is one legitimate way to exceed 5%: a change to the
+        # EXTRACTION that moves symbol paths. The inherited-member fold
+        # (NOTES §10.2) did exactly that — a change previously recorded
+        # once per subclass is now recorded once on the defining class, so
+        # every old path is superseded at once. Those rows are wrong and
+        # should go. That is still a human decision, because "a large
+        # share of the table is superseded" and "changes.csv is stale or
+        # this is the wrong database" produce an identical number here.
+        sys.exit(
+            f"\nREFUSING: {share:.1%} of the table, over the "
+            f"{args.max_share:.0%} limit.\n\n"
+            "Two things produce this number and only one is safe:\n"
+            "  1. A stale changes.csv, the wrong database, or a "
+            "half-finished ingest.\n"
+            "  2. An extraction change that moved symbol paths, so many "
+            "rows are\n     genuinely superseded at once.\n\n"
+            "Run scripts/db_extras.py and read the classification. If every "
+            "doomed\nrow is 'superseded' or 'un-importable' and you know "
+            "which extraction\nchange caused it, re-run with "
+            f"--max-share {min(share + 0.05, 1.0):.2f} --yes.")
 
     if not args.yes:
         print("\nDry run. Nothing was deleted. Re-run with --yes to apply.")
