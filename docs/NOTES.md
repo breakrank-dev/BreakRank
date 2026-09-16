@@ -1853,3 +1853,98 @@ assert sizes == {4}
 Arity is a structural property, so check it structurally. Running the
 happy path proves nothing about the five error paths, and the error paths
 are where a resumable pipeline spends its interesting moments.
+
+---
+
+## 15. The comparison that graded on different exams (Day 11)
+
+`lift_MIN` has now produced a misleading answer **three times**, and the
+third one finally showed what the other two had in common.
+
+### 15.1 What happened
+
+On the 17,014-row dataset the rule chose the strict `label`:
+
+```
+       label  splits  lift_MIN
+       label       5      1.81   <- "winner"
+label_scoped       6      1.27
+ label_alias       6      1.45
+```
+
+**Five splits against six.** `label` was skipped at q=0.85 for having 9
+rankable pairs, so it never faced the 2026-08-22 cut — which is exactly
+where `label_alias` recorded its worst case of 1.45×.
+
+`lift_MIN` is a **worst case**. Comparing worst cases across different
+sets of cuts rewards whichever label was spared the hardest one. On the
+five cuts all three labels actually share:
+
+| | 05-10 | 06-05 | 07-08 | 07-28 | 08-10 | min |
+|---|---|---|---|---|---|---|
+| `label` | 1.86 | 1.81 | 2.13 | 1.90 | 2.23 | 1.81 |
+| `label_scoped` | 1.58 | 1.27 | 1.38 | 1.30 | 1.44 | 1.27 |
+| **`label_alias`** | 1.94 | 1.92 | 2.05 | 2.25 | 2.76 | **1.92** |
+
+`label_alias` wins, as it has on every dataset once the comparison is
+made fairly. The code now restricts the label-vs-label table to shared
+cuts and says so when they differ; per-label tables still use every cut
+that label could use, because that is the honest picture of each one.
+
+**Two numbers, two jobs, do not mix them.** Which label ships is decided
+on shared cuts (1.92×). How good the shipped model is comes from
+`label_alias` on its own six cuts (6/6, median 1.99×, min 1.45×) — that
+is what `metrics.json` carries and what the report quotes.
+
+### 15.2 What all three failures had in common
+
+| | §11.2 | §13.2 | §15.1 |
+|---|---|---|---|
+| where | stability | db audit | stability |
+| looked like | a model comparison | a row classification | a model comparison |
+| actually was | a measurement of which cut dates existed | a measurement of which releases were re-analysed | a measurement of which cuts each label could use |
+
+Every time, **a number that appeared to measure the models was partly
+measuring which rows each model was given.** That is one bug wearing
+three costumes, and it is worth naming as a class rather than fixing
+three times: *before comparing two things, check they were given the same
+question.*
+
+### 15.3 Still open: the tree count is being clamped, not chosen
+
+```
+CV folds chose [5, 7, 1, 3] trees -> median 20
+```
+
+The median of `[5, 7, 1, 3]` is **4**. `MIN_TREES = 20` clamped it, and
+the printed line hides that. The folds wanted a four-tree model, which is
+not a tree-count decision — it is the validation signal being too weak to
+make one.
+
+Every ablation row inherits that clamp, which is why the 16-feature model
+now loses to two of its own subsets again (`no path shape` 0.4441 and
+`no blast radius` 0.4292 against 0.3866) and why the noise floor reads
+**11%** off a single control feature. Nothing in that table below 11% is
+readable, which currently includes popularity at 8.5%.
+
+Not fixed. Named, so it is not rediscovered as a finding.
+
+### 15.4 The dataset moves faster than the write-up can
+
+Four ingests in five days. The headline lift has read **2.48×, 2.59×,
+4.82×, 2.25×**, and not one of those changes came from a modelling
+decision — they came from PyPI publishing releases. `databricks-sdk`
+alone swung the dataset by 1,901 rows overnight when its six-release
+window rolled forward.
+
+The window is defined relative to *today*, so the dataset is not a fixed
+object. That is correct for a live site and impossible for a report with
+a submission date: an examiner re-running the pipeline in November gets a
+different answer, and every figure in §1 is stale within days of being
+written.
+
+**So the dataset is frozen at 17,014 rows / 416 packages, 16 Sep 2026,
+tagged `dataset-20260916`.** Every number in the report and the public
+write-up cites that tag. Re-ingests continue for the live site and are
+never quoted. Separating "the dataset the report is about" from "the
+dataset the site serves" is the only way both can be honest.

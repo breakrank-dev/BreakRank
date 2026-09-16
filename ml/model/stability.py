@@ -277,8 +277,40 @@ def main() -> None:
         print("\n" + "=" * 74)
         print("  LABEL vs LABEL, ACROSS ALL CUT DATES")
         print("=" * 74)
+        # COMPARE ON THE CUTS ALL LABELS SHARE, NOT ON EACH LABEL'S OWN.
+        #
+        # A cut is skipped per label — it needs enough positives and enough
+        # rankable pairs, and a sparse label runs out first. So the labels
+        # end up judged on different exams, and lift_MIN is a WORST CASE:
+        # the label that was spared the hardest cut wins by not sitting it.
+        #
+        # Measured 16 Sep. `label` was skipped at q=0.85 for having 9
+        # rankable pairs, so it never faced 2026-08-22 — which is exactly
+        # where `label_alias` recorded its worst case, 1.45x. On its own
+        # five cuts `label` showed 1.81x and won. On the five cuts all
+        # three share, `label_alias` shows 1.92x and wins. Same data, same
+        # code, opposite conclusion, and only one of them is a comparison.
+        #
+        # This is the THIRD time this rule has produced a misleading answer
+        # (§11.2 was the first, §13.2 the same confusion in the audit). The
+        # pattern each time: a number that looks like a measurement of the
+        # models is partly a measurement of which rows each one was given.
+        common = None
+        for t in summary.values():
+            cuts = set(t["cut"])
+            common = cuts if common is None else (common & cuts)
+        common = common or set()
+        if any(len(t) != len(common) for t in summary.values()):
+            print(f"\n  Comparing on the {len(common)} cut date(s) all labels")
+            print("  share. Per-label tables above use every cut that label")
+            print("  could use; a worst case taken over different cuts is not")
+            print("  a comparison — see the note in the source.")
+
         rows = []
-        for label, t in summary.items():
+        for label, t_all in summary.items():
+            t = t_all[t_all["cut"].isin(common)] if common else t_all
+            if t.empty:
+                continue
             v, l_ = t["pr_auc"].astype(float), t["lift_vs_pop"].astype(float)
             rows.append({
                 "label": label,
