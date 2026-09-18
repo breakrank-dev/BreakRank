@@ -1,6 +1,6 @@
 # BreakRank API Contract — froze, 3rd sept
 
-Base URL: https://<render-service>.onrender.com
+Base URL: https://breakrank.onrender.com
 All timestamps: ISO 8601, UTC, e.g. "2024-01-19T00:00:00Z"
 All errors: {"error": {"code": "not_found", "message": "..."}}
 
@@ -22,15 +22,27 @@ All errors: {"error": {"code": "not_found", "message": "..."}}
 limit: default 20, max 100.
 Private symbols excluded unless ?include_private=true.
 ranking is "model" when scores exist, "usage_fallback" when they don't.
+total is the count BEFORE limit, so the UI can show "20 of 2296".
+analysis_status says why an empty list is empty.
+404 with code "not_tracked" if the release is unknown.
 {
-  "package": "pandas",
-  "version": "2.2.0",
-  "model_version": "v0-fake",
-  "ranking": "usage_fallback",
+  "package": "sglang",
+  "version": "0.5.10",
+  "model_version": "lambdarank-label_alias",
+  "ranking": "model",
+  "analysis_status": "analysed",
+  "total": 2296,
   "breakages": [
-    {"symbol": "pandas.DataFrame.append", "kind": "OBJECT_REMOVED",
-     "score": null, "explanation": "pandas.DataFrame.append was removed. 412 packages call it.",
-     "user_count": 412}
+    {
+      "symbol": "sglang.bench_serving.get_model",
+      "kind": "OBJECT_REMOVED",
+      "sub_target": "",
+      "score": -0.6179313,
+      "user_count": 0,
+      "inherited_by": 0,
+      "explanation": "sglang.bench_serving.get_model was removed.",
+      "is_private": false
+    }
   ]
 }
 
@@ -122,4 +134,4 @@ Input capped at 100 packages.
     against a floor of 0.0120), so the model orders changes rather than
     sorting symbol kinds. But the About page must name this limitation
     rather than let an examiner find it, and no page may claim coverage
-    of method-level changes equal to module-level.
+    of method-level changes equal to module-level. 
