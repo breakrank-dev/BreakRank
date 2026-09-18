@@ -341,3 +341,48 @@ test run. Two tests passed for the wrong reason: a None model version matches
 no predictions, which makes the usage fallback look correct whether or not it
 is. Fixed with an autouse module-scoped fixture that enters the client's
 context, plus an explicit `is not None` assertion so it can't regress silently.
+
+## [date] — Day 3
+
+### API split into routes / services / schemas
+Routes handle HTTP, services hold logic, schemas define shape. The explanation
+renderer sits in services because it's business logic unrelated to HTTP, which
+means it can be tested without a request.
+
+### The API has its own engine, separate from db/ and ml/
+ml/db.py grew a pandas import during Day 2 and broke the migration runner. If
+the API imported from there, one pip install on the pipeline side would take
+the Render service down. Three engines, three consumers, no shared failure.
+
+### Connection pool bounded to 5 with 2 overflow
+Neon's free tier caps concurrent connections and Render may run multiple
+workers. An unbounded pool exhausts the database under any real load.
+
+### Model resolved by trained_at, never by version
+'v0-fake' sorts after the real model name as text, so ORDER BY version DESC
+would have served the fixture — 0.0 PR-AUC with six predictions behind it, and
+nothing would have looked like an error.
+
+### analysis_status is in the response, not just the schema
+An empty breakages list means at least six different things. Without the status
+the page would say "no breaking changes" when the truth is "we couldn't analyse
+this" — the exact dishonesty the contract exists to prevent.
+
+### Explanation rendering degrades rather than fails
+If detail lacks a key a template expects, or contains stray braces from a real
+griffe message, fall back to a generic sentence. A 500 over a dict key is the
+wrong failure for a user who wanted a ranked list.
+
+### Ordering has explicit tiebreakers
+score DESC NULLS LAST, then usage, then symbol_path, then sub_target. The last
+two exist only for determinism — an API returning the same rows in different
+orders across requests is very hard to debug.
+
+### Tests assert contract decisions, not implementation
+Each of the 17 tests maps to a numbered decision. If someone changes the code
+and breaks a promise we made, a test fails.
+
+### Known limitation: tests hit the real database
+They assume fixture rows exist and break if the table is truncated. Deliberate
+trade for real integration coverage now; the proper fix is a per-run test
+database.
