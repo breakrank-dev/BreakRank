@@ -333,3 +333,11 @@ rather than deleted so the migration-004 regression case survives.
 Seeded with DEFAULT now(), the fixture became the newest model run on every
 re-seed and silently won ORDER BY trained_at DESC. Pinning makes it
 structurally incapable of being selected rather than relying on care.
+
+### Tests were passing vacuously because lifespan never ran
+TestClient only runs startup handlers inside a context manager. Created at
+module level, it does not — so config.MODEL_VERSION was None throughout the
+test run. Two tests passed for the wrong reason: a None model version matches
+no predictions, which makes the usage fallback look correct whether or not it
+is. Fixed with an autouse module-scoped fixture that enters the client's
+context, plus an explicit `is not None` assertion so it can't regress silently.
