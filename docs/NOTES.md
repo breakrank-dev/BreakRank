@@ -2823,7 +2823,33 @@ nobody bet on." The book lists it explicitly as
 Corrected everywhere to: the book named three history features and bet
 on the wrong one.
 
-**Not assessable from the ML side:** the book's Phase 3 / second gate
+**F28. Frontend is a placeholder skeleton (verified live, Day 15).**
+`break-rank.vercel.app` loads over HTTPS with the BreakRank heading, but
+the tab title is the Next.js default "Create Next App", the only metric
+reads "187 changes analysed this week (placeholder)" — 187 being the
+book's own example number — and it hangs on "checking API…". No
+requirements.txt upload, no ranked list, no navigation. Below the book's
+week-4 DoD ("plain HTML page showing the data"), well short of week 6
+("real data from the database") and week 8 ("paste requirements.txt,
+get an ordered list"). Owner: Varad.
+*Fix:* set the title; replace the placeholder with a live count from
+Neon (moves it to week-4 DoD in an hour); then the upload → rank flow.
+
+**F29. API is on Render's free tier — the book's warning §3.6 #2, verbatim.**
+`breakrank.onrender.com` is a real FastAPI service (`/health` → 200,
+`/docs` serves Swagger) but measured cold start was **32.1 s**; the book
+says 30–60 s and "do not use Render's free web service for the model."
+Database is on Neon (correct — avoids warning #1). Owner: Varad.
+*Fix:* move the API to Hugging Face Spaces (Docker SDK, port 7860) per
+book Part 8, or at minimum add the 6-hourly GitHub Actions keep-alive
+ping. Until then: warm `/health` two minutes before any demo.
+
+**Direction summary after verifying the web half:** ML track at book
+Phase 4–5; web track at Phase 1–2 with a working but sleeping API. The
+book's second gate ("if the site is not live and working, stop adding
+features") applies to the web half now.
+
+**Previously not assessable from the ML side:** the book's Phase 3 / second gate
 ("if the site is not live, stop adding features") and week-6 DoD (a
 public HTTPS link showing real data). Owner: Varad. This is the largest
 open direction risk if it is not met.
@@ -2859,6 +2885,7 @@ Each of the first four both fixes a defect AND raises the headline.
 13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
+16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
 
 Items 1–5 are about a week and turn the project from "good student
 work" into something that survives a hostile reader.
