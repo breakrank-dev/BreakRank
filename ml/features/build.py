@@ -82,6 +82,16 @@ NUMERIC = [
     # different kind of break from one on a leaf class. Knowable from
     # griffe alone — no downstream data touches it.
     "inherited_by",
+    # How many breakages this module already produced EARLIER in the same
+    # version chain. A module that churns constantly has users who expect
+    # it; a first break in a quiet module is a different event. Written at
+    # extract time because it needs the whole chain in order — see the
+    # note in run_ingest.CHANGE_COLS.
+    #
+    # It is history, not usage: every number in it comes from griffe diffs
+    # of releases that had already shipped when the pair being scored was
+    # published. Nothing downstream, nothing from the future.
+    "prior_breaks_in_module",
     "name_length",        # long names tend to be obscure
     "package_rank",       # 1 = most downloaded. The popularity prior.
     "release_size",       # how many changes shipped together
@@ -95,6 +105,14 @@ BOOLEAN = [
     "is_version_string",  # the 36%-of-positives problem, made explicit
     "has_sub_target",     # a parameter changed, not the whole symbol
     "has_export_path",    # re-exported under a shorter public name
+    # Did the OLD release carry a deprecation marker for this symbol — a
+    # @deprecated decorator, the word in its docstring, or griffe's own
+    # flag? The maintainer said "this is going away" and then it went
+    # away. Measured on griffe 2.2.0, `griffe.deprecated` is None for BOTH
+    # docstring markers and @deprecated decorators, so reading that flag
+    # alone would have scored every row False and looked like a dead
+    # feature rather than a broken reader. NOTES §16.1.
+    "was_deprecated_before",
 ]
 CATEGORICAL = ["kind", "bump"]
 
@@ -125,14 +143,47 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["inherited_by"] = (pd.to_numeric(df["inherited_by"], errors="coerce")
                           .fillna(0).astype(int))
 
+    # THE HISTORY FEATURES DEFAULT, BUT THEY SAY SO.
+    #
+    # Same tolerance as inherited_by — an older changes.csv still builds —
+    # with one difference that matters. A missing `inherited_by` defaults
+    # to 0 and 0 is also its true value for most rows, so the default is
+    # nearly harmless. A missing `was_deprecated_before` defaults to False
+    # and False is a CLAIM: "the maintainer never warned anyone." If the
+    # column is simply absent, that claim is made about every row in the
+    # dataset, the feature reports zero gain, and the obvious reading is
+    # "deprecation does not predict usage" — a finding, from a column that
+    # was never written. So it warns rather than defaulting in silence.
+    for col, default in (("was_deprecated_before", False),
+                         ("prior_breaks_in_module", 0)):
+        if col not in df.columns:
+            print(f"** {col} is not in this file — every row will read "
+                  f"{default!r}. Re-ingest before reporting on it. **")
+            df[col] = default
+    df["prior_breaks_in_module"] = (
+        pd.to_numeric(df["prior_breaks_in_module"], errors="coerce")
+        .fillna(0).astype(int))
+
     # Context features: a change is easier to notice in a release of three
     # than in a release of eight hundred.
     df["release_size"] = df.groupby(
         ["package", "version_from", "version_to"])["symbol"].transform("size")
     df["package_churn"] = df.groupby("package")["symbol"].transform("size")
 
+    # `.astype(bool)` ON A STRING COLUMN IS A TRAP. Python says
+    # bool("False") is True — every non-empty string is truthy — so if a
+    # boolean column ever arrives as text instead of pandas' inferred bool
+    # dtype, this loop silently sets the whole column to 1 and the feature
+    # becomes a constant. read_csv usually infers bool and usually it never
+    # happens; "usually" is not a thing to leave in a cast that cannot
+    # fail loudly. Map the text forms explicitly first.
+    TRUE = {"true", "1", "yes", "t"}
     for c in BOOLEAN:
-        df[c] = df[c].fillna(False).astype(bool).astype(int)
+        col = df[c]
+        if col.dtype == object:
+            col = col.map(lambda v: v if isinstance(v, (bool, int, float))
+                          else str(v).strip().lower() in TRUE)
+        df[c] = col.fillna(False).astype(bool).astype(int)
     return df
 
 

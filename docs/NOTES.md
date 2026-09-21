@@ -1971,3 +1971,605 @@ tagged `dataset-20260916`.** Every number in the report and the public
 write-up cites that tag. Re-ingests continue for the live site and are
 never quoted. Separating "the dataset the report is about" from "the
 dataset the site serves" is the only way both can be honest.
+
+## 16. The two features that need more than one release (Day 12)
+
+Every feature in the model so far can be read off a single diff. These
+two cannot. `was_deprecated_before` needs the release *before* the break,
+and `prior_breaks_in_module` needs every release before that. The project
+book assigns them to week 5 and calls the first one "probably your single
+strongest feature."
+
+Both are written at **extract time**, in `api_extract.diff_series`, and
+that is not a style choice. Once a pair is diffed the two sdists are
+deleted; the deprecation marker is gone with them. Nothing in
+`changes.csv` can reconstruct it later. So the feature had to exist
+before the re-ingest, not after — otherwise the re-ingest happens twice.
+
+### 16.1 griffe's `deprecated` flag is None for real deprecations
+
+The obvious implementation is `obj.deprecated`. Measured on griffe 2.2.0,
+against a two-line fixture:
+
+| marker in source | `griffe.deprecated` |
+|---|---|
+| `.. deprecated:: 1.0` in the docstring | `None` |
+| `@deprecated('use plain instead')` decorator | `None` |
+
+The first is defensible — prose is not metadata. The second is not
+obvious at all, and it is the one that matters, because a decorator is
+the machine-readable form a maintainer is *supposed* to use.
+
+A feature reading only that flag would have been `False` on all 17,014
+rows. It would have reported zero gain, the ablation would have shown
+removing it costs nothing, and the honest-sounding conclusion —
+"deprecation warnings do not predict which breaks bite" — would have been
+a fact about a broken reader.
+
+So `was_deprecated()` reads three sources: the flag, the decorator list,
+and the docstring. Decorators come back as **strings** on this version
+(`decorators=["deprecated('use plain instead')"]`), so they are matched
+as text against the stem `deprecat`, which covers "deprecated",
+"deprecation", "DeprecationWarning" and `.. deprecated::` at once.
+
+### 16.2 The version that put the signal on the wrong rows
+
+Aliases must be skipped: reading `.docstring` on one raises
+`AliasResolutionError` — the same trap §9.1 documents, and the first
+probe crashed on it exactly as predicted.
+
+Skipping them naively gave this:
+
+```
+pkg.core.a   True      <- the definition path
+pkg.core.b   True
+pkg.a        False     <- the path users actually import
+pkg.b        False
+```
+
+Correct by the letter. Also useless: the signal landed on the rows almost
+nobody writes, and was withheld from the rows the feature exists for.
+
+Fixed with `deprecated_paths()` — one walk per version collecting every
+*definition* path that carries a marker, consulted by alias rows through
+`alias.target_path`, which is a plain string and needs no resolution
+(§9.1 again, used constructively this time).
+
+Worth recording *when* an alias row exists at all: griffe reports the
+re-exported name as its own breakage only if the package declares it in
+`__all__`. Measured — `from .core import a` yields `['pkg.core.a']`;
+adding `__all__ = ['a']` yields `['pkg.a', 'pkg.core.a']`. The first
+fixture for this test had no `__all__`, produced no alias rows, and would
+have passed by having nothing to check.
+
+### 16.3 `prior_breaks_in_module` must not see the future
+
+The counter accumulates oldest-first inside `diff_series`, so at pair *k*
+it holds pairs 0..*k*−1 only. Building it from a completed run and
+reading it back per row would leak later releases into earlier ones — the
+same class of error as a random split, and just as invisible in the
+output. A feature that can see the future scores beautifully and predicts
+nothing.
+
+`scripts/test_history.py` pins this: 13 checks, no network, under a
+second. It includes the controls, which are the point — an unmarked
+symbol that stays `False`, and a function *named* `deprecated` carrying
+no marker, which stays `False` too. Without those, a function returning
+`True` unconditionally passes every other check in the file.
+
+### 16.4 A summary that disagreed with its own table
+
+Adding the `HISTORY` group to `ablate.py` printed this:
+
+```
+history only     0.4003   ...   0.60
+...
+No single group reaches 85% of the full model (best is 'per-change only' at 35%)
+```
+
+Both lines came from the same script. The table iterates the `runs` dict;
+the sentence underneath held its own hand-typed list of group names, and
+the new group was in one and not the other. A summary that can contradict
+the table above it is worse than no summary — the table is skimmed, the
+sentence is quoted.
+
+Both the ablation loop and the "best solo group" line now derive their
+names from `runs` itself. Same fix, one more time, as §11/§13/§15: a
+number that looked like it described the model partly described which
+rows or names the code happened to be given.
+
+Also fixed while there: the noise-floor multiple printed `infx the floor`
+when every control came back exactly flat. There is no multiple of zero;
+it says so now.
+
+### 16.5 What went to the database, and what did not
+
+Nothing. `BREAKAGE_COLS` is unchanged, there is no migration, and Varad's
+contract ("do not add, rename or drop columns without telling me first")
+is untouched.
+
+One thing was added inside the existing `detail` JSON column:
+`deprecated_before: true`, and **only when true**. A key written on every
+row would be a claim on every row, and a `changes.csv` from before 16 Sep
+cannot tell "we looked and found nothing" apart from "we never looked".
+Writing it only when the answer is yes makes its absence mean nothing,
+which is honest for both files — and gives the site a sentence worth
+showing: *the maintainer marked this deprecated in the previous release.*
+
+### 16.6 The version of this feature I nearly shipped was half noise
+
+`was_deprecated()` originally matched one stem — `deprecat`, case
+insensitive — anywhere in the decorator text and anywhere in the
+docstring. The reasoning written next to it was that authors spell the
+word a dozen ways, so a stem is thorough rather than lazy.
+
+It is thorough. It is also answering a different question: *does this
+symbol mention deprecation*, when the feature needs *is this symbol
+deprecated*. Those are not close.
+
+**Decorators.** Surveyed across sqlalchemy, pydantic, numpy, django and
+pandas: 297 decorators contained the stem.
+
+| decorator | hits | what it means |
+|---|---:|---|
+| `@pytest.mark.filterwarnings("ignore::DeprecationWarning")` | 158 | a test *silencing* deprecation noise |
+| `@deprecate_nonkeyword_arguments` / `@deprecate_kwarg` / `@deprecate_posargs` | 47 | a calling convention is going, the function is not |
+| `@pytest.mark.parametrize(..., DeprecationWarning)` and friends | 16 | the stem is in an *argument* |
+| `@deprecated`, `@util.deprecated`, `@typing_extensions.deprecated` | 64 | the real thing |
+| `@util.deprecated_params` | 9 | a parameter, not the symbol |
+
+Roughly three noise hits for every real one, and the largest single
+category means close to the *opposite* of what the feature records.
+
+The fix is not a list of exceptions. It is reading the decorator's NAME —
+the part before the paren — instead of the whole call. `pytest.mark.
+filterwarnings` does not contain the word; only its argument did. All 158
+disappear without a rule that mentions pytest.
+
+**Docstrings.** Across 41,914 symbols in twelve packages the stem fired on
+symbols like these:
+
+| symbol | matching text | what it is |
+|---|---|---|
+| `sqlalchemy.exc.SADeprecationWarning` | "Issued for usage of deprecated APIs." | the warning class itself |
+| `click.core.Command` | ":param deprecated: ..." | documents a parameter *named* deprecated |
+| `numpy.linalg.qr` | "'economic' mode is deprecated" | a mode, not the function |
+| `boto3.compat.filter_python_deprecation_warnings` | the name and docstring both | machinery for handling deprecations |
+
+So `_DEPRECATED_DOC` matches declaration shapes instead: the Sphinx
+`.. deprecated::` directive, the reST `:deprecated:` field, a
+`Deprecated:` section header, an ALL-CAPS shout, MkDocs' `!!! warning
+"Deprecated"`, "deprecated since/in/as of", and plain self-scoped prose —
+"This class is deprecated" counts, "This parameter is deprecated" does
+not.
+
+**Result, measured over the same 41,914 symbols: 262 hits under the old
+rule, 147 under the new one. 44% of what the feature would have reported
+was noise.**
+
+Two smaller things, both mine:
+
+*The ALL-CAPS branch was not all-caps.* Written `^\s*DEPRECATED\b` under a
+pattern-wide `(?i)`, it matched any line merely beginning with the
+lowercase word — which a wrapped `:param:` description does the moment
+"deprecated" lands at the start of a continuation line. That is exactly
+the `click.core.Command` false positive, reproduced by a case-
+insensitivity I had added myself. `(?-i:DEPRECATED)` scopes the flag off
+for that branch alone.
+
+*The first fixture for the noise cases used `from .core import *`.*
+griffe records a star-import as a single pseudo-member named `pkg/core/*`,
+so the pair produced one row for the wildcard instead of one per symbol,
+and all six checks came back `None` rather than `False`. A test whose
+subject does not exist does not fail — it returns nothing, and `None`
+is not `False` only because `check()` compares exactly.
+
+None of this would have shown up in training. A feature that is 44% noise
+still correlates with the label, still reports gain, still survives an
+ablation. It would have gone into the report as "deprecation is the
+strongest signal we have", and roughly half of what it was reading would
+have been libraries talking about deprecation rather than doing it.
+
+`scripts/test_history.py` case 4 now pins every shape in the tables
+above, with one genuine `@deprecated` in the same fixture so the case
+cannot pass by the function simply returning False.
+
+### 16.7 What is still wrong, measured and left alone
+
+Two residuals, both known, both quantified rather than discovered later.
+
+**A directive that scopes to a parameter.** attrs writes
+`.. deprecated:: 24.1.0 *hash*` inside `define`'s docstring — the Sphinx
+directive is symbol-level everywhere else, and here it names a parameter.
+`attr._next_gen.define` and `attr._make.attrs` therefore read True while
+being perfectly current API.
+
+Measured across the same twelve packages: **3 of 147 flagged symbols, all
+three in attrs.** It is one library's house style, not a pattern. A regex
+branch for it would be tuning the extractor to one package's docstrings
+to move 2% of one column — so it is written down instead. If it ever
+matters, the rule is "a `.. deprecated::` directive followed immediately
+by an emphasised single identifier is about that identifier", and it
+would only ever turn True into False.
+
+**The feature is rare.** Across six packages at ten versions each — 158
+breakage rows — exactly **3 carried a prior deprecation marker**, all in
+attrs (`attr.validators.provides` and `attr._make.attrib`, plus the false
+positive above).
+
+That is worth saying before the model runs, because the project book
+calls `was_deprecated_before` "probably your single strongest feature"
+and a ~2% positive rate is not what a strongest feature usually looks
+like. Two readings, and the run will separate them:
+
+  - **It is rare but sharp.** When a maintainer does warn, the removal
+    really is less likely to break anyone, and LightGBM can split on a
+    2% feature if the split is clean.
+  - **It is rare and therefore weak.** A feature true on ~400 of 20,000
+    rows cannot move a ranking metric much no matter how right it is.
+
+Either way it should be reported as *what the data supports*, not as
+what the book predicted. The `HISTORY` ablation group exists to answer
+this with a number: "history only" against "popularity only" on the same
+fixed tree count.
+
+Also unchanged, and named in `was_deprecated`'s docstring: a bare
+`warnings.warn(..., DeprecationWarning)` in a function body with nothing
+in the docstring is not detected. That needs the function's source, not
+its signature. It is a false negative in every case, so the feature
+under-claims rather than over-claims — which, after §16.6, is the
+direction to be wrong in.
+
+## 17. The pipeline had permission to run the code it downloaded (Day 12)
+
+macOS raised **"Malicious Script Blocked — a script was blocked because
+it contains malware. This script did not harm your Mac"** during two
+consecutive ingests over the top 500. Both times it appeared while the
+same cluster of packages was in flight (`datasets`, `pypdf`, `sympy`,
+`transformers` and neighbours), and the first of those runs died at
+package 256 with no crash report and no jetsam event.
+
+The cause was one missing argument in this repo.
+
+### 17.1 What griffe does by default
+
+griffe reads a package two ways. **Static** analysis parses the `.py`
+files as text and never runs them. **Dynamic** analysis imports the
+module and inspects the live objects — and importing a module runs every
+line at its top level.
+
+`GriffeLoader.__init__` defaults `allow_inspection` to **True**.
+`load_all_modules` did not override it. So from the first ingest until
+16 Sep 2026, the pipeline had standing permission to import code it had
+downloaded from PyPI seconds earlier.
+
+`loader.py:600-606` is the whole decision:
+
+```python
+elif module_path.suffix in {".py", ".pyi"}:
+    module = self._visit_module(...)      # parse the text
+elif self.allow_inspection:
+    module = self._inspect_module(...)    # IMPORT the binary
+else:
+    raise LoadingError("Cannot load compiled module without inspection")
+```
+
+So the trigger is **a module whose file is not `.py` or `.pyi`** — a
+compiled extension. Reproduced on a fixture: a package containing
+`ext.cpython-311-darwin.so`, loaded with the default, calls
+`_inspect_module` on that path. That is a `dlopen` of a native binary
+extracted from a downloaded archive, which is exactly the shape of thing
+XProtect's behavioural monitor exists to stop.
+
+sdists are not supposed to contain binaries. They are tarballs, and
+plenty do: vendored libraries, prebuilt artifacts, test fixtures.
+
+### 17.2 Three wrong fixtures before the right one
+
+Worth recording, because the first three all "passed":
+
+| fixture | reaches the import fallback? |
+|---|---|
+| a package that parses cleanly | no — with the flag on or off |
+| a module body with a side effect | no — it parses, so it is never inspected |
+| a **SyntaxError** | no — griffe raises `LoadingError` instead |
+| a **compiled extension** | **yes** |
+
+The intuition "unparseable means it falls back to importing" is wrong on
+griffe 2.2.0, and a test built on it passes while proving nothing. The
+same trap as the star-import fixture in §16.6: a check whose subject does
+not exist does not fail, it returns nothing.
+
+`scripts/test_no_execution.py` therefore ends with a check that the test
+can fail — it runs the same fixture through griffe's own default and
+asserts that the import IS attempted. A guard that cannot be seen to fail
+is not a guard.
+
+### 17.3 What this cost, and what it did not
+
+No evidence anything was harmed. macOS said it blocked the script, and
+the machine kept working. But the honest statement is the one about
+permissions, not outcomes: **for four ingests the pipeline was allowed to
+execute third-party code, and whether it ever did is not something the
+data can now answer.** Absence of a crash is not absence of execution.
+
+The fix is one argument in two places, plus the standing rule that it is
+never removed "temporarily" to debug a package that will not load. The
+cost of turning it off is known and small: a compiled module produces no
+rows instead of inspected ones. A gap in coverage is a different category
+of thing from an executed binary, and no dataset is worth the trade.
+
+### 17.4 The diagnosis that was wrong three times first
+
+For the record, because the wrong answers were each stated with more
+confidence than they deserved:
+
+1. **"It's macOS scanning the extracted files."** Plausible, unverified.
+2. **"It's a memory kill."** Disproved by the user's own logs — no jetsam
+   event, no crash report. Asserted before checking.
+3. **"It's Brave's download protection, not macOS."** Wrong, and the
+   worst of the three: it told someone a security warning was not from
+   their operating system when it was. The screenshot settled it in one
+   glance — system alert styling, `?` help button, XProtect's exact
+   wording.
+
+Only the fourth attempt started from "read our own code and find out what
+it is permitted to do", which is where it should have started, because
+that is the one question we control the answer to. The user's machine
+was running the unfixed pipeline through all three wrong answers.
+
+## 18. "Malicious Script Blocked" was transformers' remote-code feature (Day 12)
+
+Every silent death of the top-500 run on the Mac — at package 256, then
+232, then again under `screen` — was macOS XProtect blocking what it calls
+`ScriptedMalware` and killing the process. The kill is a SIGKILL to the
+process group, which is why it left no Python traceback, no jetsam event
+and no crash report: the exact fingerprint we kept failing to explain.
+
+The false trails, recorded because each was stated with more confidence
+than it earned: a memory kill (disproved — no jetsam for python), Brave's
+downloader (wrong — the alert is macOS's own, `type=ScriptedMalware` in
+`syspolicyd`), and a bundled EICAR test file (a scan of ranks 225-275
+found none).
+
+### 18.1 Finding it: one package at a time
+
+`scripts/find_culprit.py` does what the parallel run cannot — processes
+the danger-zone packages **one at a time**, in rank order, writing the
+package name to disk *before* touching it. With no parallelism there is no
+ambiguity about which package was in flight when the kill lands.
+
+It died on **transformers (rank 225)**, every earlier package clean. The
+completion counters from the full runs (256, 232) were a red herring all
+along: transformers is huge and slow, so by the time a worker finished
+loading its 2,680-module tree and tripped XProtect, 200-plus smaller
+packages had already completed. Same trigger every time, different
+bystander count.
+
+### 18.2 What macOS actually objects to
+
+transformers 5.17.0's sdist has 2,714 files and **not one** carries a
+suspicious extension — no shell scripts, no binaries. The trigger is a
+`.py` file's *contents*: `src/transformers/dynamic_module_utils.py`,
+whose job is the `trust_remote_code` feature. Line 308:
+
+```python
+module_spec.loader.exec_module(module)
+```
+
+preceded by `get_cached_module_file` pulling a `.py` from the HuggingFace
+Hub into `HF_MODULES_CACHE`. Download remote code, then execute it — which
+is, byte for byte, the behaviour a malware heuristic exists to catch. It
+is not malware; it is one of the most-downloaded libraries on PyPI doing
+something it documents and warns about. XProtect cannot tell the
+difference from a static signature, and neither could any scanner.
+
+This is a hypothesis, not a proof — XProtect's rules are private and its
+detection cannot be reproduced off a Mac. But it is specific, it fits
+every observation (why transformers, why "scripted", why "did not harm
+your Mac", why the identical block each time), and it is a far better
+answer than "a false positive on the run's pattern".
+
+The irony worth stating: this project exists to read other people's code
+without running it, and it was killed by a library whose feature is to
+run other people's code. We were never in danger — `allow_inspection=False`
+(§17) and `ast.parse` mean we only ever read `dynamic_module_utils.py` as
+text. macOS flagged the file at rest, on write, not anything we did with it.
+
+### 18.3 The fix, and honest accounting
+
+`run_ingest.py` gains an `XPROTECT_BLOCKED = {"transformers"}` set. Blocked
+packages are excluded on macOS, **recorded as a `skipped` failure row**
+(never a silent gap), and marked done so a resume does not re-hit them.
+`BREAKRANK_NO_SKIP=1` disables the list — which is how Linux runs, where
+XProtect does not exist and transformers processes normally.
+
+So transformers is not lost. Its rows are backfilled from the Linux
+ingest (the cloud sandbox), where the same code reads the same file
+without a scanner in the way, and concatenated into the dataset. The
+skip is a macOS-only workaround, not a data decision, and the released
+dataset contains transformers exactly as if the Mac had never balked.
+
+## 19. The history features, measured (Day 13)
+
+Dataset: 17,802 rows, 250 packages, one code path (fixed griffe, history
+features, transformers skipped on macOS per §18). Strict label: 788
+positives (4.43%). Temporal split at 2026-04-13. All numbers below are
+from this run and are not comparable cut-by-cut to the frozen
+`dataset-20260916` — different rows, different floor (§11.2, §15.4).
+
+The model holds: PR-AUC 0.2375 (range 0.216–0.265 across 7 cut dates),
+**1.68× lift over popularity, beating it at 7 of 7 cuts** and beating
+the semver kill-date gate at 7 of 7. That is the robust claim.
+
+### 19.1 `was_deprecated_before` — the book's "single strongest feature" — is a dud
+
+| | |
+|---|---|
+| rows where True | 199 of 17,802 (1.1%) |
+| gain share | **0.1%** — 15th of 18 features, above only `is_private` and the two zero-gain columns |
+| positive rate when True | 5.03% |
+| positive rate when False | 4.42% |
+
+That last pair is the finding. A deprecated-then-removed symbol is used
+downstream at the **same rate** as everything else — 5.0% against 4.4%,
+on 199 rows, is no difference at all. The book's intuition was that a
+maintainer's warning gives users time to migrate, so the removal breaks
+fewer people. In this data it does not show up. Either people do not
+act on deprecation warnings, or the ones who would have been broken
+migrated *and are still counted as users* because the usage index reads
+the latest version of downstream code (§4). Both are plausible; neither
+rescues the feature.
+
+It is not a broken reader. §16.6 tightened the matcher against 41,914
+symbols and it fires correctly on real deprecations (`attr.validators.
+provides`, urllib3's `format_header_param`). The feature works. The
+*signal* is not there.
+
+Reported as a negative result, which is worth more in a viva than a
+confirmation: the feature the book was most confident about was built,
+tested honestly, and found to contribute nothing. That is what testing a
+hypothesis looks like.
+
+### 19.2 `prior_breaks_in_module` — the one nobody bet on — works, and non-monotonically
+
+Gain share 4.2%, 8th of 18. Modest, and real. The reason it earns a slot
+is the shape of it:
+
+| prior breaks in the module | positive rate | n |
+|---|---|---|
+| 0 | 3.38% | 10,162 |
+| 1–5 | 8.86% | 2,970 |
+| 6–20 | **10.13%** | 1,717 |
+| 21+ | **0.27%** | 2,953 |
+
+A first break in a quiet module is unremarkable. A break in a module
+that has been *moderately* churning is **three times** as likely to hit
+something people use — those are the actively-developed public
+surfaces. And a break in a module with 21+ prior breaks is almost never
+used by anyone: that is the giant-refactor signature, a library
+rewriting its internals on symbols nobody imports (the same population
+as the inherited-member repeats in §10.2 and `pandas.tests` in §4).
+
+That U-shape is exactly what a tree model can exploit and a linear one
+cannot, and it is a real property of how libraries evolve, not of how
+the label is built.
+
+### 19.3 What the model is actually made of
+
+| feature | share |
+|---|---|
+| is_version_string | 20.2% |
+| name_length | 14.4% |
+| package_churn | 14.3% |
+| module_depth | 10.2% |
+| package_rank | 10.0% |
+| kind | 8.0% |
+| release_size | 7.9% |
+| prior_breaks_in_module | 4.2% |
+| … | |
+| was_deprecated_before | 0.1% |
+| inherited_by, bump | 0.0% |
+
+Path shape and popularity, with the version-string flag on top. The
+history idea contributed one modest, interpretable feature and one
+null result.
+
+### 19.4 The ablation is unreadable below 12.2%, and it says so
+
+`ablate.py` reports a **noise floor of 12.2%**: removing `inherited_by`,
+a feature the model never split on, moved PR-AUC by 12.2%. Every
+per-group effect except two sits under that line, and the two that
+clear it (`no history` −14.6%, `no popularity` −13.5%) clear it by a
+hair. This is the `MIN_TREES = 20` clamp named in §15.3, still not
+fixed: at 20 trees the fit is unstable enough that the ablation cannot
+resolve anything smaller than a tenth of the score. The gain table and
+the positive-rate breakdowns above are the evidence; the ablation
+confirms only that history is not load-bearing.
+
+One line in it deserves a note rather than a headline: "path shape
+only" (3 features) scores 156% of the full model. Read with the noise
+floor in mind, that is a real signal that 18 features at 20 trees is
+over-featured for this dataset size, and a reason to revisit the tree
+count — not a reason to ship a three-feature model.
+
+## 20. The full top-500 ingest, and everything re-measured on it (Day 14)
+
+The sandbox fill finished: all 500 packages attempted, `done.txt` = 500.
+314 produced diffable rows; the other 186 are wheels-only, namespace or
+pure-data packages with no public Python API, or failed to build, and
+every one sits in `failures.csv` with its stage (149 pipeline, 31 griffe,
+4 resolve_module, 2 list_releases). The final dataset is **23,268 rows /
+314 packages**, against 39,154 usage symbols — §19 was measured on 281 /
+21,285, so every headline number was re-run rather than trusted.
+
+Pipeline, in order, on the complete `changes.csv`: `labels.py` →
+`build.py` (18 features, temporal split at 2026-06-13, 2,036 version
+pairs) → `baselines.py` → `train.py` → `stability.py --label label` →
+`ablate.py`. One trap worth recording: `train.py` prints a "across 6 cut
+dates" line by READING the previous `stability_label_cv.csv`, so run in
+this order it quoted the stale 281-set lift (1.45×). The number below is
+from the fresh stability run, which is the only honest source for it.
+
+### 20.1 The result got stronger, not weaker
+
+Medians across the 6 usable cut dates (q=0.85 skipped, 6 rankable pairs):
+
+| | 281 pkgs (§19) | 314 pkgs (full) |
+|---|---|---|
+| model PR-AUC | 0.206 | **0.236** (range 0.168–0.271) |
+| popularity | 0.145 | 0.135 |
+| semver gate | 0.083 | 0.058 |
+| floor (positive rate) | 0.045 | 0.048 |
+| lift vs popularity (median of per-cut ratios) | 1.45× | **1.78×** (1.16–1.97) |
+| beats popularity / semver | 6/6, 6/6 | **6/6, 6/6** |
+| precision@10 / nDCG@20 | — | 0.172 / 0.560 |
+
+The semver gate now sits barely above the random floor — the version
+bump is constant inside a release and cannot order anything, which is
+the project's thesis stated as a number. Overall positive rate over all
+rows is 3.69% (test-slice floor 4.8%; the two differ because the
+temporal split concentrates positives unevenly — both are reported,
+neither is "the" base rate without saying which).
+
+### 20.2 Both findings hold, and sharpen
+
+`was_deprecated_before`: 278 / 23,268 rows carry the marker. Used
+downstream 3.60% when deprecated vs 3.69% when not — now marginally
+LOWER, i.e. zero signal. Gain share 0.1%, the lowest of every feature
+the model split on (`inherited_by` and `bump` are at 0.0% and were
+never split on, so "dead last of the real features" is the exact claim).
+
+`prior_breaks_in_module`: gain share **4.7% → 6.3%**, 7th of 18. The
+U-shape is unchanged in form: 0 → 2.58% (n=14,387), 1–5 → 8.21%
+(3,617), 6–20 → 8.69% (2,107), 21+ → 0.25% (3,157). Middle buckets are
+3.2–3.4× the quiet bucket. A feature that grows with the dataset while
+the rival shrinks to nothing is the cleanest version of §19's story.
+
+Gain table, full set: is_version_string 22.6, package_churn 17.1,
+module_depth 12.5, name_length 11.0, kind 8.0, package_rank 6.5,
+prior_breaks_in_module 6.3, release_size 6.1, public_depth 4.3,
+is_dunder 2.6, then the tail under 1%. module_depth and name_length
+swapped places vs §19; nothing else moved order.
+
+### 20.3 The ablation is still unreadable, and is not quoted
+
+Noise floor at the primary cut rose to **16.8%** (control: dropping
+`bump`, zero-gain, moved PR-AUC +16.8%). "path shape only" reports 116%
+of the full model. Same diagnosis as §19.4 and §15.3: 20 trees is too
+few for group ablation to resolve anything. The review deck, report and
+Q&A deliberately quote only the cross-cut medians and the gain shares,
+and the report's limitations now say so in one line so a panelist who
+runs `ablate.py` is not surprised.
+
+### 20.4 What changed in the deliverables
+
+Deck rebuilt to the supervisor's required outline (Title, Problem
+statement, Objectives, Introduction, Literature review, Methodology,
+Block diagram, Work done till date, Weekly plan), 15 slides. Literature
+slide cites Raemaekers et al. (Maven, 2014–17), Xavier et al. (SANER
+2017), Decan & Mens (IEEE TSE 2019) and griffe — all four verified
+against their publisher pages before being written in. Weekly plan no
+longer lists "finish the ingest" (done); week 4 became the label-variant
+experiment `labels.py` has been asking for since Day 3. Every number in
+deck, report and Q&A is now the §20.1–20.2 figure.

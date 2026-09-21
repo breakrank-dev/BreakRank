@@ -175,6 +175,17 @@ def detail_of(row) -> dict:
     if sub:
         d["parameter" if str(row.kind).startswith("PARAMETER")
           else "removed_bases"] = sub
+    # ONLY WHEN TRUE, and that is the whole design. `detail` is already a
+    # JSON column, so this adds no column and needs no migration — but a
+    # key written on every row would be a claim on every row, and a
+    # changes.csv from before 16 Sep cannot tell "we looked and found no
+    # marker" apart from "we never looked". Writing the key only when the
+    # answer is yes makes its ABSENCE mean nothing, which is honest for
+    # both files. The API can render "the maintainer marked this
+    # deprecated in {version_from}" when it is there and say nothing when
+    # it is not.
+    if bool(getattr(row, "was_deprecated_before", False)):
+        d["deprecated_before"] = True
     return {k: v for k, v in d.items() if v}
 
 

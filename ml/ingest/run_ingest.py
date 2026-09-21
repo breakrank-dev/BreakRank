@@ -85,6 +85,22 @@ CHANGE_COLS = [
     # rows are folded onto the defining class at extract time and the count
     # lands here instead. NOTES §10.2.
     "inherited_by",
+    # Added 16 Sep 2026. The two HISTORY features — the only ones in the
+    # set that need more than one release to compute, which is why they
+    # are written here at extract time rather than derived in build.py.
+    #
+    # was_deprecated_before: did the OLD version carry a deprecation
+    # marker for this symbol (decorator, docstring, or griffe's own flag)?
+    # The project book calls this "probably your single strongest
+    # feature". It cannot be recovered later — once the release is diffed
+    # and thrown away the marker is gone with it.
+    #
+    # prior_breaks_in_module: how many breakages this module already
+    # produced EARLIER in the same version chain. Accumulated oldest-first
+    # in api_extract.diff_series, so a row never counts itself and never
+    # sees a release that shipped after it.
+    "was_deprecated_before",
+    "prior_breaks_in_module",
 ]
 # Maps one-to-one onto the API's `package` table.
 PACKAGE_COLS = ["package", "download_rank", "github_repo"]
@@ -107,6 +123,23 @@ FAILURE_COLS = ["package", "stage", "detail", "error_type", "message"]
 
 # Concurrent sdist downloads inside ONE package's worker. See stage 2.
 DOWNLOAD_THREADS = 4
+
+# Packages whose sdist makes macOS XProtect block "scripted malware" and
+# kill the whole run. NOT a judgement that the package is malicious — it is
+# almost certainly a benign file (a test fixture or sample) that matches an
+# antivirus signature. It is excluded here only so one flagged file cannot
+# take down a 500-package run on a Mac.
+#
+# transformers: confirmed 17 Sep 2026 by scripts/find_culprit.py, which
+# processes packages one at a time and died the instant it reached it, with
+# every earlier package clean. On Linux (the ingest sandbox) it processes
+# fine — XProtect is macOS-only — so its rows are backfilled from there and
+# the two are concatenated. Recorded as a `skipped` failure row so the
+# omission is visible in the data, never a silent gap. NOTES §18.
+#
+# Set BREAKRANK_NO_SKIP=1 to ignore this list (e.g. when running on Linux,
+# where nothing here applies and transformers should be processed normally).
+XPROTECT_BLOCKED = {"transformers"}
 
 
 # --------------------------------------------------------------- small helpers
@@ -423,7 +456,28 @@ def main() -> None:
 
     packages = get_top_packages(args.packages)
     done = load_done()
-    todo = [p for p in packages if p["name"] not in done]
+
+    # Exclude the XProtect-blocked packages up front, unless told not to.
+    # Recorded as skipped failures (below) and marked done, so a resume
+    # does not keep re-hitting them and the CSVs show the omission plainly.
+    skip = set() if os.environ.get("BREAKRANK_NO_SKIP") else XPROTECT_BLOCKED
+    blocked = [p for p in packages
+               if p["name"] in skip and p["name"] not in done]
+    if blocked:
+        append_rows(FAILURES, [
+            {"package": p["name"], "stage": "skipped", "detail": "",
+             "error_type": "XProtectBlocked",
+             "message": "excluded on macOS: sdist trips XProtect; "
+                        "backfilled from the Linux ingest"}
+            for p in blocked], FAILURE_COLS)
+        for p in blocked:
+            mark_done(p["name"])
+        done = load_done()
+        print(f"skipping {len(blocked)} XProtect-blocked package(s): "
+              f"{', '.join(p['name'] for p in blocked)}")
+
+    todo = [p for p in packages
+            if p["name"] not in done and p["name"] not in skip]
 
     workers = max(1, min(args.workers, len(todo) or 1))
     print(f"{len(packages)} packages requested, {len(done)} already done, "

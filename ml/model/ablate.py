@@ -85,6 +85,22 @@ REACHABILITY = ["public_depth", "has_export_path"]
 # whether it earns a slot rather than assume the number is free signal.
 BLAST_RADIUS = ["inherited_by"]
 
+# Added 16 Sep 2026. The two features that need MORE THAN ONE RELEASE to
+# exist — everything else in the table can be read off a single diff.
+#
+# Kept together and kept separate from everything else because the claim
+# being tested is about the idea, not the columns: does knowing what the
+# library did BEFORE this release help predict what this release breaks?
+# The project book expects was_deprecated_before to be the strongest
+# single feature in the set, and an expectation that specific is worth
+# giving its own row rather than burying inside "per-change".
+#
+# Read the "history only" row against POPULARITY's, not against
+# everything's. Popularity is the baseline the whole project exists to
+# beat; if two features computed from the version chain alone land near
+# it, that is the finding.
+HISTORY = ["was_deprecated_before", "prior_breaks_in_module"]
+
 POPULARITY = ["package_rank", "package_churn", "release_size"]
 PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
               "is_version_string", "has_sub_target"]
@@ -116,9 +132,11 @@ def main() -> None:
         "no reachability": drop(REACHABILITY),
         "no path+reach": drop(PATH_SHAPE + REACHABILITY),
         "no blast radius": drop(BLAST_RADIUS),
+        "no history": drop(HISTORY),
         "no popularity": drop(POPULARITY),
         "path shape only": PATH_SHAPE,
         "reachability only": REACHABILITY,
+        "history only": HISTORY,
         "popularity only": POPULARITY,
         "per-change only": PER_CHANGE,
     }
@@ -215,12 +233,25 @@ def main() -> None:
               "never split on")
         print("             Every effect below this line is the fit moving, "
               "not a finding.")
-    for name in ("no path shape", "no reachability", "no path+reach",
-                 "no blast radius", "no popularity"):
+    # DERIVED FROM `runs`, NOT RETYPED. This block and the `solo` line
+    # below both used to hold their own hand-written list of group names,
+    # and adding HISTORY on 16 Sep showed what that costs: "history only"
+    # printed in the table at 60% of the full model while the sentence
+    # underneath announced the best solo group was "per-change only" at
+    # 35%, because the name was in one list and not the other. A summary
+    # that can disagree with the table above it is worse than no summary.
+    for name in (n for n in runs if n.startswith("no ")):
         lost = 1 - out[name]["pr_auc"] / base
         verdict = ("" if not controls else
                    "   <- BELOW THE NOISE FLOOR, read as nothing"
                    if abs(lost) <= floor else
+                   # floor == 0 means every control was EXACTLY flat,
+                   # which happens when the controls are features with no
+                   # gain and few enough trees that dropping one changes
+                   # nothing at all. Dividing by it printed "infx the
+                   # floor". There is no multiple of zero; say that.
+                   "   (no control moved at all — no floor to measure "
+                   "against)" if floor == 0 else
                    f"   ({abs(lost) / floor:.1f}x the floor)")
         print(f"  removing {name.replace('no ', ''):<14} "
               f"costs {lost:>6.1%} of PR-AUC{verdict}")
@@ -243,8 +274,8 @@ def main() -> None:
         print("  index is full of short paths because that is what people")
         print("  write, so short-named symbols have more ways to match.")
 
-    solo = max(("path shape only", "reachability only", "popularity only",
-                "per-change only"), key=lambda k: out[k]["pr_auc"])
+    solo = max((n for n in runs if n.endswith(" only")),
+               key=lambda k: out[k]["pr_auc"])
     if out[solo]["pr_auc"] > 0.85 * base:
         print(f"\n** '{solo}' alone reaches {out[solo]['pr_auc'] / base:.0%} "
               f"of the full model.\n** The other features are close to "

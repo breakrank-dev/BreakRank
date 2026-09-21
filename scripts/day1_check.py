@@ -100,7 +100,10 @@ check(
 def _griffe_works():
     import griffe
     # 'json' is part of Python itself, so this needs no download.
-    pkg = griffe.load("json")
+    # allow_inspection=False everywhere, without exceptions, even on the
+    # standard library where it is obviously safe. A rule with one
+    # exception is a rule people copy the exception from.
+    pkg = griffe.load("json", allow_inspection=False)
     n = len(list(pkg.members))
     if n == 0:
         raise RuntimeError("griffe loaded the json module but found no members")
