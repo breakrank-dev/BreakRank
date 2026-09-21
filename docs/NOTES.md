@@ -2781,6 +2781,53 @@ it stays correct.
 *Fix:* `tests/test_metrics.py` with a 6-row hand-computed case for each
 of the three metrics, plus the constant-score case that bit before.
 
+### 21.6b Gaps against the project book (Day 15, after re-reading it)
+
+Compared the built system against the Project Book, ignoring dates.
+Kill-gate conditions (>= 20,000 rows; beat semver on PR-AUC) are both
+met, and the book's harder bar ("if you can't beat popularity you don't
+have a project") is met 6/6. All eight ML-side components exist. The
+project is AHEAD on ranking (Phase 4) and rolling evaluation (Phase 5).
+What the book asked for that was never built:
+
+**F22. `symbol_age_in_releases` — the third "clever" history feature.**
+Book §4.6: "old, stable symbols have accumulated more users." Never
+built. F4 found old rows have a HIGHER positive rate, which is exactly
+this signal. Likely the strongest feature not yet in the model.
+*Fix:* count releases (in the same chain) in which the symbol existed
+before the current pair; past-only, from griffe, no leak.
+
+**F23. Changelog text features — Phase 3 week 5, component 6.**
+Book §4.6: TF-IDF over the changelog line for a change ("BREAKING" is
+rare and informative), sentence embeddings later. None exist. The
+largest single scheduled item that was skipped.
+*Fix:* fetch CHANGELOG / GitHub release notes per version_to; match a
+line to a symbol by name; TF-IDF (start) → all-MiniLM-L6-v2 (later).
+
+**F24. `days_since_prev_release` — in the book's feature list.** Never
+built. Cheap: diff of consecutive `released_at` within package.
+
+**F25. The classifier → ranker comparison was never made.**
+Book §4.7 sequences LGBMClassifier (weeks 3–6) THEN LGBMRanker (7–8)
+and says compare them. `train.py --objective binary` exists; no
+recorded comparison. *Fix:* run it once, record in NOTES; ship whichever
+wins on nDCG@20.
+
+**F26. "One story of a real release it got right" — 30 Oct DoD.**
+Not produced. One hour with `features.csv` + the model's scores.
+
+**F27. Provenance error, corrected Day 15:** the deck/report/study
+guide called `prior_breaks_in_module` "added on a hunch / the feature
+nobody bet on." The book lists it explicitly as
+`previous_breakages_in_this_module`, beside `was_deprecated_before`.
+Corrected everywhere to: the book named three history features and bet
+on the wrong one.
+
+**Not assessable from the ML side:** the book's Phase 3 / second gate
+("if the site is not live, stop adding features") and week-6 DoD (a
+public HTTPS link showing real data). Owner: Varad. This is the largest
+open direction risk if it is not met.
+
 ### 21.7 What the audits cleared (do not "fix" these)
 
 - Duplicates: a first check without `sub_target` in the key showed 7,221;
@@ -2809,6 +2856,9 @@ Each of the first four both fixes a defect AND raises the headline.
 10. F20 + F21 — pin deps; test the metrics.
 11. F6 + F14 — reporting: two regimes, group counts everywhere.
 12. F15 — hand the `all_clear` state to Varad's API. Then integrate.
+13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
+14. F23 — changelog TF-IDF. The book's biggest skipped item.
+15. F25 + F26 — the classifier comparison; one real-release story.
 
 Items 1–5 are about a week and turn the project from "good student
 work" into something that survives a hostile reader.
