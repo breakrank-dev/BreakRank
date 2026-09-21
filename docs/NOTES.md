@@ -2496,12 +2496,25 @@ count — not a reason to ship a three-feature model.
 ## 20. The full top-500 ingest, and everything re-measured on it (Day 14)
 
 The sandbox fill finished: all 500 packages attempted, `done.txt` = 500.
-314 produced diffable rows; the other 186 are wheels-only, namespace or
-pure-data packages with no public Python API, or failed to build, and
-every one sits in `failures.csv` with its stage (149 pipeline, 31 griffe,
-4 resolve_module, 2 list_releases). The final dataset is **23,268 rows /
-314 packages**, against 39,154 usage symbols — §19 was measured on 281 /
-21,285, so every headline number was re-run rather than trusted.
+314 produced rows. **Correction (Day 15):** this section originally said
+the other 186 were "wheels-only, namespace or pure-data packages with no
+public Python API." That was an inference, never checked, and it is
+wrong. The true accounting, from `failures.csv` and `done.txt`:
+
+| outcome | packages | evidence |
+|---|---|---|
+| produced rows | 314 | `changes.csv` |
+| analysed, zero breaking changes in window | 27 | in `done.txt`, absent from both other files (certifi, mdurl, …) |
+| worker process killed (`BrokenProcessPool`) | 149 | all 149 `pipeline` failures; tracebacks in `ingest_fill.log`; memory pressure on the 2-core container — includes torch, transformers, reportlab; **retryable** |
+| no importable module (compiled-only / not Python) | 4 | `resolve_module` |
+| griffe error (numpy `CyclicAliasError` + 3 others) | 4 | `griffe`; numpy is NOT fixable by memory — needs a griffe workaround |
+| fewer than 2 source releases | 2 | `list_releases` |
+
+The 149 crashed packages are tail-biased (median download rank 426 vs
+172 for successes; none of the top-50), so head coverage is intact. The
+final dataset is **23,268 rows / 314 packages**, against 39,154 usage
+symbols — §19 was measured on 281 / 21,285, so every headline number
+was re-run rather than trusted.
 
 Pipeline, in order, on the complete `changes.csv`: `labels.py` →
 `build.py` (18 features, temporal split at 2026-06-13, 2,036 version
@@ -2573,3 +2586,229 @@ against their publisher pages before being written in. Weekly plan no
 longer lists "finish the ingest" (done); week 4 became the label-variant
 experiment `labels.py` has been asking for since Day 3. Every number in
 deck, report and Q&A is now the §20.1–20.2 figure.
+
+## 21. Audit findings and the fix list (Day 15)
+
+Two audit passes over the code and data after the mid-semester review
+materials were built. Every number below was computed against
+`features.csv` / `labelled.csv` as they stand, and every experiment was
+run then reverted, so the artifacts in the repo are unchanged. The
+findings are ordered by how much they change a headline claim. Items
+marked **[better]** were tested and IMPROVE the result when fixed.
+
+### 21.1 Label validity — the deepest problems
+
+**F1. 45% of positives are `__version__` incrementing. [better]**
+1,760 of the 1,769 `is_version_string` rows are `ATTRIBUTE_CHANGED_VALUE`
+on `pkg.__version__` / `VERSION`. Downstream code references the
+constant, so usage > 0 and it is labelled positive — but a version
+constant changing value breaks nobody. Version strings: 21.65% positive;
+everything else: 2.21%. The model's top feature (22.6% gain) is
+detecting this artifact. Re-run with those rows dropped: 21,499 rows,
+476 positives, base rate 2.2%, PR-AUC median 0.177, **lift vs popularity
+1.78× → 2.88×**, still 6/6 on both gates. Popularity was propped up by
+version strings more than the model was.
+*Fix:* drop `is_version_string == 1` rows in `labels.py` (or `build.py`)
+before anything else; delete the feature. One filter line.
+
+**F2. "Impact" means "one of 1,500 packages imports it."**
+`user_count` among the 859 positives: 55% have exactly 1 user, 68% have
+≤ 2, only 9 rows (1%) exceed 50. The median "high-impact" change has one
+user. Binarising at `user_count > 0` discards the ordering signal that
+LambdaRank natively consumes.
+*Fix:* graded relevance — pass `np.log1p(user_count)` (clipped to an
+integer grade 0–4) as the lambdarank label instead of 0/1. Keep the
+binary label for PR-AUC. This is the single biggest modelling change
+available and it is ~10 lines in `train.py`.
+
+**F3. The usage join is sparse and its failure rate is unmeasured.**
+Only 430 of 12,489 distinct changed symbols (3.4%) appear in the usage
+index at all. Some of that is genuine (internal symbols), but
+`ablate.py`'s own docstring warns the strict join fails on deep
+definition paths. `label_alias` finds 62% more positives (1,395 vs 859)
+and has never been evaluated.
+*Fix:* run `baselines.py`, `stability.py`, `train.py` with
+`--label label_alias`; compare lift over the SAME-label baseline (PR-AUC
+is not comparable across labels — floors differ). Ship whichever wins.
+
+**F4. Usage is a Sept-2026 snapshot applied to changes up to 14 years old.**
+17.3% of rows are > 2 years old; 4.8% > 5 years. Old rows have a HIGHER
+positive rate (5.9% at 5+ y vs 3.2% at < 1 y) — survivorship, not signal.
+*Fix (cheap):* restrict the ingest window to versions released within
+24 months of the usage scan, and state the snapshot date in the report's
+limitations. *Fix (proper):* scan usage at multiple historical dates —
+out of scope this semester.
+
+### 21.2 Feature leakage and the model
+
+**F5. `package_churn` leaks the future. [better]**
+`build.py` computes it as `groupby("package").transform("size")` over
+the WHOLE frame before `temporal_split`. Single constant per package; a
+median 33% of it comes from releases after the cut. Not knowable at
+serving time. #2 feature at 17.1% gain. Re-run with a past-only count
+(`rank(method="min") - 1` over `released_at` within package): PR-AUC
+median 0.236 → 0.265, **lift 1.78× → 2.02×**, min lift across cuts
+1.16× → 1.73×.
+*Fix:* replace the transform with the past-only cumulative count in
+`add_features`. `release_size` is fine (within one pair — contemporaneous).
+
+**F6. `package_rank` is a package identifier.**
+314 distinct values for 314 packages. With `package_churn` constant per
+package, the model can memorise "package X has positives." Test-set
+split: PR-AUC **0.392 on packages seen in train vs 0.197 on unseen**
+(lift over floor 6.2× vs 5.0×). Mitigations already present: 70% of test
+rows are from unseen packages, and within-upgrade precision@10 is
+identical (0.192 vs 0.188) — the memorisation is entirely in
+cross-package ordering.
+*Fix:* report both regimes separately, always. For the product the
+"seen" regime is arguably the relevant one (new release of a known
+package); say so.
+
+**F7. Model complexity is set by a constant, not the data.**
+CV folds chose [3, 10, 54, 6] trees; median 8; clamped to
+`MIN_TREES = 20`. This is why the ablation noise floor is 17% and why
+"path shape only" scores 116% of the full model. Nothing about the
+ensemble size is tuned.
+*Fix:* tune `n_estimators`, `num_leaves`, `learning_rate`,
+`min_child_samples` on the time-ordered validation slice; remove the
+clamp; re-run ablation and expect the noise floor to drop.
+
+**F8. "Trees exploit the U-shape a linear model can't" is asserted, not tested.**
+*Fix:* add a logistic-regression baseline in `baselines.py` on the same
+18 features. If it matches LightGBM, the claim goes; if not, it is now
+evidence.
+
+### 21.3 Statistical honesty
+
+**F9. Finding 1 (deprecation) is underpowered, not "no signal."**
+278 deprecated rows, 10 positives. 95% CI on 3.60% is [1.4%, 5.8%]; the
+comparison 3.69% sits inside it. The data cannot distinguish "no effect"
+from a ±2-point effect either way.
+*Fix:* rewrite §19.1, the report, and the deck note as "no detectable
+effect at n = 278; the test cannot resolve effects smaller than ~2
+points." A larger deprecated sample (a wider version window) is the only
+way to actually answer the book's question.
+
+**F10. Finding 2's U-shape is mostly a version-string artifact.**
+With version strings: 2.58 → 8.21 → 8.69 → 0.25%. Without:
+2.30 → 3.92 → 2.76 → 0.03%. The middle peak ("3× more likely") largely
+evaporates; the feature keeps real gain (6.3% → 5.4%). What survives
+robustly is the collapse: modules with 21+ prior breaks are used
+downstream 0.03% of the time.
+*Fix:* restate the finding as "mass-refactor modules are effectively
+never used downstream," not "moderate churn triples risk." Re-measure
+after F1.
+
+**F11. No confidence intervals anywhere.**
+Every number in the deck and report is a point estimate on one cut or a
+median of six.
+*Fix:* bootstrap over version pairs (resample groups, not rows — see
+F12) for PR-AUC and lift; report 95% intervals. ~30 lines in
+`stability.py`. This would have caught F9 automatically.
+
+**F12. Row counts overstate the sample; rows are not independent.**
+23,268 rows collapse to 15,139 distinct (pair, symbol) changes. 8,129
+rows are parameter-level entries sharing a symbol-level label (e.g.
+`redis.client.Redis.__init__` with 49 "moved" parameters → 49 rows, one
+label). 859 positive rows = 814 distinct positive changes. The 20,000-row
+target is met on rows, not on independent observations.
+*Fix:* state "15,139 distinct symbol-changes" alongside the row count;
+bootstrap by group (F11); consider collapsing parameter rows into their
+symbol row with a `n_param_changes` feature.
+
+**F13. No untouched holdout.**
+Every experiment — feature additions, ablations, stability, both
+findings — evaluated on the same test split. The headline is optimistic
+by an unknown amount.
+*Fix:* freeze the last cut (`released_at >= 2026-08-04`) NOW as a
+holdout; never evaluate on it until the final report; report it once.
+
+### 21.4 Metric reliability and the product
+
+**F14. The product-facing metrics stand on 96 of 2,036 upgrades (4.7%).**
+precision@10 / nDCG@20 are (correctly) restricted to pairs with ≥ 1
+positive and > 10 rows. Per cut that is 12–38 groups; the latest cut's
+precision@10 is a mean over 12 upgrades. PR-AUC (the headline) is global
+across packages and does not match the product's within-upgrade question.
+*Fix:* report the group count next to every p@10 / nDCG; give intervals
+(F11); lead with within-upgrade metrics only where n ≥ 30 groups.
+
+**F15. For 95% of upgrades there is nothing to rank — and that is a product.**
+1,530 of 2,036 pairs have no positive; most of the rest have ≤ 10
+changes. The most valuable output for a typical upgrade is "no changed
+symbol in this release is imported by anyone in the top-1,500," which
+the pipeline can already assert.
+*Fix (Varad):* the live API should return an explicit `all_clear` state
+with the count of scanned downstream packages, before any ranking.
+
+### 21.5 Data quality
+
+**F16. `PARAMETER_MOVED` is 30% of the data at 0.32% positive, and 44% are echoes.**
+6,906 rows. 43.6% share a (pair, symbol) with an `OBJECT_REMOVED` /
+`PARAMETER_REMOVED` / `PARAMETER_ADDED_REQUIRED` row — griffe reporting
+the shift of every parameter after the one that actually changed.
+*Fix:* drop `PARAMETER_MOVED` rows that co-occur with a sibling
+removal/addition on the same symbol; keep the rest with a flag.
+
+**F17. 10.7% of rows involve a prerelease / dev / post version.**
+e.g. `opentelemetry-semantic-conventions 0.59b0 → 0.60b0`. Legitimate for
+beta-only packages; noise otherwise.
+*Fix:* add `is_prerelease_pair` as a flag; evaluate with and without.
+
+**F18. numpy is absent, and memory will not bring it back.**
+Failed with griffe `CyclicAliasError`, not `BrokenProcessPool`.
+*Fix:* reproduce on the numpy sdist alone; try `griffe` with
+`resolve_aliases=False` / a newer griffe; if unfixable, file it upstream
+and note numpy's absence explicitly in the report.
+
+**F19. The 149 `BrokenProcessPool` packages are retryable.**
+Tail-biased (median rank 426), so head coverage is intact, but 149 is
+149. *Fix:* re-run those packages only, `--workers 1`, on a machine with
+≥ 8 GB free, then re-run §20's pipeline.
+
+### 21.6 Reproducibility
+
+**F20. griffe is pinned with `>=`.**
+The dataset is a function of griffe's diff semantics; a 2.3 release could
+silently change what counts as a breaking change.
+*Fix:* `griffe==2.2.0` in `requirements.txt`; pin lightgbm and pandas
+likewise; commit a `pip freeze` as `requirements.lock`.
+
+**F21. `metrics.py` has no tests.**
+It is correct (read line by line: tie-breaking is seeded, the rankable
+filter is right, nDCG's ideal is computed properly) — but nothing proves
+it stays correct.
+*Fix:* `tests/test_metrics.py` with a 6-row hand-computed case for each
+of the three metrics, plus the constant-score case that bit before.
+
+### 21.7 What the audits cleared (do not "fix" these)
+
+- Duplicates: a first check without `sub_target` in the key showed 7,221;
+  with it, **1** redundant row. Not a problem.
+- Sampling bias of the crashes runs the RIGHT way (tail, not head).
+- `released_at` is complete (0 missing) and is the correct boundary date.
+- `release_size` is contemporaneous — not a leak.
+- The model generalises to unseen packages at 5× floor. It is not
+  memorising everything.
+- `metrics.py` is correct.
+
+### 21.8 Order of work
+
+The eight-week plan in the deck should be replaced by this, in order.
+Each of the first four both fixes a defect AND raises the headline.
+
+1. F13 — freeze the holdout. Ten minutes; must precede everything else.
+2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
+3. F2 — graded relevance. Re-run.
+4. F9 + F10 — rewrite both findings honestly against the new numbers.
+5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
+6. F3 — evaluate the alias label; pick one.
+7. F7 + F8 — tune the ensemble; add the linear baseline.
+8. F16 + F17 — collapse echoes, flag prereleases; re-run.
+9. F19 + F18 — retry the 149; chase numpy.
+10. F20 + F21 — pin deps; test the metrics.
+11. F6 + F14 — reporting: two regimes, group counts everywhere.
+12. F15 — hand the `all_clear` state to Varad's API. Then integrate.
+
+Items 1–5 are about a week and turn the project from "good student
+work" into something that survives a hostile reader.
