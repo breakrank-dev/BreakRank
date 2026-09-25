@@ -2925,14 +2925,31 @@ inherited_by above all: the fold (§10) came after the 6 Sep load, and
 migration 005 set every existing row to 0. A re-load now refreshes every
 column the loader writes.
 
-**F32. releases.csv and changes.csv are not from the same run.**
-releases.csv marks **939** releases `analysed`; changes.csv has changes in
-**2,036** upgrades (§20). There is exactly one analysed release per
-upgrade with changes, so the two must be equal. releases.csv most likely
-covers only one of the runs merged into changes.csv (§20). The loader
-uses it only where the files agree (F30), and `python ml/db.py --dry-run`
-prints how many packages that is. The rest need a releases.csv from the
-same run as changes.csv. Open.
+**F32. releases.csv and packages.csv come from one ingest run;
+changes.csv from two.** releases.csv marks **939** releases `analysed`;
+changes.csv has changes in **2,036** upgrades (§20), and there is exactly
+one analysed release per upgrade with changes. The dry run of 25 Sep put
+numbers on it. releases.csv agrees with changes.csv on **183** packages
+(146 with changes, 37 that changed nothing), disagrees on **4** (boto3,
+botocore, filelock, idna, each one release apart: the window moved
+between runs), and has no rows at all for **164** of the 314 packages
+with changes. packages.csv lists **187** packages, very likely the same
+run.
+
+The packages.csv half was the dangerous one. The loader built the package
+table from packages.csv alone and writes releases and breakages only for
+packages in that table, so the load would have written **10,006 of
+23,268** breakage rows, silently. **Fixed 25 Sep:** every package in
+changes.csv gets a row, and the loader says how many came from
+changes.csv alone. Reproduced on the scratch Postgres first: the old
+loader dropped the unlisted packages' rows, the new one wrote them all.
+
+Still open: the statuses of the 164 packages' releases that changed
+nothing. Only the other run's releases.csv can supply them. A fresh
+ingest cannot, because the six-release window has moved since (§15.4)
+and its releases.csv would disagree with the frozen changes.csv. Until
+then those releases get `analysed` and a count where they changed
+something, and nothing is claimed where they did not.
 
 **F33. The API's sentences read `detail` keys the loader never wrote.
 [fixed 25 Sep]** The changed-default sentence needs `old_value` and

@@ -107,13 +107,29 @@ def load_frames():
 
 
 def package_rows(changes: pd.DataFrame, packages) -> list[dict]:
-    if packages is not None:
-        p = packages.rename(columns={"package": "name"}).copy()
+    """packages.csv, plus every package in changes.csv it does not list.
+
+    EVERY PACKAGE WITH A CHANGE GETS A ROW. Releases and breakages are only
+    written for packages in the package table, so until 25 Sep a package
+    missing from packages.csv lost every row it had, and nothing said so.
+    Measured by the dry run on 25 Sep: packages.csv listed 187 packages
+    against 314 in changes.csv (the two files came from different ingest
+    runs, NOTES F32), and the load would have written 10,006 of 23,268
+    breakage rows. A package known only from changes.csv takes its download
+    rank from there; its github_repo stays whatever the database has.
+    """
+    from_changes = (changes[["package", "package_rank"]]
+                    .drop_duplicates("package", keep="last")
+                    .rename(columns={"package": "name",
+                                     "package_rank": "download_rank"}))
+    from_changes["github_repo"] = None
+    if packages is None:
+        p = from_changes
     else:
-        p = (changes[["package", "package_rank"]].drop_duplicates("package")
-             .rename(columns={"package": "name",
-                              "package_rank": "download_rank"}).copy())
-        p["github_repo"] = None
+        p = packages.rename(columns={"package": "name"})
+        p = pd.concat([p.drop_duplicates("name", keep="last"),
+                       from_changes[~from_changes["name"].isin(p["name"])]],
+                      ignore_index=True)
     # DEDUPLICATE ON NAME, for exactly the reason breakage_rows() does.
     # data/packages.csv is APPEND-ONLY: every resumed or retried run adds
     # its packages again, so after one 500-package run plus a 36-package
@@ -903,6 +919,15 @@ def main() -> None:
     releases = load_releases()
     print(f"{len(changes):,} changes   {len(usage):,} used symbols   "
           f"{changes['package'].nunique()} packages\n")
+    if packages is not None:
+        unlisted = set(changes["package"]) - set(packages["package"])
+        if unlisted:
+            print(f"note: {len(unlisted)} of {changes['package'].nunique()} "
+                  "packages in changes.csv have no row in packages.csv,\n"
+                  "most likely because it came from a different ingest run "
+                  "(NOTES F32). They are\nwritten from changes.csv instead. "
+                  "Until 25 Sep they were dropped, with every\nrow they "
+                  "had.\n")
 
     if args.dry_run:
         dry_run(changes, usage, packages, releases)

@@ -23,7 +23,7 @@ And a third, found the same day: the API's sentences read `old_value`,
 wrote any of them, so those sentences always fell back to "X changed in
 this release."
 
-Six cases:
+Seven cases:
 
   1. A package where releases.csv agrees with changes.csv gets every
      status, including the clean newest release that used to be missing.
@@ -39,6 +39,10 @@ Six cases:
   6. The sentence fields, from the real ingest differ: a changed default's
      two values (even a default that contains " -> "), and the version
      where a deprecation marker was seen.
+  7. A package with changes but no row in packages.csv still gets written,
+     with all its rows. The first dry run on the real data would have
+     written 10,006 of 23,268 breakage rows, because packages.csv listed
+     187 of the 314 packages.
 
 The same fixture was also loaded into a real Postgres built from Varad's
 migrations 001-006, 001-005 and 001-004, first with the old loader
@@ -216,7 +220,7 @@ class FakeConn:
     read-backs with ids for the rows it was given."""
 
     def __init__(self):
-        self.sql, self.pkg, self.rel = [], {}, []
+        self.sql, self.pkg, self.rel, self.brk = [], {}, [], []
 
     def execute(self, stmt, params=None):
         sql = str(stmt)
@@ -226,6 +230,8 @@ class FakeConn:
             return _Result([(self.pkg[params["name"]],)])
         if "INSERT INTO release" in sql:
             self.rel += params
+        if "INSERT INTO breakage" in sql:
+            self.brk += params
         if "SELECT r.id, p.name, r.version" in sql:
             names = {i: n for n, i in self.pkg.items()}
             return _Result([(i, names[r["package_id"]], r["version"])
@@ -342,6 +348,30 @@ def case_detail() -> None:
               "f(x): Parameter default was changed: a -> b -> c"), None)
 
 
+def case_unlisted(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
+    print("\n7. A PACKAGE MISSING FROM packages.csv STILL GETS ITS ROWS")
+    # The real shape on 25 Sep: packages.csv from one ingest run (here it
+    # lists alpha and delta), changes.csv from two (beta and gamma have
+    # changes but no packages.csv row).
+    listed = pd.DataFrame({"package": ["alpha", "delta", "alpha"],
+                           "download_rank": [1, 4, 1],
+                           "github_repo": ["o/alpha", None, "o/alpha"]})
+    rows = db.package_rows(chg, listed)
+    check("every package with a change gets a row, listed or not",
+          sorted(r["name"] for r in rows), ["alpha", "beta", "delta", "gamma"])
+    check("a listed package keeps its packages.csv metadata",
+          next(r for r in rows if r["name"] == "alpha")["github_repo"],
+          "o/alpha")
+    caps = {"sub_target": True, "inherited_by": True, "positive_rate": True,
+            "analysis_status": True, "statuses": set(db.DB_STATUSES)}
+    usage = pd.DataFrame({"symbol": ["alpha.f1"], "user_count": [4]})
+    conn = FakeConn()
+    with contextlib.redirect_stdout(io.StringIO()):
+        db.write_all(conn, chg, usage, listed, caps, None, rel)
+    check("and every one of its changes is sent to the database",
+          len(conn.brk), len(chg))
+
+
 def main() -> None:
     chg, rel = changes(), releases()
     check("load_releases collapses the duplicate delta 3.2.0 row",
@@ -354,6 +384,7 @@ def main() -> None:
     case_no_releases(chg)
     case_sql(chg, rel)
     case_detail()
+    case_unlisted(chg, rel)
 
     print("\n" + "=" * 60)
     if failures:
