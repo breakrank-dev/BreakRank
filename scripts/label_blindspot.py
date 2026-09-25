@@ -53,6 +53,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
+from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import evaluate, n_rankable  # noqa: E402
 from ml.model.train import GROUP, fit_cv, prepare, score_with  # noqa: E402
@@ -145,6 +146,7 @@ def main() -> None:
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
+    assert_no_holdout(df, "label_blindspot.py")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 
     full_train = df[df.split == "train"].sort_values(GROUP)

@@ -53,6 +53,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
+from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import evaluate, n_rankable  # noqa: E402
 from ml.model.train import (GROUP, fit_cv, fit_model,  # noqa: E402
@@ -166,7 +167,12 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> pd.DataFrame:
     rows = [one_split(df, q, label, feats, objective, stopping) for q in CUTS]
-    return pd.DataFrame([r for r in rows if r])
+    t = pd.DataFrame([r for r in rows if r])
+    # Stamp the boundary this sweep ran under. Every file written before the
+    # freeze lacks the column, and its later cuts scored holdout rows, so
+    # train.py refuses to quote any file whose stamp is missing or different.
+    t["holdout_from"] = str(HOLDOUT_START.date())
+    return t
 
 
 def report(t: pd.DataFrame, label: str) -> None:
@@ -251,6 +257,12 @@ def main() -> None:
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
+    # This script ignores the `split` column and cuts all rows at its own
+    # dates, so before the freeze its late cuts tested on the newest
+    # releases, which are now the holdout. The cut quantiles are taken over
+    # dev rows only, and a stale features.csv that still holds the holdout
+    # stops here.
+    assert_no_holdout(df, "stability.py")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 
     labels = (["label", "label_scoped", "label_alias"] if args.all_labels

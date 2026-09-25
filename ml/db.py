@@ -54,6 +54,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.contract import bump_type  # noqa: E402
+from ml.holdout import HOLDOUT_FILE, HOLDOUT_START  # noqa: E402
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -520,7 +521,28 @@ def score_everything() -> dict:
         if not p.exists():
             sys.exit(f"{p} not found — run ml/model/train.py first.")
 
-    df = pd.read_csv(FEATURES)
+    # Version columns read as text. They are half of every prediction key,
+    # and a file whose versions all look like numbers ("2.10", "3.1") would
+    # otherwise come back as floats and match nothing, silently.
+    as_text = {"version_from": str, "version_to": str}
+    df = pd.read_csv(FEATURES, dtype=as_text)
+    # SERVING IS NOT EVALUATING. Since the holdout froze (ml/holdout.py),
+    # features.csv holds only rows released before 2026-08-04, and the
+    # newest releases, the ones a visitor most wants ranked, live in
+    # holdout.csv. Scoring them reads no label, so the site keeps them.
+    # What must not happen is the reverse: joining these scores to the
+    # usage table to compute a metric before the final report.
+    if HOLDOUT_FILE.exists():
+        held = pd.read_csv(HOLDOUT_FILE, dtype=as_text)
+        # An EMPTY holdout.csv (an older dataset) is header-only, and
+        # concatenating it turns every feature column to object dtype,
+        # which LightGBM refuses. Nothing to add, so add nothing.
+        if len(held):
+            df = pd.concat([df, held], ignore_index=True)
+    else:
+        print(f"note: {HOLDOUT_FILE} not found, so releases from "
+              f"{HOLDOUT_START.date()} on get no score this run. "
+              "Rebuild with ml/features/build.py.")
     for c in CATEGORICAL:
         df[c] = df[c].astype("category")
     raw = lgb.Booster(model_file=str(RANKER)).predict(

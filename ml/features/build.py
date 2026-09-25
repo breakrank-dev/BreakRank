@@ -4,8 +4,15 @@ Turn labelled rows into a feature matrix, with a temporal split.
     python ml/features/build.py
 
 Reads  data/labelled.csv
-Writes data/features.csv   the same rows, plus derived features and a
-                           `split` column of "train" / "test"
+Writes data/features.csv   every row released BEFORE the frozen holdout,
+                           plus derived features and a `split` column of
+                           "train" / "test"
+       data/holdout.csv    the frozen holdout: pairs released on or after
+                           2026-08-04, same columns, split = "holdout".
+                           No experiment reads it; ml/holdout.py says why.
+       data/holdout_manifest.csv   the holdout's list of version pairs,
+                           written by the FIRST build after the freeze and
+                           never again; later builds report changes to it
 
 TWO RULES, and breaking either one makes every number afterwards a lie.
 
@@ -49,6 +56,8 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.contract import bump_type  # noqa: E402
+from ml.holdout import (HOLDOUT_FILE, HOLDOUT_START,  # noqa: E402
+                        out_of_order, released, split_off, summary, track)
 
 DATA = pathlib.Path("data")
 LABELLED = DATA / "labelled.csv"
@@ -229,10 +238,28 @@ def main() -> None:
     if not LABELLED.exists():
         sys.exit(f"{LABELLED} not found — run ml/features/labels.py first.")
     df = add_features(pd.read_csv(LABELLED))
+
+    # THE HOLDOUT COMES OFF BEFORE THE SPLIT, never after. The train/test
+    # cut below is a quantile of whatever rows it is handed, so it has to
+    # be handed the dev rows only, or the holdout would decide where the
+    # dev split falls.
+    #
+    # Features are computed on the full frame first, as they would be at
+    # serving time. That is correct for every feature that only looks
+    # backwards in time. package_churn does not yet (F5, item 2 of the
+    # fix list); it and two smaller crossings are listed under KNOWN
+    # CROSSINGS in ml/holdout.py.
+    undated = int(released(df).isna().sum())
+    late, across = out_of_order(df)
+    df, holdout = split_off(df)
+    if df.empty:
+        sys.exit(f"every dated row is on or after {HOLDOUT_START.date()}, "
+                 "so nothing is left to train on.")
     df = temporal_split(df)
     audit(df)
 
-    print(f"\ntemporal split at {df.attrs['cutoff'].date()}")
+    print(f"\ntemporal split at {df.attrs['cutoff'].date()}, over rows "
+          f"released before {HOLDOUT_START.date()}")
     for name, part in df.groupby("split"):
         for lab in ("label", "label_scoped", "label_alias"):
             if lab in part:
@@ -253,6 +280,22 @@ def main() -> None:
 
     df.to_csv(OUT, index=False)
     print(f"\n{OUT}: {len(df):,} rows")
+
+    holdout.assign(split="holdout").to_csv(HOLDOUT_FILE, index=False)
+    print(f"{HOLDOUT_FILE}: {len(holdout):,} rows, sealed. Only "
+          "ml/model/final_eval.py --unseal scores it\nagainst its labels; "
+          "ml/db.py reads it to serve scores, nothing more.\n")
+    print(summary(holdout))
+    print()
+    print(track(holdout, write=True)[0])
+
+    print(f"\n  time order: {late} pair(s) diff a release against one "
+          f"published after it,\n  {across} of them across the boundary "
+          "(backports; see KNOWN CROSSINGS in ml/holdout.py).")
+    if undated:
+        print(f"  ** {undated:,} rows have no usable released_at. They "
+              "train and are never tested\n  ** or held out; §21.7 counted "
+              "none, so find out why before going on.")
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
+from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.metrics import evaluate  # noqa: E402
 from ml.model.train import (cv_tree_count, fit_fixed, prepare,  # noqa: E402
                             score_with, GROUP)
@@ -120,6 +121,7 @@ def main() -> None:
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
+    assert_no_holdout(df, "ablate.py")
     everything = NUMERIC + BOOLEAN + CATEGORICAL
 
     full_train = df[df.split == "train"].sort_values(GROUP)

@@ -42,6 +42,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
+from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.metrics import compare, evaluate, n_rankable  # noqa: E402
 
 DATA = pathlib.Path("data")
@@ -60,15 +61,25 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
     # which is what "no ranking" honestly means.
     test["griffe_all"] = 1.0
 
-    test["semver"] = test["bump"].map(BUMP_SCORE).fillna(0.0)
+    # astype(str) before each map below. train.py and final_eval.py pass
+    # `bump` and `kind` as pandas categories (prepare()), and on pandas 2.x
+    # mapping a category can return a category, whose fillna() then raises
+    # TypeError for any fill value that is not already one of its
+    # categories. Measured on pandas 2.2.3: the old lines raised on every
+    # prepared frame tried, so train.py could not run there at all. pandas
+    # 3 does not raise. Scores are identical on both; this only stops the
+    # crash.
+    test["semver"] = test["bump"].astype(str).map(BUMP_SCORE).fillna(0.0)
 
     # rank 1 is the most downloaded, so invert it.
     test["popularity"] = -test["package_rank"].fillna(test["package_rank"].max())
 
     # Fitted on TRAIN ONLY. The global mean is the fallback for a kind the
     # training half never saw.
-    rates = train.groupby("kind")[label].mean()
-    test["kind_prior"] = test["kind"].map(rates).fillna(train[label].mean())
+    rates = train.groupby("kind", observed=True)[label].mean()
+    rates.index = rates.index.astype(str)
+    test["kind_prior"] = (test["kind"].astype(str).map(rates)
+                          .fillna(train[label].mean()))
 
     return test
 
@@ -83,6 +94,7 @@ def main() -> None:
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = pd.read_csv(FEATURES)
+    assert_no_holdout(df, "baselines.py")
     if args.label not in df.columns:
         sys.exit(f"no column {args.label} in {FEATURES}")
 

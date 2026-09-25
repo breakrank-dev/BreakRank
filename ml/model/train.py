@@ -44,6 +44,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
+from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import compare, evaluate, n_rankable  # noqa: E402
 
@@ -225,6 +226,10 @@ def main() -> None:
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
+    # Every number this script prints is a DEV number. The frozen holdout
+    # (ml/holdout.py) is not in features.csv, and a stale file that still
+    # holds it stops here rather than being scored.
+    assert_no_holdout(df, "train.py")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 
     full_train = df[df.split == "train"].sort_values(GROUP)
@@ -336,7 +341,8 @@ def main() -> None:
     notes = (f"label={label} objective={args.objective} "
              f"stopping={args.stopping} trees={best} test_rows={len(test)} "
              f"positive_rate={floor:.4f} "
-             f"best_baseline={best_base}:{bb:.4f}")
+             f"best_baseline={best_base}:{bb:.4f} "
+             f"holdout_from={HOLDOUT_START.date()}")
 
     # CARRY THE RANGE INTO THE ROW ITSELF. pr_auc here is ONE cut date, and
     # §5.6 measured that a single cut can sit anywhere in a band half as
@@ -347,22 +353,43 @@ def main() -> None:
     # free text and reaches the API unchanged, so the range rides along
     # with the number instead of living only in a notebook.
     stab = DATA / f"stability_{label}_{args.stopping}.csv"
-    if stab.exists():
+    # A stability file written BEFORE the holdout froze scored every cut on
+    # test halves that ran to the end of the data, holdout rows included.
+    # Quoting it here would carry pre-freeze numbers into model_run and on
+    # to the site. stability.py now stamps each row with the boundary it
+    # ran under; a file without the stamp, or with a different one, is
+    # stale and is not quoted.
+    fresh = False
+    if not stab.exists():
+        print(f"note: {stab} not found, so this model_run row will carry a "
+              "single-cut\nnumber with no range. Run ml/model/stability.py "
+              f"--label {label} --stopping {args.stopping} first.")
+    else:
         st = pd.read_csv(stab)
+        fresh = ("holdout_from" in st and len(st) > 0 and
+                 (st["holdout_from"].astype(str)
+                  == str(HOLDOUT_START.date())).all())
+        if not fresh:
+            print(f"note: {stab} predates the holdout freeze, so its cuts "
+                  "included holdout rows.\nNot quoted. Re-run "
+                  f"ml/model/stability.py --label {label} --stopping "
+                  f"{args.stopping}, then this script.")
+    if fresh:
         st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
         if not st.empty:
             lift = st["lift_vs_pop"].astype(float)
             wins = int(st["beats_pop"].astype(bool).sum())
-            notes += (f" | across {len(st)} cut dates: beats {best_base} "
-                      f"{wins}/{len(st)}, lift median {lift.median():.2f}x "
-                      f"min {lift.min():.2f}x max {lift.max():.2f}x")
+            # "popularity", not best_base: both columns in the stability
+            # file are measured against popularity. Naming whichever
+            # baseline won THIS split put a claim nobody measured into a
+            # row the site prints, as soon as kind_prior won one.
+            notes += (f" | across {len(st)} cut dates: beats popularity "
+                      f"{wins}/{len(st)}, lift vs popularity median "
+                      f"{lift.median():.2f}x min {lift.min():.2f}x "
+                      f"max {lift.max():.2f}x")
         else:
             print("note: stability file has no usable splits; the model_run "
                   "row will carry a single-cut number with no range.")
-    else:
-        print(f"note: {stab} not found, so this model_run row will carry a "
-              "single-cut\nnumber with no range. Run ml/model/stability.py "
-              f"--label {label} --stopping {args.stopping} first.")
 
     # positive_rate IS A TOP-LEVEL FIELD, not just a phrase inside notes.
     # It has been in the notes string since day 5 — recoverable only by

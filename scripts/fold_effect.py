@@ -1,8 +1,14 @@
 """
 Did the model get better, or did the data get honest?
 
-    python scripts/fold_effect.py
-    python scripts/fold_effect.py --cut 2026-08-15 --label label_alias
+    python scripts/fold_effect.py --cut 2026-06-13
+    python scripts/fold_effect.py --cut 2026-06-13 --label label_alias
+
+--cut is required and must fall BEFORE 2026-08-04, where the frozen
+holdout begins (ml/holdout.py). §11.5 was measured on 15 Sep at
+2026-08-15, a date that now sits inside the holdout, so that exact run can
+no longer be repeated. The table in §11.5 stays the record of it. Holdout
+rows are dropped from both datasets before anything is split.
 
 THE QUESTION, asked by Varad on 15 Sep and worth asking.
 
@@ -63,6 +69,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from ml.features.build import (BOOLEAN, CATEGORICAL, NUMERIC,  # noqa: E402
                                add_features)
 from ml.features.labels import add_labels  # noqa: E402
+from ml.holdout import HOLDOUT_START, drop_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import evaluate, n_rankable  # noqa: E402
 from ml.model.train import GROUP, fit_cv, prepare, score_with  # noqa: E402
@@ -81,6 +88,10 @@ def build(changes_path: pathlib.Path, usage: pd.DataFrame, cut: pd.Timestamp,
     """changes.csv -> (train, test), split at a FIXED DATE."""
     changes = pd.read_csv(changes_path)
     df = add_features(add_labels(changes, usage))
+    # changes.csv holds everything, the frozen holdout included, so it is
+    # dropped here rather than asserted absent. Same order as build.py:
+    # features on the full frame, then the holdout comes off.
+    df = drop_holdout(df)
 
     when = pd.to_datetime(df["released_at"], errors="coerce")
     # Undated rows train and never test — the same rule build.temporal_split
@@ -94,6 +105,10 @@ def build(changes_path: pathlib.Path, usage: pd.DataFrame, cut: pd.Timestamp,
 def run(name: str, changes_path: pathlib.Path, usage: pd.DataFrame,
         cut: pd.Timestamp, label: str, objective: str) -> dict:
     train, test = build(changes_path, usage, cut, label)
+    if test.empty or not test[label].sum():
+        sys.exit(f"{name}: no {label} positives between {cut.date()} and "
+                 f"{HOLDOUT_START.date()}, where the holdout begins.\n"
+                 "Nothing to score. Pick an earlier --cut.")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 
     model, trees, _folds = fit_cv(train, feats, label, objective)
@@ -131,8 +146,10 @@ def main() -> None:
         description="Separate 'the model improved' from 'the data got honest'.")
     ap.add_argument("--before", default=str(BEFORE))
     ap.add_argument("--after", default=str(AFTER))
-    ap.add_argument("--cut", default="2026-08-15",
-                    help="fixed split date, applied to BOTH datasets")
+    ap.add_argument("--cut", required=True,
+                    help="fixed split date, applied to BOTH datasets. Must "
+                         f"be before {HOLDOUT_START.date()}, where the "
+                         "frozen holdout begins.")
     ap.add_argument("--label", default="label_alias",
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank")
@@ -144,6 +161,11 @@ def main() -> None:
             sys.exit(f"{p} not found.")
 
     cut = pd.Timestamp(args.cut)
+    if cut >= HOLDOUT_START:
+        sys.exit(f"--cut {cut.date()} is inside the frozen holdout (from "
+                 f"{HOLDOUT_START.date()}). With holdout rows removed, the "
+                 "test half\nwould be empty. Pick a date before it; "
+                 "ml/holdout.py explains the freeze.")
     usage = pd.read_csv(USAGE)
 
     print(f"\nlabel {args.label}   cut held fixed at {cut.date()} for both\n")
