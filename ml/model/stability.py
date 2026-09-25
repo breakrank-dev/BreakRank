@@ -6,7 +6,7 @@ Does the result survive more than one arbitrary date?
     python ml/model/stability.py --all-labels
 
 Reads  data/features.csv
-Writes data/stability_<label>.csv
+Writes data/stability_<label>_<stopping>.csv
 
 WHY THIS IS NOTES ITEM 0 AND NOT A NICE-TO-HAVE.
 
@@ -101,16 +101,22 @@ MIN_TEST_POSITIVES = 30
 MIN_RANKABLE_PAIRS = 10
 
 
+def cut(df: pd.DataFrame, q: float) -> tuple[pd.Timestamp, pd.Series]:
+    """The cut date at quantile q, and which rows it sends to test.
+
+    Undated rows train, never test — the same rule as build.temporal_split.
+    """
+    when = pd.to_datetime(df["released_at"], errors="coerce")
+    cutoff = when.dropna().quantile(q)
+    return cutoff, (when > cutoff).fillna(False).astype(bool)
+
+
 def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> dict | None:
     """Train and score at one cut date. None if the split is unusable."""
-    when = pd.to_datetime(df["released_at"], errors="coerce")
-    cutoff = when.dropna().quantile(q)
-
-    is_test = when > cutoff
-    # Undated rows train, never test — the same rule as build.temporal_split.
-    test = df[is_test.fillna(False)].sort_values(GROUP)
-    full_train = df[~is_test.fillna(False)].sort_values(GROUP)
+    cutoff, is_test = cut(df, q)
+    test = df[is_test].sort_values(GROUP)
+    full_train = df[~is_test].sort_values(GROUP)
 
     pos = int(test[label].sum())
     # Checked BEFORE fitting — an unusable cut should not cost a model.
@@ -166,7 +172,44 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
 
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> pd.DataFrame:
-    rows = [one_split(df, q, label, feats, objective, stopping) for q in CUTS]
+    # ONE SPLIT, ONE VOTE.
+    #
+    # The cut points are quantiles of ROWS, and a release is many rows that
+    # share one date. When a single day holds more rows than lie between two
+    # neighbouring cut points, both quantiles land on that day and produce
+    # the same split, row for row: the same train half, the same test half,
+    # the same model and the same numbers. Found 26 Sep, in the first sweep
+    # after the freeze: q=0.75 and q=0.80 both cut at 2026-04-05 with the
+    # same 2,902 test rows, so "beats popularity at 7/7" and the 2.01x
+    # median counted one measurement twice. Six splits had been measured.
+    #
+    # Counting a split twice is wrong whichever way it moves the median, so
+    # the repeat stays in the file as a skipped row that names the cut it
+    # repeats, and nothing downstream counts it: not the report, not
+    # train.py's notes, not the label-vs-label table. Identity is checked on
+    # the rows themselves, not the printed date, because two cut points can
+    # differ in time of day and still select the same rows.
+    first: dict[bytes, float] = {}
+    rows = []
+    for q in CUTS:
+        cutoff, is_test = cut(df, q)
+        key = np.asarray(is_test, dtype=bool).tobytes()
+        if key in first:
+            test = df[is_test]
+            # The day both quantiles fell on: the newest date left in train.
+            when = pd.to_datetime(df["released_at"], errors="coerce")
+            day = when[~is_test].max().normalize()
+            rows.append({"cut": str(cutoff.date()), "q": q,
+                         "test_rows": len(test),
+                         "test_pos": int(test[label].sum()),
+                         "rankable10": n_rankable(test, label, 10),
+                         "skipped": True, "same_as": first[key],
+                         "shared_day": str(day.date()),
+                         "shared_day_rows": int(when.dt.normalize()
+                                                .eq(day).sum())})
+            continue
+        first[key] = q
+        rows.append(one_split(df, q, label, feats, objective, stopping))
     t = pd.DataFrame([r for r in rows if r])
     # Stamp the boundary this sweep ran under. Every file written before the
     # freeze lacks the column, and its later cuts scored holdout rows, so
@@ -176,14 +219,24 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
 
 
 def report(t: pd.DataFrame, label: str) -> None:
+    repeat = (t["same_as"].notna() if "same_as" in t
+              else pd.Series(False, index=t.index))
     print("\n" + "=" * 74)
-    print(f"  {label}   —   {len(t)} cut dates")
+    print(f"  {label}   —   {len(t)} cut points, "
+          f"{int((~repeat).sum())} distinct splits")
     print("=" * 74)
 
     skipped = t[t["skipped"]]
     t = t[~t["skipped"]].copy()
     if skipped.shape[0]:
-        for _, r in skipped.iterrows():
+        for i, r in skipped.iterrows():
+            if repeat.loc[i]:
+                print(f"  skipped q={r.q:.2f} ({r.cut}): the same split as "
+                      f"q={r.same_as:.2f}, row for row, so not a second "
+                      f"measurement\n      (both quantiles fall among the "
+                      f"{int(r.shared_day_rows):,} rows dated "
+                      f"{r.shared_day})")
+                continue
             why = []
             if int(r.test_pos) < MIN_TEST_POSITIVES:
                 why.append(f"{int(r.test_pos)} test positives "
@@ -200,6 +253,9 @@ def report(t: pd.DataFrame, label: str) -> None:
 
     cols = ["cut", "test_rows", "test_pos", "floor", "trees", "rankable10",
             "pr_auc", "popularity", "lift_vs_pop", "p_at_10", "ndcg_20"]
+    # A skipped row has no tree count, which turns the column into floats
+    # ("20.0") for the rows that do. Every fitted row has a whole number.
+    t["trees"] = t["trees"].astype(int)
     print()
     print(t[cols].to_string(index=False))
 
@@ -268,7 +324,7 @@ def main() -> None:
     labels = (["label", "label_scoped", "label_alias"] if args.all_labels
               else [args.label])
 
-    print(f"\n{len(df):,} rows   {len(CUTS)} cut dates   "
+    print(f"\n{len(df):,} rows   {len(CUTS)} cut points   "
           f"{len(feats)} features   objective {args.objective}   "
           f"stopping {args.stopping}")
     print("Each cut refits the model AND the baselines, so lift is computed")
