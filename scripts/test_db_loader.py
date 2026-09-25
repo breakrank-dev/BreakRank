@@ -18,7 +18,12 @@ reached the database. And releases.csv (NOTES §14) was never loaded, so a
 release that changed nothing either read "analysed, 0 changes" or was not
 in the database at all, and the site answered "not tracked" for it.
 
-Five cases:
+And a third, found the same day: the API's sentences read `old_value`,
+`new_value` and `was_deprecated_in` from `detail`, and the loader never
+wrote any of them, so those sentences always fell back to "X changed in
+this release."
+
+Six cases:
 
   1. A package where releases.csv agrees with changes.csv gets every
      status, including the clean newest release that used to be missing.
@@ -31,6 +36,9 @@ Five cases:
      status, with the count changes.csv gives.
   5. The SQL itself: a re-load refreshes every column it writes, and the
      release upsert carries the status only when the database has it.
+  6. The sentence fields, from the real ingest differ: a changed default's
+     two values (even a default that contains " -> "), and the version
+     where a deprecation marker was seen.
 
 The same fixture was also loaded into a real Postgres built from Varad's
 migrations 001-006, 001-005 and 001-004, first with the old loader
@@ -41,6 +49,7 @@ one. That needs a Postgres server, so it is not part of this file.
 import contextlib
 import io
 import pathlib
+import shutil
 import sys
 import tempfile
 
@@ -69,7 +78,8 @@ def _row(pkg, vf, vt, sym, when, inherited=0, private=False):
     return {"package": pkg, "package_rank": 1, "version_from": vf,
             "version_to": vt, "symbol": sym, "kind": "OBJECT_REMOVED",
             "sub_target": "", "is_private": private, "in_dunder_all": False,
-            "module_depth": sym.count("."), "is_top_level": sym.count(".") == 1,
+            "module_depth": sym.count("."),
+            "is_top_level": sym.count(".") == 1,
             "released_at": when, "inherited_by": inherited,
             "explanation": f"x.py:3: {sym}: Public object was removed",
             "was_deprecated_before": False}
@@ -268,6 +278,70 @@ def case_sql(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
            any("analysis_status" in s for s in conn.sql)), (False, False))
 
 
+OLD_SRC = '''\
+def f(a, b=1, sep=", "):
+    pass
+
+
+def old_api():
+    """The old entry point.
+
+    .. deprecated:: 1.0
+       Use f instead.
+    """
+'''
+
+NEW_SRC = '''\
+def f(a, b=2, sep=" -> "):
+    pass
+'''
+
+
+def case_detail() -> None:
+    print("\n6. THE SENTENCE FIELDS THE API READS ARE WRITTEN")
+    # Through the REAL ingest differ, so this is pinned to the text griffe
+    # actually writes, not to a copy of it typed into a test.
+    from ml.ingest.api_extract import diff_series
+
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="breakrank-detail-"))
+    try:
+        for label, src in (("v0", OLD_SRC), ("v1", NEW_SRC)):
+            (tmp / label / "pkg").mkdir(parents=True)
+            (tmp / label / "pkg" / "__init__.py").write_text(src)
+        rows = []
+        for vf, vt, found in diff_series(
+                "pkg", [("1.0", tmp / "v0"), ("1.1", tmp / "v1")], ["pkg"]):
+            if isinstance(found, Exception):
+                raise found
+            rows += [{**r, "version_from": vf, "version_to": vt}
+                     for r in found]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    detail = {(r.symbol, r.sub_target): db.detail_of(r)
+              for r in pd.DataFrame(rows).fillna("").itertuples(index=False)}
+
+    got = detail.get(("pkg.f", "b"), {})
+    check("a changed default carries old_value and new_value",
+          (got.get("old_value"), got.get("new_value")), ("1", "2"))
+    got = detail.get(("pkg.f", "sep"), {})
+    check("even when the default itself contains ' -> '",
+          (got.get("old_value"), got.get("new_value")), ("', '", "' -> '"))
+    got = detail.get(("pkg.old_api", ""), {})
+    check("a removal the maintainer had marked deprecated says where",
+          (got.get("deprecated_before"), got.get("was_deprecated_in")),
+          (True, "1.0"))
+    check("a removal carries no default values",
+          "old_value" in got, False)
+
+    text_false = pd.DataFrame([{**rows[0], "was_deprecated_before": "False"}])
+    check('a CSV cell reading "False" is not a deprecation',
+          "was_deprecated_in" in db.detail_of(
+              next(text_false.itertuples(index=False))), False)
+    check("an unsplittable message claims nothing (no guessed values)",
+          db.default_change(
+              "f(x): Parameter default was changed: a -> b -> c"), None)
+
+
 def main() -> None:
     chg, rel = changes(), releases()
     check("load_releases collapses the duplicate delta 3.2.0 row",
@@ -279,6 +353,7 @@ def main() -> None:
     case_skipped(chg, rel)
     case_no_releases(chg)
     case_sql(chg, rel)
+    case_detail()
 
     print("\n" + "=" * 60)
     if failures:

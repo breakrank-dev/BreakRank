@@ -2871,6 +2871,9 @@ The eight-week plan in the deck should be replaced by this, in order.
 Each of the first four both fixes a defect AND raises the headline.
 
 1. F13 — freeze the holdout. Ten minutes; must precede everything else.
+   **Done 25 Sep, commit 7543448** (`ml/holdout.py`). The holdout's size
+   and the first post-freeze dev numbers are recorded when the first
+   build after the freeze is run.
 2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
 3. F2 — graded relevance. Re-run.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
@@ -2889,3 +2892,103 @@ Each of the first four both fixes a defect AND raises the headline.
 
 Items 1–5 are about a week and turn the project from "good student
 work" into something that survives a hostile reader.
+
+Added 25 Sep, for the items in §21.9: F35 now; F30, F31 and F33 before
+the next database load; F32 with item 12; F34 with item 9; F37 with item
+10; F36 to Varad alongside item 16.
+
+### 21.9 Found 25 Sep: what reaches the database, and which branch is real
+
+A code review of `main` on 25 Sep, checked line by line against
+`ml/db-writer` and against Neon. F30 and F31 were measured on the live
+database the same day, and both were reproduced on a scratch Postgres
+built from migrations 001–006 before anything was changed: same symptoms,
+exactly.
+
+**F30. The loader never loaded release statuses. [fixed 25 Sep, 8a50a2c]**
+Neon, 25 Sep: all 2,236 releases read `analysed`, n_changes 0. §14 built
+`releases.csv` for exactly this, and nothing loaded it. A release that
+changed nothing either said "analysed, 0 changes" or was not in the
+database at all, so the newest release, if clean, answered 404
+`not_tracked`. The loader now writes analysis_status and n_changes: from
+changes.csv for every release with changes, and from releases.csv only
+for packages where the two files agree exactly (same analysed releases,
+same counts). Nothing is ever written as `analysed_clean` by guesswork.
+`pre_release` and `dev_release` have no database value and are skipped;
+the allowed values are read from the database's own CHECK constraint, so
+a schema without migration 006 does not abort the load.
+
+**F31. A re-load only refreshed `detail`. [fixed 25 Sep, 8a50a2c]**
+Neon: **18** breakage rows with inherited_by > 0; changes.csv: **647**.
+Every column computed after a row's first load kept its first value,
+inherited_by above all: the fold (§10) came after the 6 Sep load, and
+migration 005 set every existing row to 0. A re-load now refreshes every
+column the loader writes.
+
+**F32. releases.csv and changes.csv are not from the same run.**
+releases.csv marks **939** releases `analysed`; changes.csv has changes in
+**2,036** upgrades (§20). There is exactly one analysed release per
+upgrade with changes, so the two must be equal. releases.csv most likely
+covers only one of the runs merged into changes.csv (§20). The loader
+uses it only where the files agree (F30), and `python ml/db.py --dry-run`
+prints how many packages that is. The rest need a releases.csv from the
+same run as changes.csv. Open.
+
+**F33. The API's sentences read `detail` keys the loader never wrote.
+[fixed 25 Sep]** The changed-default sentence needs `old_value` and
+`new_value`; the deprecation sentence needs `was_deprecated_in`. Neither
+was written, so both fell back to "X changed in this release." and the
+deprecation line never appeared. The values were already inside griffe's
+message: `Parameter default was changed: ', ' -> ' -> '`. A default can
+contain " -> " itself (that one is `sep=" -> "`), so every split point is
+tried and kept only if both sides parse as Python expressions; exactly
+one must survive, or nothing is claimed. `was_deprecated_in` is
+version_from, the release that already carried the marker. The
+deprecation itself may be older, so the accurate wording on the API side
+is "already marked deprecated in". Checked end to end: loaded into the
+scratch Postgres and rendered with the API's own `render()`. The
+removed-base sentence was never broken: the API fills `base` from the
+sub_target column.
+
+**F34. run_usage.py's `ScanTimeout` subclasses `Exception`.** The retry
+wrappers in download.py catch it and retry with the alarm already spent.
+That is §2.8's bug, fixed in run_ingest.py with a `BaseException`
+subclass and never carried over to the usage scan. Fix with item 9
+(F19), which also needs failed packages to stop being marked done (§9.6).
+
+**F35. `main` and `ml/db-writer` have diverged.** main's ML code stops at
+6 Sep (merge base af0c059). Every commit since (the fold, the alias
+label, CV stopping, stability, the history features, releases.csv, the
+holdout freeze, these loader fixes) exists only on ml/db-writer, which
+lacks Varad's API, migrations 005–006, tests and CI. The two branches
+touch no file in common, and a trial merge on 25 Sep was clean. Anyone
+reading main, a reviewer included, reads 6 Sep ML code. Fix: a pull
+request from ml/db-writer into main.
+
+**F36. API, CI and web gaps (owner Varad).** Checked on main, 25 Sep:
+- only 1 of the 4 contract endpoints exists; `POST /analyze`, which the
+  25 Oct milestone needs, is missing;
+- errors come back as `{"detail": ...}`; the contract says
+  `{"error": {"code", "message"}}`;
+- api/db.py and db/engine.py pass DATABASE_URL through unchanged
+  (ml/db.py rewrites it to `+psycopg`), so the API works only while the
+  Render secret already names the driver;
+- a mistyped MODEL_VERSION silently falls back to usage ordering;
+- "1 package in the ecosystem call it";
+- CI runs the tests against the live database, and they depend on the
+  fixture rows decisions.md plans to delete before the demo;
+- pytest and its dependencies ship in api/requirements.txt;
+- an unset NEXT_PUBLIC_API_URL shows up as "no record of X";
+- README (duplicate heading, YOURUSERNAME, the Dockerfile's location),
+  .env.example, the [date] placeholders and decision 7 against contract
+  decision 11 in decisions.md, stale docs, CORS `*`.
+
+**F37. Housekeeping.** A duplicate dict key in scripts/explore.py (line
+54); unused imports in run_usage.py and stability.py; ml/contract.py
+points at a renamed doc and a merged branch; ml/train and ml/eval are
+empty. With item 10.
+
+**F14 and F25, sharpened.** LambdaRank learns the order of changes inside
+one upgrade and is never trained to compare scores across upgrades.
+Pooled PR-AUC grades exactly that comparison, which makes the F25
+classifier comparison matter more. No code change.

@@ -46,6 +46,7 @@ stops and explains.
 """
 
 import argparse
+import ast
 import json
 import os
 import pathlib
@@ -322,6 +323,43 @@ def _text(row, field: str) -> str:
 # collected.
 GRIFFE_LOCATION = re.compile(r"^\S*?\.pyi?:\d+:\s*")
 
+# griffe's sentence for a changed default, as the ingest stores it:
+#   f(b): Parameter default was changed: 1 -> 2
+DEFAULT_CHANGED = re.compile(r"Parameter default was changed: (.*)\Z", re.S)
+
+
+def _is_expression(text: str) -> bool:
+    try:
+        ast.parse(text, mode="eval")
+    except (SyntaxError, ValueError):
+        return False
+    return True
+
+
+def default_change(message: str) -> tuple[str, str] | None:
+    """(old, new) out of griffe's "Parameter default was changed: OLD -> NEW".
+
+    The API's sentence for PARAMETER_CHANGED_DEFAULT needs both values, and
+    until 25 Sep the loader never wrote them, so every such change fell
+    back to "X changed in this release." The values are already inside
+    griffe's message; no re-ingest is needed to get them out.
+
+    griffe joins the two with " -> ", and a default can contain that text
+    itself: sep=" -> " is a real default, and its message reads
+    ', ' -> ' -> '. So every split point is tried, and one is kept only if
+    BOTH sides parse as Python expressions. Exactly one must survive;
+    otherwise nothing is claimed and the site keeps its generic sentence.
+    """
+    found = DEFAULT_CHANGED.search(message)
+    if not found:
+        return None
+    parts = found.group(1).strip().split(" -> ")
+    splits = [(" -> ".join(parts[:i]), " -> ".join(parts[i:]))
+              for i in range(1, len(parts))]
+    valid = [(a, b) for a, b in splits
+             if _is_expression(a) and _is_expression(b)]
+    return valid[0] if len(valid) == 1 else None
+
 
 def detail_of(row) -> dict:
     """The variable payload — the keys the API renders sentences from.
@@ -336,6 +374,10 @@ def detail_of(row) -> dict:
     if sub:
         d["parameter" if str(row.kind).startswith("PARAMETER")
           else "removed_bases"] = sub
+    if str(row.kind) == "PARAMETER_CHANGED_DEFAULT":
+        values = default_change(d["griffe_message"])
+        if values:
+            d["old_value"], d["new_value"] = values
     # ONLY WHEN TRUE, and that is the whole design. `detail` is already a
     # JSON column, so this adds no column and needs no migration — but a
     # key written on every row would be a claim on every row, and a
@@ -345,9 +387,33 @@ def detail_of(row) -> dict:
     # both files. The API can render "the maintainer marked this
     # deprecated in {version_from}" when it is there and say nothing when
     # it is not.
-    if bool(getattr(row, "was_deprecated_before", False)):
+    if _flag(row, "was_deprecated_before"):
         d["deprecated_before"] = True
+        # The API reads `was_deprecated_in` and renders "It was deprecated
+        # in {version}"; until 25 Sep nothing wrote it, so that sentence
+        # never appeared. The fact the pipeline has is that the OLD release,
+        # version_from, already carried the marker. The deprecation itself
+        # may be older, so "already marked deprecated in" is the accurate
+        # wording on the API side.
+        d["was_deprecated_in"] = _text(row, "version_from")
     return {k: v for k, v in d.items() if v}
+
+
+def _flag(row, field: str) -> bool:
+    """A CSV boolean, where "False", an empty cell and NaN all mean false.
+
+    bool("False") is True and bool(float("nan")) is True, so a plain bool()
+    on a cell that came back as text or empty claims the opposite of what
+    the file says (build.py guards against the same trap). Here that claim
+    would put "It was deprecated in ..." on the site.
+    """
+    v = getattr(row, field, False)
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "1", "yes", "t"}
+    try:
+        return bool(v == v and v)
+    except (TypeError, ValueError):
+        return False
 
 
 def breakage_rows(changes: pd.DataFrame, release_id: dict):
