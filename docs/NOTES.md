@@ -2871,9 +2871,10 @@ The eight-week plan in the deck should be replaced by this, in order.
 Each of the first four both fixes a defect AND raises the headline.
 
 1. F13 — freeze the holdout. Ten minutes; must precede everything else.
-   **Done 25 Sep, commit 7543448** (`ml/holdout.py`). The holdout's size
-   and the first post-freeze dev numbers are recorded when the first
-   build after the freeze is run.
+   **Done.** Frozen 25 Sep at 2026-08-04 (commit 7543448); the start moved
+   to **2026-07-28** on 26 Sep (2487eb7), by a counts-only rule committed
+   before it was run (c4f4a50). What is sealed, why it moved, and the
+   post-freeze starting point: §22.
 2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
 3. F2 — graded relevance. Re-run.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
@@ -2897,6 +2898,9 @@ Added 25 Sep, for the items in §21.9: F35 now; F30, F31 and F33 before
 the next database load (done: loaded 25 Sep, see the end of §21.9); F32
 with item 12; F34 with item 9; F37 with item 10; F36 to Varad alongside
 item 16.
+
+Added 26 Sep: F38 (§22.5) before item 2, so that item 2 is judged on a
+sweep whose cut points are distinct measurements.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -3037,3 +3041,172 @@ a re-analysis would no longer produce). Sorting the superseded from the
 aged-out is what scripts/db_prune.py does (§13); not run yet. No
 predictions were written, so a change loaded for the first time has no
 model score until the next `--scores` load, after item 2's retrain.
+
+## 22. The holdout, sealed, and moved once before anything used it (25–26 Sep)
+
+Item 1 of the fix list (F13). This section records what is sealed, why
+its start moved a week earlier the day after the freeze, a counting bug
+the first post-freeze run exposed, and the numbers every later fix is
+measured against. Everything here is a count or a dev-only score: no
+model has been scored on the holdout, and data/holdout_ledger.csv does
+not exist.
+
+### 22.1 What is sealed
+
+| | |
+|---|---|
+| rule | a version pair is holdout if its version_to was released on or after **2026-07-28** (`ml/holdout.py`) |
+| frozen | 25 Sep at 2026-08-04 (7543448); start moved 26 Sep (2487eb7) |
+| size | **5,240 rows · 351 upgrades · 119 packages**, released 28 Jul – 19 Sep |
+| fingerprint | **21f308721057** (the 25 Sep set was 3726748b8073) |
+| pair list | data/holdout_manifest.csv, 351 pairs; the 25 Sep list is kept as data/holdout_manifest-20260925.csv |
+| dev | 18,028 rows · 1,685 upgrades in features.csv |
+| time order | 10 upgrades diff a release against one published after it; 1 crosses the start (a backport; KNOWN CROSSINGS in ml/holdout.py) |
+
+Can it be measured at the end? The gates are the ones every stability
+cut must pass: 30+ positives, and 10+ upgrades rankable at 10 and at 20.
+Counted as built, and after the two fixes on the list that delete rows
+(F1, item 2; F16, item 8), by `scripts/holdout_boundary.py`:
+
+| label | as built | after F1 + F16 |
+|---|---|---|
+| `label` | 228 / 18 / 12 | 140 / 14 / 10 |
+| `label_scoped` | 347 / 28 / 18 | 206 / 22 / 15 |
+| `label_alias` | 406 / 25 / 16 | 263 / 18 / 13 |
+
+(positives / rankable at 10 / rankable at 20.) Every label clears every
+gate before and after, `label` exactly on the line at 20.
+
+### 22.2 Why the start moved from 4 Aug to 28 Jul
+
+The first build after the freeze sealed 4,671 rows (306 upgrades, 109
+packages) and printed `label` as NOT FULLY MEASURABLE: its nDCG@20 would
+average 8 upgrades. F1, next on the list, makes that worse. Counted after
+F1 at the 4 Aug start:
+
+- `label` falls from **110 positives to 38**. 72 of its 110 holdout
+  positives are version strings: 65%, against 45% across the dataset
+  (F1).
+- **137 of the 306 upgrades** were nothing but a version bump, and vanish.
+
+The start could still move: no model had been scored on the holdout and
+no fix had run. Later, any move would be a choice made with results in
+view. So the rule was written first and committed (c4f4a50) before the
+script that applies it was run:
+
+> Move the start back only as far as it takes for every label to clear
+> every gate, counted after F1 and F16, and never so far that the holdout
+> holds more than 30% of the rows. A label that cannot clear them within
+> that limit does not move the start; its short metrics are reported
+> with their n, flagged.
+
+Every label, because item 6 has not yet picked one, and a rule written
+for one label would lean the exam toward it. After F1 and F16, because
+they are the only fixes that delete rows and both land after the freeze.
+30%, because dev must keep enough rows for the rest of the fix list; the
+usual share for a test set is 20–30%.
+
+The answer was **2026-07-28**, the latest start at which `label` clears
+every gate (140 / 14 / 10). `label_scoped` and `label_alias` already
+cleared them at 4 Aug. After F1 and F16 the holdout is 3,968 rows, 21.5%.
+Run again under the new start, the script answers KEEP.
+
+**One week carries much of the holdout's positives.** Moving the start
+seven days added 45 upgrades and 569 rows as built, and **118 of
+`label`'s 228 holdout positives** (after F1: 102 of 140; `label_scoped`
+112 of 206; `label_alias` 114 of 263). The final PR-AUC under `label`
+will lean on that week. precision@10 and nDCG@20 will lean on it much
+less, because each upgrade counts once.
+
+### 22.3 The first post-freeze sweep counted one split twice
+
+`stability.py` places its seven cut points at quantiles of **rows**. A
+release is many rows with one date, so when a single day holds more rows
+than lie between two cut points, both land on it and produce the same
+split, row for row: the same train half, test half, model and numbers.
+In the first post-freeze sweep (4 Aug start), q=0.75 and q=0.80 both cut
+at 5 Apr with the same 2,902 test rows. It printed "beats popularity at
+7/7, median lift 2.01x" after measuring six splits: 6/6, median 2.04x.
+The same line reached metrics.json.
+
+Fixed in 5d0c1dc. A repeat is detected on the rows themselves, not on
+the printed date (two cut points can differ in time of day and select
+the same rows), kept in the stability file as a skipped row naming the
+split it repeats, and counted by nothing downstream: not the report, not
+train.py's notes, not the label-vs-label table. `scripts/test_stability.py`
+pins it without fitting a model, and was broken five ways to watch it
+fail: no check at all, a check on the printed date, a check on test size
+rounded to ten rows, the repeat not marked skipped, and the header
+counting every row.
+
+At the new start the collisions are worse, and that is the data, not the
+code: **7 cut points give 4 distinct splits.** 5 Apr holds **2,296** dev
+rows (12.7%) and absorbs q=0.75, 0.80 and 0.85; 21 Jan holds **1,313**
+(7.3%) and absorbs q=0.55 and 0.60. Of the four splits left, 23 Feb and
+27 Feb differ by 58 test rows. See F38.
+
+### 22.4 The starting point for the fix list
+
+Dev rows only, `label`, 18 features, CV stopping. This is the "before"
+that item 2 is measured against.
+
+Single split at 5 Apr (train 15,695 rows, 2.99% positive; test 2,333,
+6.94%):
+
+| | PR-AUC | precision@10 (18 upgrades) | nDCG@20 (11 upgrades) |
+|---|---|---|---|
+| **model** | **0.304** | **0.139** | **0.610** |
+| kind_prior (best baseline) | 0.131 | 0.111 | 0.222 |
+| popularity | 0.128 | 0.083 | 0.093 |
+| floor (positive rate) | 0.069 | | |
+| semver (kill-date gate) | 0.056 | 0.083 | 0.093 |
+
+2.3x the best baseline, 2.4x popularity, 4.4x the floor. Semver sits
+**below the floor**: the order it imposes (major, minor, patch) runs
+against the data in this window, because the releases it ranks first
+hold proportionally fewer used changes.
+
+Across the sweep's 4 distinct splits: lift over popularity **median
+2.71x (2.37–2.98x)**, beats popularity 4/4 and semver 4/4, PR-AUC median
+0.271 (0.259–0.304).
+
+The model: CV folds chose [79, 36, 1, 2] trees, so its 20 trees are the
+MIN_TREES clamp, not a choice (F7). is_version_string is 19.4% of gain
+and package_churn 14.9%, the two things item 2 removes;
+was_deprecated_before and bump have zero gain.
+
+**This is not progress on §20.** It is the same model as the first
+post-freeze run: the same 15,695 training rows, the same trees, the same
+gain table to the decimal. Only the test half changed, when the week of
+28 Jul left it. That one week, 569 rows holding 118 of the old test
+half's 280 positives, moved every number:
+
+| split | test rows | popularity PR-AUC | model PR-AUC | lift over popularity |
+|---|---|---|---|---|
+| 21 Jan, with the week → without | 7,734 → 7,165 | 0.124 → 0.095 | 0.291 → 0.259 | 2.34x → 2.73x |
+| 23 Feb | 6,024 → 5,455 | 0.132 → 0.101 | 0.288 → 0.270 | 2.19x → 2.68x |
+| 5 Apr | 2,902 → 2,333 | 0.158 → 0.128 | 0.317 → 0.304 | 2.01x → 2.37x |
+
+Popularity did unusually well that week at every cut, so lift rose by
+0.36–0.49x the moment the week left, and the best single-split baseline
+flipped from popularity (0.158) to kind_prior (0.131). That week is now
+in the holdout. Its scores were seen once, in a dev run with the pre-fix
+model, before the move; it is recorded here so the report can say so,
+and so that nothing is ever tuned toward it.
+
+### 22.5 Still open from this section
+
+**F38. The sweep's cut points follow rows, so the biggest release days
+swallow them.** Two days hold a fifth of dev (§22.3), and seven cut
+points measure about three windows. Which points collide also moves
+whenever the row count does: it changed when 569 rows left dev. *Fix
+(proposed):* place cut points at quantiles of upgrades, one date per
+version pair, instead of rows, so a 2,296-row release counts once when
+choosing where to cut. Decide on that reasoning before running it,
+re-run §22.4 with it, and judge item 2 on the same sweep. Until then,
+say "4 distinct splits", never "7 cut dates".
+
+Also: the header of this file still describes the 14 Sep dataset; §20
+and §22 are current. `artifacts/ranker.txt` is the §22.4 model, committed
+with this section. metrics.json stays local, and nothing new was loaded
+into Neon.
