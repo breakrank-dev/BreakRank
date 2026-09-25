@@ -2894,8 +2894,9 @@ Items 1–5 are about a week and turn the project from "good student
 work" into something that survives a hostile reader.
 
 Added 25 Sep, for the items in §21.9: F35 now; F30, F31 and F33 before
-the next database load; F32 with item 12; F34 with item 9; F37 with item
-10; F36 to Varad alongside item 16.
+the next database load (done: loaded 25 Sep, see the end of §21.9); F32
+with item 12; F34 with item 9; F37 with item 10; F36 to Varad alongside
+item 16.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -2949,7 +2950,12 @@ nothing. Only the other run's releases.csv can supply them. A fresh
 ingest cannot, because the six-release window has moved since (§15.4)
 and its releases.csv would disagree with the frozen changes.csv. Until
 then those releases get `analysed` and a count where they changed
-something, and nothing is claimed where they did not.
+something. The **232** releases whose status nothing can establish get
+no status from the loader, so they keep what the database has, and for
+a new row that is the column's default: `analysed`, 0 changes. That is
+the one place the site can still say "no changes" about a release nobody
+compared. An `unknown` status value would end it; that is a migration,
+and migrations are Varad's.
 
 **F33. The API's sentences read `detail` keys the loader never wrote.
 [fixed 25 Sep]** The changed-default sentence needs `old_value` and
@@ -3009,3 +3015,25 @@ empty. With item 10.
 one upgrade and is never trained to compare scores across upgrades.
 Pooled PR-AUC grades exactly that comparison, which makes the F25
 classifier comparison matter more. No code change.
+
+**The load, 25 Sep.** With F30, F31, F33 and the packages half of F32
+fixed, the dry run predicted the package, release and breakage counts,
+and the load and a query of Neon afterwards confirmed them:
+
+| | before | after |
+|---|---|---|
+| breakage rows with inherited_by > 0 | 18 | **662** (the 647 in changes.csv, 15 from earlier loads) |
+| release statuses | `analysed` on all 2,236 | analysed 2,915 · analysed_clean 636 · no_baseline 178 · analysis_failed 61 · yanked 37 · no_source 24 |
+| packages written | 187 (first dry run) | 351 |
+| breakage rows written | 10,006 (first dry run) | 23,267 |
+
+The five statuses other than `analysed` match the dry run exactly.
+`analysed` is 2,036 releases with changes, 232 of unknown status (F32),
+and 647 releases from earlier loads that this one did not touch.
+
+The breakage table now holds **27,900** rows: 23,267 from this load and
+4,633 from earlier ones (packages this dataset does not cover, and rows
+a re-analysis would no longer produce). Sorting the superseded from the
+aged-out is what scripts/db_prune.py does (§13); not run yet. No
+predictions were written, so a change loaded for the first time has no
+model score until the next `--scores` load, after item 2's retrain.
