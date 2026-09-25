@@ -66,6 +66,14 @@ FEATURES = DATA / "features.csv"
 # 0.55 leaves too little training data, later than 0.85 leaves a test half
 # with almost no positives, and both ends produce numbers that say more
 # about the cut than about the model.
+#
+# QUANTILES OF UPGRADES, NOT ROWS (F38, NOTES §22.5). Each version pair has
+# one date, and cut() takes the quantile over those dates, so a release
+# counts once however many changes it holds. Taken over rows, the cut
+# points followed the biggest releases: on the 26 Sep dev set, 5 Apr held
+# 2,296 rows and 21 Jan 1,313, a fifth of dev between them, and those two
+# days swallowed five of the seven cut points, leaving 4 distinct splits.
+# Decided on that reasoning and written into NOTES before it was first run.
 CUTS = [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
 
 MIN_TEST_POSITIVES = 30
@@ -101,13 +109,21 @@ MIN_TEST_POSITIVES = 30
 MIN_RANKABLE_PAIRS = 10
 
 
+def upgrade_dates(df: pd.DataFrame) -> pd.Series:
+    """One date per version pair, the newest of its rows. On clean data
+    every row of a pair already carries version_to's date."""
+    when = pd.to_datetime(df["released_at"], errors="coerce")
+    return when.groupby([df[c] for c in GROUP]).max()
+
+
 def cut(df: pd.DataFrame, q: float) -> tuple[pd.Timestamp, pd.Series]:
-    """The cut date at quantile q, and which rows it sends to test.
+    """The cut date at quantile q of the upgrades, and which rows it sends
+    to test. See CUTS for why upgrades and not rows.
 
     Undated rows train, never test — the same rule as build.temporal_split.
     """
+    cutoff = upgrade_dates(df).dropna().quantile(q)
     when = pd.to_datetime(df["released_at"], errors="coerce")
-    cutoff = when.dropna().quantile(q)
     return cutoff, (when > cutoff).fillna(False).astype(bool)
 
 
@@ -174,14 +190,16 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> pd.DataFrame:
     # ONE SPLIT, ONE VOTE.
     #
-    # The cut points are quantiles of ROWS, and a release is many rows that
-    # share one date. When a single day holds more rows than lie between two
+    # When a single day holds more upgrades than lie between two
     # neighbouring cut points, both quantiles land on that day and produce
     # the same split, row for row: the same train half, the same test half,
     # the same model and the same numbers. Found 26 Sep, in the first sweep
-    # after the freeze: q=0.75 and q=0.80 both cut at 2026-04-05 with the
-    # same 2,902 test rows, so "beats popularity at 7/7" and the 2.01x
-    # median counted one measurement twice. Six splits had been measured.
+    # after the freeze, while the cut points were still quantiles of ROWS:
+    # q=0.75 and q=0.80 both cut at 2026-04-05 with the same 2,902 test
+    # rows, so "beats popularity at 7/7" and the 2.01x median counted one
+    # measurement twice. Six splits had been measured. F38 moved the
+    # quantiles to upgrades (see CUTS), which makes a repeat rare; this is
+    # what makes one harmless when it still happens.
     #
     # Counting a split twice is wrong whichever way it moves the median, so
     # the repeat stays in the file as a skipped row that names the cut it
@@ -199,14 +217,14 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
             # The day both quantiles fell on: the newest date left in train.
             when = pd.to_datetime(df["released_at"], errors="coerce")
             day = when[~is_test].max().normalize()
+            on_day = upgrade_dates(df).dt.normalize().eq(day)
             rows.append({"cut": str(cutoff.date()), "q": q,
                          "test_rows": len(test),
                          "test_pos": int(test[label].sum()),
                          "rankable10": n_rankable(test, label, 10),
                          "skipped": True, "same_as": first[key],
                          "shared_day": str(day.date()),
-                         "shared_day_rows": int(when.dt.normalize()
-                                                .eq(day).sum())})
+                         "shared_day_upgrades": int(on_day.sum())})
             continue
         first[key] = q
         rows.append(one_split(df, q, label, feats, objective, stopping))
@@ -234,7 +252,7 @@ def report(t: pd.DataFrame, label: str) -> None:
                 print(f"  skipped q={r.q:.2f} ({r.cut}): the same split as "
                       f"q={r.same_as:.2f}, row for row, so not a second "
                       f"measurement\n      (both quantiles fall among the "
-                      f"{int(r.shared_day_rows):,} rows dated "
+                      f"{int(r.shared_day_upgrades):,} upgrades dated "
                       f"{r.shared_day})")
                 continue
             why = []
@@ -316,8 +334,8 @@ def main() -> None:
     # This script ignores the `split` column and cuts all rows at its own
     # dates, so before the freeze its late cuts tested on the newest
     # releases, which are now the holdout. The cut quantiles are taken over
-    # dev rows only, and a stale features.csv that still holds the holdout
-    # stops here.
+    # dev upgrades only, and a stale features.csv that still holds the
+    # holdout stops here.
     assert_no_holdout(df, "stability.py")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 

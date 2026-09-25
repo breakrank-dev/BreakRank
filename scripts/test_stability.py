@@ -12,9 +12,13 @@ WHY THIS FILE EXISTS. The first sweep after the holdout froze printed
 seven cut dates, two of them 2026-04-05 with the same 2,902 test rows.
 The quantiles q=0.75 and q=0.80 had both landed on one crowded day, and
 the sweep scored that split twice: "beats popularity at 7/7", median lift
-2.01x. Six splits had been measured, and their median is 2.04x.
+2.01x. Six splits had been measured, and their median is 2.04x. After the
+holdout's start moved, the same sweep gave 4 distinct splits from 7 cut
+points, because two release days held a fifth of dev. F38 then moved the
+quantiles from rows to upgrades.
 
-Three cases:
+Four cases. The first three use upgrades of one row each, so rows and
+upgrades coincide and only the counting is under test:
 
   1. Cut points that select the same rows: the later one is written as a
      skipped row that names the earlier one, and it is never fitted. One
@@ -24,6 +28,9 @@ Three cases:
   2. Cut points whose test halves differ by a single row are both kept.
      The check compares rows, not how many there are.
   3. The report counts distinct splits: "6/6", and the median over six.
+  4. F38: one release of 600 rows among 200 one-row upgrades. Taken over
+     rows, all seven cut points would land on its day (checked, as the
+     control); taken over upgrades, the seven are distinct.
 """
 
 import contextlib
@@ -58,8 +65,8 @@ def check(name: str, got, want) -> None:
 
 def fixture(crowded: range, n: int = 1002, gap_days: int = 10
             ) -> pd.DataFrame:
-    """n rows, one release per row, except the rows in `crowded`, which
-    all share one day, 2026-04-05. The next release comes gap_days later.
+    """n upgrades of one row each, one a day, except the ones in
+    `crowded`, which all share 2026-04-05. The next comes gap_days later.
 
     With n=1002 a cut point q sits at row q*1001 of the sorted dates, so
     q=0.75 is row 750.75, q=0.80 row 800.8, q=0.85 row 850.85.
@@ -134,9 +141,9 @@ def case_repeats() -> None:
           rep["skipped"].tolist(), [True, True])
     check("the second repeat prints a different date: rows were compared, "
           "not dates", rep["cut"].get(0.85), "2026-04-13")
-    check("each repeat names the crowded day and how many rows it holds",
+    check("each repeat names the crowded day and how many upgrades it holds",
           (rep.get("shared_day", pd.Series(dtype=object)).tolist(),
-           rep.get("shared_day_rows", pd.Series(dtype=float)).tolist()),
+           rep.get("shared_day_upgrades", pd.Series(dtype=float)).tolist()),
           (["2026-04-05", "2026-04-05"], [111, 111]))
     check("a repeat's test half is the original's, row for row",
           rep["test_rows"].tolist(),
@@ -180,10 +187,42 @@ def case_report() -> None:
         print(text)
 
 
+def case_upgrades() -> None:
+    print("\n4. A RELEASE COUNTS ONCE WHEN PLACING THE CUTS, HOWEVER MANY "
+          "ROWS IT HAS")
+    # 200 upgrades of one row, one a day from 1 Jan 2026, and one upgrade of
+    # 600 rows released on day 150. By rows that release is three quarters
+    # of the data; by upgrades it is one in 201.
+    start = pd.Timestamp("2026-01-01")
+    small = pd.DataFrame({
+        "package": "p",
+        "version_from": [str(i) for i in range(200)],
+        "version_to": [str(i + 1) for i in range(200)],
+        "released_at": [(start + pd.Timedelta(days=i)).strftime("%Y-%m-%d")
+                        for i in range(200)],
+        "label": [int(i % 7 == 0) for i in range(200)],
+    })
+    big_day = (start + pd.Timedelta(days=150)).strftime("%Y-%m-%d")
+    big = pd.DataFrame({"package": "big", "version_from": "1.0",
+                        "version_to": "2.0", "released_at": big_day,
+                        "label": [int(j % 5 == 0) for j in range(600)]})
+    df = pd.concat([small, big], ignore_index=True)
+
+    when = pd.to_datetime(df["released_at"])
+    by_rows = {str(when.quantile(q).date()) for q in stability.CUTS}
+    check("control: over rows, all seven cut points land on the big "
+          "release's day", by_rows, {big_day})
+    t, fitted = sweep(df)
+    check("over upgrades, all seven are fitted and none is a repeat",
+          (fitted, len(repeats(t))), (stability.CUTS, 0))
+    check("and they cut on seven different days", t["cut"].nunique(), 7)
+
+
 def main() -> None:
     case_repeats()
     case_near_repeat()
     case_report()
+    case_upgrades()
 
     print("\n" + "=" * 60)
     if failures:
