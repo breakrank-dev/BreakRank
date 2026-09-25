@@ -112,7 +112,7 @@ KINDS = ["OBJECT_REMOVED", "PARAMETER_MOVED", "PARAMETER_REMOVED",
 def make_labelled(seed: int = 0, n_packages: int = 60) -> pd.DataFrame:
     """A labelled.csv-shaped frame: 60 packages, 7 upgrades each, released
     between January and late September 2026, so roughly a fifth of the
-    pairs fall on or after 2026-08-04. Labels lean on public_depth,
+    pairs fall on or after HOLDOUT_START. Labels lean on public_depth,
     is_top_level and is_private, so a model has something to learn and
     the metrics are not all zero."""
     rng = np.random.default_rng(seed)
@@ -185,14 +185,21 @@ def stale_features(labelled: pd.DataFrame) -> pd.DataFrame:
 
 # -------------------------------------------------------------------- cases
 
+def from_start(offset: int) -> str:
+    """HOLDOUT_START moved by `offset` days, as ingest writes dates. Every
+    date in this file is built from the start, so moving the start (it
+    moved once, on 26 Sep) never needs this file edited."""
+    return (HOLDOUT_START + pd.Timedelta(days=offset)).strftime("%Y-%m-%d")
+
+
 def case_boundary() -> None:
     print("\n1. THE BOUNDARY: INCLUSIVE, A DATE, DECIDED PER PAIR")
     df = pd.DataFrame({
         "package": ["a", "b", "c", "d", "e", "e"],
         "version_from": ["1.0"] * 6,
         "version_to": ["1.1"] * 6,
-        "released_at": ["2026-08-03", "2026-08-04", "2026-08-05", None,
-                        "2026-08-03", "2026-08-04"],
+        "released_at": [from_start(-1), from_start(0), from_start(1), None,
+                        from_start(-1), from_start(0)],
     })
     m = holdout_mask(df).tolist()
     check("the day before the boundary is dev", m[0], False)
@@ -208,8 +215,8 @@ def case_boundary() -> None:
     mixed = pd.DataFrame({
         "package": ["f", "g", "h"], "version_from": ["1"] * 3,
         "version_to": ["2"] * 3,
-        "released_at": ["2026-07-01", "2026-08-10T12:00:00",
-                        "2026-08-04T03:00:00+05:30"]})
+        "released_at": [from_start(-34), from_start(6) + "T12:00:00",
+                        from_start(0) + "T03:00:00+05:30"]})
     check("a second date format is parsed, not dropped to dev; "
           "timezones compare in UTC",
           holdout_mask(mixed).tolist(), [False, True, False])
@@ -346,10 +353,10 @@ def case_tripwire(tmp: pathlib.Path, labelled: pd.DataFrame) -> None:
     used = labelled[labelled["user_count"] > 0]
     (used.groupby("symbol")["user_count"].max().reset_index()
      .to_csv(tmp / "data" / "usage.csv", index=False))
-    code, out = run("scripts/fold_effect.py", tmp, "--cut", "2026-08-15")
+    code, out = run("scripts/fold_effect.py", tmp, "--cut", from_start(11))
     check("fold_effect.py refuses a cut inside the holdout",
           (code != 0, "inside the frozen holdout" in out), (True, True))
-    code, out = run("scripts/fold_effect.py", tmp, "--cut", "2026-06-01")
+    code, out = run("scripts/fold_effect.py", tmp, "--cut", from_start(-57))
     n_dev = len(split_off(labelled)[0])
     check("fold_effect.py drops the holdout and runs on dev rows only",
           (code, f"{n_dev:,} rows ->" in out), (0, True))

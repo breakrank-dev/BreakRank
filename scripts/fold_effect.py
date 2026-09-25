@@ -4,7 +4,7 @@ Did the model get better, or did the data get honest?
     python scripts/fold_effect.py --cut 2026-06-13
     python scripts/fold_effect.py --cut 2026-06-13 --label label_alias
 
---cut is required and must fall BEFORE 2026-08-04, where the frozen
+--cut is required and must fall BEFORE HOLDOUT_START, where the frozen
 holdout begins (ml/holdout.py). §11.5 was measured on 15 Sep at
 2026-08-15, a date that now sits inside the holdout, so that exact run can
 no longer be repeated. The table in §11.5 stays the record of it. Holdout

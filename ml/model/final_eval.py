@@ -12,7 +12,7 @@ Writes data/holdout_ledger.csv    one row per opening, appended, never
                                   rewritten
 
 WHAT IT DOES. The pipeline as it stands on the day is trained on every
-row released before 2026-08-04, then scored once on the holdout. Same
+row released before HOLDOUT_START, then scored once on the holdout. Same
 features and the same fitting code as train.py, and the baselines are
 refitted on the same rows, so lift is computed inside one split exactly
 as everywhere else.

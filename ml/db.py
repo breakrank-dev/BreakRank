@@ -813,7 +813,7 @@ def score_everything() -> dict:
     as_text = {"version_from": str, "version_to": str}
     df = pd.read_csv(FEATURES, dtype=as_text)
     # SERVING IS NOT EVALUATING. Since the holdout froze (ml/holdout.py),
-    # features.csv holds only rows released before 2026-08-04, and the
+    # features.csv holds only rows released before HOLDOUT_START, and the
     # newest releases, the ones a visitor most wants ranked, live in
     # holdout.csv. Scoring them reads no label, so the site keeps them.
     # What must not happen is the reverse: joining these scores to the

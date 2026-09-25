@@ -8,7 +8,7 @@ Writes data/features.csv   every row released BEFORE the frozen holdout,
                            plus derived features and a `split` column of
                            "train" / "test"
        data/holdout.csv    the frozen holdout: pairs released on or after
-                           2026-08-04, same columns, split = "holdout".
+                           HOLDOUT_START, same columns, split = "holdout".
                            No experiment reads it; ml/holdout.py says why.
        data/holdout_manifest.csv   the holdout's list of version pairs,
                            written by the FIRST build after the freeze and

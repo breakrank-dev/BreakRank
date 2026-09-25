@@ -18,15 +18,31 @@ very end the finished pipeline is scored on it exactly once, and that is
 the number the report can defend: nothing that produced it saw these rows.
 
 THE RULE, fixed on 25 Sep 2026 before any fix it will judge (fix list
-21.8, item 1):
+21.8, item 1), with its start moved once, on 26 Sep, before any of those
+fixes had run:
 
     a version pair is in the holdout if its version_to was released
-    ON OR AFTER 2026-08-04.
+    ON OR AFTER 2026-07-28.
 
 A date and not a random 20%, for the same reason the ordinary split is
 temporal (build.py, rule 2): the product predicts for releases that have
-not happened yet, so the fair exam is the newest releases. 2026-08-04 is
-the date F13 named when it said "freeze the last cut" of the §20 sweep.
+not happened yet, so the fair exam is the newest releases.
+
+WHY 2026-07-28 AND NOT 2026-08-04. The freeze first used 2026-08-04, the
+date F13 named when it said "freeze the last cut" of the §20 sweep. The
+first build after it printed that the holdout could not measure `label`'s
+nDCG@20: 8 upgrades rankable at 20, under the gate of 10 every
+measurement here must clear. F1 and F16, still to come, delete rows, and
+would leave `label` 38 positives there. scripts/holdout_boundary.py then
+settled the start by a counts-only rule, committed (c4f4a50) before it
+was run: move back only as far as it takes for every label to clear every
+gate after F1 and F16, and never past 30% of the rows. Its answer was
+2026-07-28, the latest start at which `label` clears them (140 positives,
+14 and 10 rankable upgrades); label_scoped and label_alias already did at
+2026-08-04. No model had been scored on the holdout and no fix had run,
+so the move was made blind to results. The week it added, 28 Jul to
+3 Aug, sat in dev's test halves in the first runs after the freeze;
+nothing was chosen on their scores.
 
 Pairs and not rows. Every row of a pair carries version_to's date, so on
 clean data the two rules agree. If a pair ever arrives with rows that
@@ -36,10 +52,10 @@ exam.
 
 WHAT IT PROTECTS, AND WHAT IT CANNOT.
 
-  Protected: every decision from 25 Sep onward. F1, F5, F2, F7, F3 and the
+  Protected: every decision from 26 Sep onward. F1, F5, F2, F7, F3 and the
   rest of the fix list are judged on dev rows only.
 
-  Not protected: decisions taken BEFORE 25 Sep. The 18 features, the CV
+  Not protected: decisions taken BEFORE 26 Sep. The 18 features, the CV
   stopping rule and the label shortlist were chosen while these rows sat
   inside ordinary test halves; §20's cuts reached to the end of the data.
   So the report says "untouched by every decision since the freeze", not
@@ -103,8 +119,8 @@ import sys
 
 import pandas as pd
 
-HOLDOUT_START = pd.Timestamp("2026-08-04")
-FROZEN_ON = "2026-09-25"
+HOLDOUT_START = pd.Timestamp("2026-07-28")
+FROZEN_ON = "2026-09-26"
 HOLDOUT_FILE = pathlib.Path("data") / "holdout.csv"
 MANIFEST = pathlib.Path("data") / "holdout_manifest.csv"
 GROUP = ["package", "version_from", "version_to"]
@@ -232,6 +248,11 @@ def track(holdout: pd.DataFrame, write: bool = False) -> tuple[str, dict]:
     to data/holdout_manifest.csv and never touches that file again.
     final_eval.py only reads it, so the frozen list cannot be created
     at the end.
+
+    A list describes one start date. When the start moved on 26 Sep, the
+    25 Sep list was set aside by hand (data/holdout_manifest-20260925.csv)
+    so the next build could write the list for 2026-07-28; compared with
+    the new rule, the old one would have called that week's pairs "added".
     """
     now = holdout[GROUP].astype(str).drop_duplicates()
     have = set(now.itertuples(index=False, name=None))
