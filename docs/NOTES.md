@@ -2599,8 +2599,9 @@ marked **[better]** were tested and IMPROVE the result when fixed.
 ### 21.1 Label validity — the deepest problems
 
 **F1. 45% of positives are `__version__` incrementing. [better]**
-*[Done 26 Sep, 0f7330f. The [better] did not replicate on the frozen
-dev set: §23.]*
+*[Done 26 Sep, 0f7330f. The [better] did not replicate: measured alone
+on the frozen dev set it LOWERS the lift over popularity, median 3.22x →
+2.29x (§23.4).]*
 1,760 of the 1,769 `is_version_string` rows are `ATTRIBUTE_CHANGED_VALUE`
 on `pkg.__version__` / `VERSION`. Downstream code references the
 constant, so usage > 0 and it is labelled positive — but a version
@@ -2644,7 +2645,8 @@ out of scope this semester.
 ### 21.2 Feature leakage and the model
 
 **F5. `package_churn` leaks the future. [better]**
-*[Done 26 Sep, 0f7330f, with F1; what it did alone: §23.4.]*
+*[Done 26 Sep, 0f7330f, with F1. Alone on the frozen dev set: median
+lift 3.22x → 3.09x, worst cut 2.82x → 3.01x, range narrower (§23.4).]*
 `build.py` computes it as `groupby("package").transform("size")` over
 the WHOLE frame before `temporal_split`. Single constant per package; a
 median 33% of it comes from releases after the cut. Not knowable at
@@ -2880,8 +2882,8 @@ Each of the first four both fixes a defect AND raises the headline.
    post-freeze starting point: §22.
 2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
    **Done 26 Sep, 0f7330f; §23.** At fixed dates the lift over
-   popularity FELL (median 3.22x → 2.38x): the [better ×2] did not
-   replicate on the frozen dev set.
+   popularity FELL (median 3.22x → 2.38x), all of it F1's doing; F5 alone
+   is close to neutral. The [better ×2] did not replicate.
 3. F2 — graded relevance. Re-run.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
@@ -3346,14 +3348,48 @@ the lift at six dates of seven. Which of the two did it is §23.4.
   15.5%, module_depth 11.5%, package_churn 9.3%, kind 8.7%, then the
   tail; bump at zero.
 
-### 23.4 Open: which half of item 2 moved the lift
+### 23.4 Which half of item 2 moved the lift: F1
 
-F1 and F5 went in together. `scripts/item2_effects.py` builds the
-pipeline four ways from the same labelled.csv (neither fix, F1 only, F5
-only, both) and runs each at the seven dates above. It checks itself:
-"neither" has to reproduce §22.6 and "both" the `--at` run, lift for lift.
-On a two-year fixture, both reproduced the real pipelines exactly.
-Result pending.
+F1 and F5 went in together. `scripts/item2_effects.py` (4f907c7) builds
+the pipeline four ways from the same labelled.csv (neither fix, F1 only,
+F5 only, both) and runs each at the seven dates above. It checks itself,
+and on the real data both checks passed: "neither" reproduced §22.6's
+sweep and "both" the `--at` run, lift for lift. So the two middle
+columns are the real pipeline with one fix each.
+
+| cut | neither | F1 only | F5 only | both |
+|---|---|---|---|---|
+| 2025-09-29 | 3.22x | 1.62x | 3.49x | 2.21x |
+| 2025-11-28 | 3.24x | 2.29x | 3.01x | 2.40x |
+| 2026-01-13 | 4.18x | 1.31x | 3.02x | 2.13x |
+| 2026-02-27 | 2.98x | 3.48x | 3.09x | 3.10x |
+| 2026-03-29 | 3.05x | 2.27x | 3.04x | 1.24x |
+| 2026-04-24 | 3.31x | 3.36x | 3.48x | 3.18x |
+| 2026-05-18 | 2.82x | 2.87x | 3.18x | 2.38x |
+| **median** | **3.22x** | **2.29x** | **3.09x** | **2.38x** |
+| worst | 2.82x | 1.31x | 3.01x | 1.24x |
+
+- **F1 is the drop.** Alone it takes the median from 3.22x to 2.29x and
+  the worst cut to 1.31x, lower at four dates and level or higher at
+  three. It accounts for all of item 2's fall in the median.
+- **F5 is close to neutral.** Alone: median 3.22x → 3.09x, but its worst
+  cut is better (2.82x → 3.01x) and its range much narrower (3.01–3.49x
+  against 2.82–4.18x). A model that no longer sees the future is less
+  often lucky and never as unlucky. That is the direction F5's audit
+  note reported (its minimum lift rose); its median gain did not appear.
+- Single cuts swing hard between variants (29 Mar: 3.04x with F5 alone,
+  2.27x with F1 alone, 1.24x with both), which is §5.6 again: read the
+  medians, never a cut.
+
+**What it means.** The version strings were an easy win the model could
+take and popularity could not. is_version_string was the model's top
+feature, and once those rows left, popularity's multiple of the floor
+rose at every date (§23.2): they had been diluting it. On this dataset
+they were worth about 0.9x of the 3.22x median. Every lift quoted before item 2 included them, §1's and
+§20's among them, and the deck and report still quote §20. On breaking
+changes alone, `label` beats popularity by a **median 2.38x at these
+dates, 1.24x at the worst**. That is the number to build on, and the one
+item 4 rewrites the findings against.
 
 ### 23.5 The starting point for item 3
 
