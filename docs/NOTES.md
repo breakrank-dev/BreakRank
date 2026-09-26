@@ -2599,6 +2599,8 @@ marked **[better]** were tested and IMPROVE the result when fixed.
 ### 21.1 Label validity — the deepest problems
 
 **F1. 45% of positives are `__version__` incrementing. [better]**
+*[Done 26 Sep, 0f7330f. The [better] did not replicate on the frozen
+dev set: §23.]*
 1,760 of the 1,769 `is_version_string` rows are `ATTRIBUTE_CHANGED_VALUE`
 on `pkg.__version__` / `VERSION`. Downstream code references the
 constant, so usage > 0 and it is labelled positive — but a version
@@ -2642,6 +2644,7 @@ out of scope this semester.
 ### 21.2 Feature leakage and the model
 
 **F5. `package_churn` leaks the future. [better]**
+*[Done 26 Sep, 0f7330f, with F1; what it did alone: §23.4.]*
 `build.py` computes it as `groupby("package").transform("size")` over
 the WHOLE frame before `temporal_split`. Single constant per package; a
 median 33% of it comes from releases after the cut. Not knowable at
@@ -2876,6 +2879,9 @@ Each of the first four both fixes a defect AND raises the headline.
    before it was run (c4f4a50). What is sealed, why it moved, and the
    post-freeze starting point: §22.
 2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
+   **Done 26 Sep, 0f7330f; §23.** At fixed dates the lift over
+   popularity FELL (median 3.22x → 2.38x): the [better ×2] did not
+   replicate on the frozen dev set.
 3. F2 — graded relevance. Re-run.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
@@ -3262,3 +3268,102 @@ the window that chose 1 tree has no such day in it. So one crowded day is
 at most part of why the folds disagree ([79, 36, 1, 2]), not the whole
 of it. Spacing the folds by upgrades is F38's fix applied to F7, and it
 waits for item 7, because it changes every model's tree count.
+
+## 23. Item 2: version strings out (F1), churn from the past only (F5) (26 Sep)
+
+0f7330f, with `scripts/test_features.py`. Both fixes are right on their
+own terms: F1 removes rows that are not breaking changes, and F5 removes
+a feature that could see the future. Neither was kept or dropped for what
+it did to the score, and the score went down.
+
+### 23.1 What changed in the data
+
+- F1 dropped 1,769 version-string rows, 383 of them positive under
+  `label` (45% of its positives). **868 of the 2,036 upgrades (43%) held
+  nothing else**, and are gone: in those releases griffe found no
+  breaking change except the version constant. They are clean releases,
+  which is exactly F15's all_clear state; after F1 the site can say so
+  for them (Varad).
+- Dev: 16,628 rows in 977 upgrades. The single split still cuts at 5 Apr:
+  train 14,673 rows (1.87% positive), test 1,955 (3.17%). 100 of that
+  test half's 162 `label` positives had been version strings.
+- Holdout: 4,871 rows, 191 upgrades, 91 packages (fingerprint
+  9b524ece19cf). The frozen list reads 191 of 351 still there, 160
+  emptied by F1, none added, as §22.1 projected, and every label still
+  clears every gate (`label` 140 / 14 / 10). holdout_boundary.py: KEEP.
+- The one backport that crossed the holdout start was a version-bump-only
+  upgrade; time order now reads 7 upgrades, 0 across.
+- package_churn's share of gain fell from 14.9% to 9.3% once it stopped
+  counting later releases.
+
+### 23.2 Before and after, on the same seven windows
+
+§22.6's sweep against the same seven dates after item 2
+(`stability.py --at`, f2c566d):
+
+| cut | lift before → after | floor | model ÷ floor | popularity ÷ floor | rankable at 10 |
+|---|---|---|---|---|---|
+| 2025-09-29 | 3.22x → 2.21x | 0.028 → 0.013 | 7.2 → 5.9 | 2.2 → 2.7 | 35 → 25 |
+| 2025-11-28 | 3.24x → 2.40x | 0.026 → 0.013 | 7.3 → 6.7 | 2.3 → 2.8 | 33 → 23 |
+| 2026-01-13 | 4.18x → 2.13x | 0.029 → 0.014 | 8.8 → 5.6 | 2.1 → 2.7 | 28 → 19 |
+| 2026-02-27 | 2.98x → 3.10x | 0.038 → 0.017 | 7.2 → 8.2 | 2.4 → 2.6 | 21 → 14 |
+| 2026-03-29 | 3.05x → 1.24x | 0.034 → 0.015 | 9.7 → 5.1 | 3.2 → 4.1 | 20 → 13 |
+| 2026-04-24 | 3.31x → 3.18x | 0.062 → 0.030 | 5.7 → 6.6 | 1.7 → 2.1 | 17 → 11 |
+| 2026-05-18 | 2.82x → 2.38x | 0.072 → 0.036 | 4.5 → 4.6 | 1.6 → 1.9 | 13 → 10 |
+
+- Lift over popularity fell at 6 of the 7 dates: **median 3.22x → 2.38x**,
+  worst 2.82x → **1.24x** (29 Mar). It still beats popularity 7/7 and
+  semver 7/7.
+- Two things moved, and the last columns separate them. The model fell
+  relative to chance (median 7.2x → 5.9x the floor), and popularity ROSE
+  relative to chance at all seven dates (median 2.2x → 2.7x). F1's note
+  in §21 read the version strings as propping popularity up; on this
+  data they were diluting it.
+- nDCG@20, median over the cuts, 0.58 → 0.42; precision@10 0.153 → 0.150.
+- The single split, cut at 5 Apr in both runs: PR-AUC 0.304 → 0.161, on
+  a floor of 0.069 → 0.032; lift over popularity 2.37x → 2.36x, over
+  kind_prior 2.32x → 2.16x; 4.4x → 5.1x the floor.
+
+**The audit's prediction did not hold.** §21 marked both fixes [better]:
+F1 1.78x → 2.88x and F5 1.78x → 2.02x, measured on §20's setup (a split
+at 13 Jun, cuts reaching into what is now the holdout, and the leak still
+in every row). On the frozen dev set, at fixed dates, together they lower
+the lift at six dates of seven. Which of the two did it is §23.4.
+
+### 23.3 What is now thin, and where it points
+
+- Under `label` the sweep's test halves hold 48–138 positives and 10–25
+  rankable upgrades per cut; the latest sits exactly on the gate. The
+  single split's nDCG@20 averages 8 upgrades, under the gate, and is not
+  quoted; its precision@10 averages 12.
+- `label_alias` keeps far more: 154 positives in the single split's test
+  half against `label`'s 62. With `label` this thin, item 6 (F3) may need
+  to come before items 3–5.
+- CV chose [11, 2, 7] trees, from three folds rather than four, because
+  the validation slice is now 0.41% positive (12 in 2,909 rows). The
+  model's 20 trees are still the clamp (F7).
+- Gain after item 2: name_length 21.5%, release_size 16.1%, package_rank
+  15.5%, module_depth 11.5%, package_churn 9.3%, kind 8.7%, then the
+  tail; bump at zero.
+
+### 23.4 Open: which half of item 2 moved the lift
+
+F1 and F5 went in together. `scripts/item2_effects.py` builds the
+pipeline four ways from the same labelled.csv (neither fix, F1 only, F5
+only, both) and runs each at the seven dates above. It checks itself:
+"neither" has to reproduce §22.6 and "both" the `--at` run, lift for lift.
+On a two-year fixture, both reproduced the real pipelines exactly.
+Result pending.
+
+### 23.5 The starting point for item 3
+
+- The sweep after item 2, on its own quantile dates (F1 removed 708 dev
+  upgrades, and every date moved): 2025-08-07, 2025-10-06, 2025-12-03,
+  2026-01-18, 2026-03-02, 2026-04-02, 2026-05-04. Beats popularity 7/7,
+  median lift 2.47x (1.91–3.01x). Item 3 (F2) changes what the ranker
+  trains on, not which rows exist, so these dates should hold; run its
+  sweep with `--at` them to be sure.
+- The single split, 5 Apr: PR-AUC 0.161 against a floor of 0.032,
+  kind_prior 0.075 (best baseline), popularity 0.068, precision@10 0.150
+  over 12 upgrades.
+- `artifacts/ranker.txt` is this model: 17 features.
