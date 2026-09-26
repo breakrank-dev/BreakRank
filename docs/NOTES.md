@@ -2900,7 +2900,8 @@ with item 12; F34 with item 9; F37 with item 10; F36 to Varad alongside
 item 16.
 
 Added 26 Sep: F38 (§22.5) before item 2, so that item 2 is judged on a
-sweep whose cut points are distinct measurements.
+sweep whose cut points are distinct measurements. **Done 26 Sep,
+deba775; §22.6.**
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -3197,7 +3198,7 @@ and so that nothing is ever tuned toward it.
 ### 22.5 Still open from this section
 
 **F38. The sweep's cut points follow rows, so the biggest release days
-swallow them.** Two days hold a fifth of dev (§22.3), and seven cut
+swallow them. [done 26 Sep, deba775; §22.6]** Two days hold a fifth of dev (§22.3), and seven cut
 points measure about three windows. Which points collide also moves
 whenever the row count does: it changed when 569 rows left dev. *Fix
 (proposed):* place cut points at quantiles of upgrades, one date per
@@ -3210,3 +3211,54 @@ Also: the header of this file still describes the 14 Sep dataset; §20
 and §22 are current. `artifacts/ranker.txt` is the §22.4 model, committed
 with this section. metrics.json stays local, and nothing new was loaded
 into Neon.
+
+### 22.6 F38 done: the sweep on upgrades, and the starting point for item 2
+
+deba775. The same dev rows, the same model code and the same gates; only
+where the seven cut points fall changed. They are now quantiles of
+upgrades (one date per version pair), and `scripts/test_stability.py`
+case 4 pins the difference: one 600-row release among 200 small ones
+takes all seven cut points over rows and one vote over upgrades.
+
+| cut | test rows | floor | trees | rankable at 10 | PR-AUC | popularity | lift |
+|---|---|---|---|---|---|---|---|
+| 2025-09-29 | 11,006 | 0.028 | 20 | 35 | 0.199 | 0.062 | 3.22x |
+| 2025-11-28 | 10,649 | 0.026 | 20 | 33 | 0.192 | 0.059 | 3.24x |
+| 2026-01-13 | 8,642 | 0.029 | 23 | 28 | 0.257 | 0.062 | 4.18x |
+| 2026-02-27 | 5,397 | 0.038 | 20 | 21 | 0.272 | 0.091 | 2.98x |
+| 2026-03-29 | 4,994 | 0.034 | 32 | 20 | 0.334 | 0.110 | 3.05x |
+| 2026-04-24 | 2,105 | 0.062 | 20 | 17 | 0.356 | 0.108 | 3.31x |
+| 2026-05-18 | 1,576 | 0.072 | 37 | 13 | 0.325 | 0.115 | 2.82x |
+
+- **7 distinct splits**, where the same seven quantiles over rows gave 4.
+  None was skipped; the latest still has 13 rankable upgrades.
+- The cut dates now run 29 Sep 2025 – 18 May 2026 (over rows: 21 Jan –
+  5 Apr 2026). Older releases are smaller, so the early cuts are early in
+  time and train on only 39% of the rows (7,022 at 29 Sep); the latest
+  tests on 9%.
+- Lift over popularity **median 3.22x (2.82–4.18x)**, beats popularity
+  7/7 and semver 7/7. PR-AUC median 0.272 (0.192–0.356).
+- The script warns that the PR-AUC spread exceeds half the median. That
+  spread is mostly the floor moving, 0.026 to 0.072 (2.7x) across the
+  cuts; lift is the number that compares across them.
+
+**3.22x against §22.4's 2.71x is not an improvement.** The same model
+code on the same rows, measured over different windows: seven instead of
+four, five of them earlier than any cut before. Neither number is quoted
+against the other.
+
+**The starting point for item 2**, the numbers item 2 is judged against:
+the sweep above (7/7, median lift 3.22x, 2.82–4.18x), and the single
+split at 5 Apr, unchanged because `build.py` makes it, not the sweep:
+PR-AUC 0.304, 2.3x kind_prior, precision@10 0.139 over 18 upgrades,
+nDCG@20 0.610 over 11.
+
+**For F7, found on the way.** `cv_tree_count` places its four validation
+windows at row quantiles inside train (0.40, 0.55, 0.70, 0.85, 1.00).
+At the 5 Apr split, the newest window (the top 15% of train, about 2,355
+rows) is about 97% the 2,296 rows dated 5 Apr, and chose 2 trees; the
+0.55–0.70 window is about 56% the 1,313 rows dated 21 Jan, and chose 36;
+the window that chose 1 tree has no such day in it. So one crowded day is
+at most part of why the folds disagree ([79, 36, 1, 2]), not the whole
+of it. Spacing the folds by upgrades is F38's fix applied to F7, and it
+waits for item 7, because it changes every model's tree count.
