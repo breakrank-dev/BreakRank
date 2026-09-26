@@ -103,8 +103,10 @@ BLAST_RADIUS = ["inherited_by"]
 HISTORY = ["was_deprecated_before", "prior_breaks_in_module"]
 
 POPULARITY = ["package_rank", "package_churn", "release_size"]
+# is_version_string left this group with F1 (item 2): its rows are dropped
+# before features are built, so the column no longer exists.
 PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
-              "is_version_string", "has_sub_target"]
+              "has_sub_target"]
 
 
 def main() -> None:

@@ -93,11 +93,12 @@ TWO THINGS THAT ARE EASY TO GET WRONG.
   model on it is not.
 
 KNOWN CROSSINGS. Three places where information from after the boundary
-still reaches dev rows, found in review on 25 Sep and left for the fix
-that owns them rather than patched here:
+reached dev rows, found in review on 25 Sep and left for the fix that
+owns them rather than patched here. One is closed:
 
-  package_churn   counts a package's rows over the whole file, holdout
-                  included. F5 (item 2) replaces it with a past-only count.
+  package_churn   CLOSED by F5 (item 2). It counted a package's rows over
+                  the whole file, holdout included; it now counts only
+                  the package's releases dated before the row's own.
   label_scoped    leaf_owners (labels.py) counts symbols over the whole
                   file, so a holdout symbol can flip a dev row's scoped
                   label. Not the strict label, not label_alias.

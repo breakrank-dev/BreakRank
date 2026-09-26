@@ -56,7 +56,7 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.contract import bump_type  # noqa: E402
-from ml.holdout import (HOLDOUT_FILE, HOLDOUT_START,  # noqa: E402
+from ml.holdout import (GROUP, HOLDOUT_FILE, HOLDOUT_START,  # noqa: E402
                         out_of_order, released, split_off, summary, track)
 
 DATA = pathlib.Path("data")
@@ -104,14 +104,19 @@ NUMERIC = [
     "name_length",        # long names tend to be obscure
     "package_rank",       # 1 = most downloaded. The popularity prior.
     "release_size",       # how many changes shipped together
-    "package_churn",      # how many changes this package makes overall
+    # How many changes this package shipped in EARLIER releases. Past only
+    # since F5 (item 2): it used to be the package's total over the whole
+    # file, which a model could not know at serving time.
+    "package_churn",
 ]
 BOOLEAN = [
     "is_private",         # contract rule: any _component, dunders excluded
-    "is_dunder",          # __version__ and friends
+    "is_dunder",          # __init__ and friends; __version__ goes in F1
     "in_dunder_all",      # the package exported it on purpose
     "is_top_level",       # click.echo, the kind people import directly
-    "is_version_string",  # the 36%-of-positives problem, made explicit
+    # is_version_string was here until F1 (item 2). The rows it flagged are
+    # now dropped before any feature is computed (drop_version_strings),
+    # so the flag would be False on every row that is left.
     "has_sub_target",     # a parameter changed, not the whole symbol
     "has_export_path",    # re-exported under a shorter public name
     # Did the OLD release carry a deprecation marker for this symbol — a
@@ -129,6 +134,29 @@ VERSION_LEAVES = {"__version__", "__VERSION__", "version",
                   "version_tuple", "__version_tuple__", "VERSION"}
 
 
+def version_strings(df: pd.DataFrame) -> pd.Series:
+    """True for rows whose symbol is a version constant (pkg.__version__,
+    pkg.VERSION and the like), judged by the last part of its name."""
+    leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
+    return leaf.isin(VERSION_LEAVES)
+
+
+def drop_version_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """F1 (item 2 of the fix list): the rows that are a version constant
+    changing value, removed before any feature is computed.
+
+    1,760 of the 1,769 such rows are ATTRIBUTE_CHANGED_VALUE on
+    pkg.__version__ or VERSION. Downstream code reads the constant, so the
+    label calls it used, and version strings were 45% of the positives
+    while breaking nobody: they change on every release by design. The
+    model's top feature was detecting them. Dropping them HERE, before
+    add_features, is what keeps release_size and package_churn from
+    counting them. labelled.csv keeps them, for the label reports that
+    describe them.
+    """
+    return df[~version_strings(df)]
+
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -137,9 +165,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # label is the thesis.
     df["bump"] = [bump_type(a, b)
                   for a, b in zip(df["version_from"], df["version_to"])]
-
-    leaf = df["symbol"].str.rsplit(".", n=1).str[-1]
-    df["is_version_string"] = leaf.isin(VERSION_LEAVES)
 
     df["has_sub_target"] = df.get("sub_target", "").fillna("").ne("")
 
@@ -177,7 +202,17 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # than in a release of eight hundred.
     df["release_size"] = df.groupby(
         ["package", "version_from", "version_to"])["symbol"].transform("size")
-    df["package_churn"] = df.groupby("package")["symbol"].transform("size")
+
+    # PAST ONLY (F5, item 2). The changes this package shipped in releases
+    # dated BEFORE this one, among the rows handed in. It used to be the
+    # package's total over the whole file: a constant per package, a median
+    # 33% of it from releases after the cut, and one of the three places
+    # where the holdout reached dev rows (KNOWN CROSSINGS, ml/holdout.py).
+    # Rows of one release share its date, so they share a count, and no
+    # release counts itself. An undated row has no known past and reads 0.
+    when = released(df)
+    df["package_churn"] = (when.groupby(df["package"]).rank(method="min")
+                           .sub(1).fillna(0).astype(int))
 
     # `.astype(bool)` ON A STRING COLUMN IS A TRAP. Python says
     # bool("False") is True — every non-empty string is truthy — so if a
@@ -237,7 +272,16 @@ def audit(df: pd.DataFrame) -> None:
 def main() -> None:
     if not LABELLED.exists():
         sys.exit(f"{LABELLED} not found — run ml/features/labels.py first.")
-    df = add_features(pd.read_csv(LABELLED))
+    raw = pd.read_csv(LABELLED)
+    df = add_features(drop_version_strings(raw))
+    gone = version_strings(raw)
+    emptied = (len(raw[GROUP].drop_duplicates())
+               - len(raw.loc[~gone, GROUP].drop_duplicates()))
+    print(f"\nF1: {int(gone.sum()):,} version-string rows dropped before any "
+          "feature was computed"
+          + (f", {int(raw.loc[gone, 'label'].sum()):,} of them positive "
+             "under label" if "label" in raw else "")
+          + f".\n    {emptied:,} upgrades held nothing else and are gone.")
 
     # THE HOLDOUT COMES OFF BEFORE THE SPLIT, never after. The train/test
     # cut below is a quantile of whatever rows it is handed, so it has to
@@ -246,9 +290,8 @@ def main() -> None:
     #
     # Features are computed on the full frame first, as they would be at
     # serving time. That is correct for every feature that only looks
-    # backwards in time. package_churn does not yet (F5, item 2 of the
-    # fix list); it and two smaller crossings are listed under KNOWN
-    # CROSSINGS in ml/holdout.py.
+    # backwards in time, which since F5 includes package_churn. Two smaller
+    # crossings remain, listed under KNOWN CROSSINGS in ml/holdout.py.
     undated = int(released(df).isna().sum())
     late, across = out_of_order(df)
     df, holdout = split_off(df)

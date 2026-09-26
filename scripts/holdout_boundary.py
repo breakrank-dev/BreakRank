@@ -58,6 +58,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from ml.features.build import version_strings  # noqa: E402
 from ml.holdout import (FROZEN_ON, GROUP, HOLDOUT_FILE,  # noqa: E402
                         HOLDOUT_START, MIN_POSITIVES, MIN_RANKABLE_PAIRS,
                         released)
@@ -84,9 +85,13 @@ def load() -> pd.DataFrame:
 
 
 def after_fixes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """The rows as built, after F1, and after F1 and F16."""
-    version = (pd.to_numeric(df["is_version_string"], errors="coerce")
-               .fillna(0).astype(int).eq(1))
+    """The rows as built, after F1, and after F1 and F16.
+
+    Version strings are found by the rule build.py uses, not read from a
+    column: once F1 runs in build.py the column is gone, and this then
+    reports that F1 deletes nothing more.
+    """
+    version = version_strings(df)
     sibling = (df["kind"].isin(ECHO_OF)
                .groupby([df[c] for c in GROUP + ["symbol"]], dropna=False)
                .transform("any"))
