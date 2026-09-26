@@ -17,7 +17,7 @@ holdout's start moved, the same sweep gave 4 distinct splits from 7 cut
 points, because two release days held a fifth of dev. F38 then moved the
 quantiles from rows to upgrades.
 
-Four cases. The first three use upgrades of one row each, so rows and
+Five cases. The first three use upgrades of one row each, so rows and
 upgrades coincide and only the counting is under test:
 
   1. Cut points that select the same rows: the later one is written as a
@@ -31,6 +31,10 @@ upgrades coincide and only the counting is under test:
   4. F38: one release of 600 rows among 200 one-row upgrades. Taken over
      rows, all seven cut points would land on its day (checked, as the
      control); taken over upgrades, the seven are distinct.
+  5. --at: cutting at the dates a sweep printed reproduces that sweep's
+     windows row for row, which is what lets a fix be judged before and
+     after on the same exam. Two dates with no release between them are
+     one split, and the report names the repeat by its date.
 """
 
 import contextlib
@@ -98,7 +102,7 @@ def sweep(df: pd.DataFrame, cuts=None) -> tuple[pd.DataFrame, list[float]]:
         fitted.append(q)
         cutoff, is_test = stability.cut(df, q)
         lift = LIFTS.get(q, 1.5)
-        return {"cut": str(cutoff.date()), "q": q,
+        return {"cut": str(cutoff.date()), "q": stability.qval(q),
                 "test_rows": int(is_test.sum()),
                 "test_pos": int(df.loc[is_test, label].sum()),
                 "floor": 0.05, "trees": 20, "rankable10": 12,
@@ -187,12 +191,10 @@ def case_report() -> None:
         print(text)
 
 
-def case_upgrades() -> None:
-    print("\n4. A RELEASE COUNTS ONCE WHEN PLACING THE CUTS, HOWEVER MANY "
-          "ROWS IT HAS")
-    # 200 upgrades of one row, one a day from 1 Jan 2026, and one upgrade of
-    # 600 rows released on day 150. By rows that release is three quarters
-    # of the data; by upgrades it is one in 201.
+def giant_release() -> pd.DataFrame:
+    """200 upgrades of one row, one a day from 1 Jan 2026, and one upgrade
+    of 600 rows released on day 150. By rows that release is three
+    quarters of the data; by upgrades it is one in 201."""
     start = pd.Timestamp("2026-01-01")
     small = pd.DataFrame({
         "package": "p",
@@ -206,8 +208,14 @@ def case_upgrades() -> None:
     big = pd.DataFrame({"package": "big", "version_from": "1.0",
                         "version_to": "2.0", "released_at": big_day,
                         "label": [int(j % 5 == 0) for j in range(600)]})
-    df = pd.concat([small, big], ignore_index=True)
+    return pd.concat([small, big], ignore_index=True)
 
+
+def case_upgrades() -> None:
+    print("\n4. A RELEASE COUNTS ONCE WHEN PLACING THE CUTS, HOWEVER MANY "
+          "ROWS IT HAS")
+    df = giant_release()
+    big_day = "2026-05-31"
     when = pd.to_datetime(df["released_at"])
     by_rows = {str(when.quantile(q).date()) for q in stability.CUTS}
     check("control: over rows, all seven cut points land on the big "
@@ -218,11 +226,40 @@ def case_upgrades() -> None:
     check("and they cut on seven different days", t["cut"].nunique(), 7)
 
 
+def case_at() -> None:
+    print("\n5. --at: THE SAME WINDOWS, CUT AT THE DATES A SWEEP PRINTED")
+    df = giant_release()
+    by_q, _ = sweep(df)
+    dates = by_q["cut"].tolist()
+    by_date, fitted = sweep(df, cuts=dates)
+    check("all seven dates are fitted, as dates", fitted, dates)
+    check("each date's test half is the quantile cut's, row for row",
+          by_date["test_rows"].tolist(), by_q["test_rows"].tolist())
+
+    # Rows 740..805 share 2026-04-05 and the next release is ten days
+    # later, so a cut on 5 Apr and a cut on 10 Apr select the same rows.
+    t, fitted = sweep(fixture(range(740, 806)),
+                      cuts=["2026-04-05", "2026-04-10"])
+    check("two dates with no release between them are one split",
+          (fitted, repeats(t)["same_as"].tolist()),
+          (["2026-04-05"], ["2026-04-05"]))
+    check("the repeat carries no quantile, only its date",
+          (repeats(t)["q"].isna().tolist(), repeats(t)["cut"].tolist()),
+          ([True], ["2026-04-10"]))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        stability.report(t, "label")
+    check("and the report names the repeat by its date",
+          "skipped 2026-04-10: the same split as 2026-04-05"
+          in out.getvalue(), True)
+
+
 def main() -> None:
     case_repeats()
     case_near_repeat()
     case_report()
     case_upgrades()
+    case_at()
 
     print("\n" + "=" * 60)
     if failures:

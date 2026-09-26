@@ -4,9 +4,20 @@ Does the result survive more than one arbitrary date?
     python ml/model/stability.py
     python ml/model/stability.py --label label_alias
     python ml/model/stability.py --all-labels
+    python ml/model/stability.py --label label --at 2025-09-29,2026-01-13
 
 Reads  data/features.csv
-Writes data/stability_<label>_<stopping>.csv
+Writes data/stability_<label>_<stopping>.csv, or with --at
+       data/stability_<label>_<stopping>_at.csv, which train.py never quotes
+
+BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
+quantiles, so they move whenever the rows do: item 2 deleted 708 dev
+upgrades and every date moved. A fix judged by comparing a sweep before
+it with a sweep after it would then be judged on two different sets of
+windows, which is §15's error (two models given different exams). --at
+takes the dates the "before" sweep printed and cuts there instead, so
+the "after" is measured on the same windows. With released_at written as
+plain dates, cutting at a printed date reproduces that cut's split exactly.
 
 WHY THIS IS NOTES ITEM 0 AND NOT A NICE-TO-HAVE.
 
@@ -116,20 +127,37 @@ def upgrade_dates(df: pd.DataFrame) -> pd.Series:
     return when.groupby([df[c] for c in GROUP]).max()
 
 
-def cut(df: pd.DataFrame, q: float) -> tuple[pd.Timestamp, pd.Series]:
-    """The cut date at quantile q of the upgrades, and which rows it sends
-    to test. See CUTS for why upgrades and not rows.
+def cut(df: pd.DataFrame, point) -> tuple[pd.Timestamp, pd.Series]:
+    """The cut date for one cut point, and which rows it sends to test.
+
+    A number is a quantile of the upgrades (see CUTS for why upgrades and
+    not rows). A 'YYYY-MM-DD' string is that date itself (--at): rows
+    dated on or before it train, rows after it test.
 
     Undated rows train, never test — the same rule as build.temporal_split.
     """
-    cutoff = upgrade_dates(df).dropna().quantile(q)
+    if isinstance(point, str):
+        cutoff = pd.Timestamp(point)
+    else:
+        cutoff = upgrade_dates(df).dropna().quantile(point)
     when = pd.to_datetime(df["released_at"], errors="coerce")
     return cutoff, (when > cutoff).fillna(False).astype(bool)
 
 
-def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
+def qval(point) -> float:
+    """The quantile a cut point stands for; NaN for a fixed date."""
+    return float("nan") if isinstance(point, str) else point
+
+
+def show(point) -> str:
+    """How a cut point is named in the report."""
+    return point if isinstance(point, str) else f"q={point:.2f}"
+
+
+def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
               objective: str, stopping: str = "cv") -> dict | None:
-    """Train and score at one cut date. None if the split is unusable."""
+    """Train and score at one cut point (a quantile, or a date with --at).
+    None if the split is unusable."""
     cutoff, is_test = cut(df, q)
     test = df[is_test].sort_values(GROUP)
     full_train = df[~is_test].sort_values(GROUP)
@@ -139,14 +167,16 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
     rankable = n_rankable(test, label, 10)
     if (pos < MIN_TEST_POSITIVES or rankable < MIN_RANKABLE_PAIRS
             or full_train.empty):
-        return {"cut": str(cutoff.date()), "q": q, "test_rows": len(test),
-                "test_pos": pos, "rankable10": rankable, "skipped": True}
+        return {"cut": str(cutoff.date()), "q": qval(q),
+                "test_rows": len(test), "test_pos": pos,
+                "rankable10": rankable, "skipped": True}
 
     train, valid, _ = split_valid(full_train)
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
     if train.empty or valid.empty or train[label].sum() == 0:
-        return {"cut": str(cutoff.date()), "q": q, "test_rows": len(test),
-                "test_pos": pos, "rankable10": rankable, "skipped": True}
+        return {"cut": str(cutoff.date()), "q": qval(q),
+                "test_rows": len(test), "test_pos": pos,
+                "rankable10": rankable, "skipped": True}
 
     if stopping == "cv":
         model, trees, _folds = fit_cv(full_train, feats, label, objective)
@@ -167,7 +197,7 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
 
     return {
         "cut": str(cutoff.date()),
-        "q": q,
+        "q": qval(q),
         "test_rows": len(test),
         "test_pos": pos,
         "floor": round(floor, 4),
@@ -187,7 +217,9 @@ def one_split(df: pd.DataFrame, q: float, label: str, feats: list[str],
 
 
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
-              objective: str, stopping: str = "cv") -> pd.DataFrame:
+              objective: str, stopping: str = "cv",
+              points: list | None = None) -> pd.DataFrame:
+    """One row per cut point: CUTS, or the dates given with --at."""
     # ONE SPLIT, ONE VOTE.
     #
     # When a single day holds more upgrades than lie between two
@@ -207,9 +239,9 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
     # train.py's notes, not the label-vs-label table. Identity is checked on
     # the rows themselves, not the printed date, because two cut points can
     # differ in time of day and still select the same rows.
-    first: dict[bytes, float] = {}
+    first: dict[bytes, object] = {}
     rows = []
-    for q in CUTS:
+    for q in (points or CUTS):
         cutoff, is_test = cut(df, q)
         key = np.asarray(is_test, dtype=bool).tobytes()
         if key in first:
@@ -218,7 +250,7 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
             when = pd.to_datetime(df["released_at"], errors="coerce")
             day = when[~is_test].max().normalize()
             on_day = upgrade_dates(df).dt.normalize().eq(day)
-            rows.append({"cut": str(cutoff.date()), "q": q,
+            rows.append({"cut": str(cutoff.date()), "q": qval(q),
                          "test_rows": len(test),
                          "test_pos": int(test[label].sum()),
                          "rankable10": n_rankable(test, label, 10),
@@ -248,10 +280,11 @@ def report(t: pd.DataFrame, label: str) -> None:
     t = t[~t["skipped"]].copy()
     if skipped.shape[0]:
         for i, r in skipped.iterrows():
+            where = (f"q={r.q:.2f} ({r.cut})" if pd.notna(r.q) else r.cut)
             if repeat.loc[i]:
-                print(f"  skipped q={r.q:.2f} ({r.cut}): the same split as "
-                      f"q={r.same_as:.2f}, row for row, so not a second "
-                      f"measurement\n      (both quantiles fall among the "
+                print(f"  skipped {where}: the same split as "
+                      f"{show(r.same_as)}, row for row, so not a second "
+                      f"measurement\n      (both cut points fall among the "
                       f"{int(r.shared_day_upgrades):,} upgrades dated "
                       f"{r.shared_day})")
                 continue
@@ -263,7 +296,7 @@ def report(t: pd.DataFrame, label: str) -> None:
             if pd.notna(rk) and int(rk) < MIN_RANKABLE_PAIRS:
                 why.append(f"{int(rk)} rankable pairs "
                            f"(min {MIN_RANKABLE_PAIRS})")
-            print(f"  skipped q={r.q:.2f} ({r.cut}): "
+            print(f"  skipped {where}: "
                   + ", ".join(why or ["no usable train/valid split"]))
     if t.empty:
         print("  no usable splits.")
@@ -326,7 +359,19 @@ def main() -> None:
                     help="cv picks the tree count by folds inside train; "
                          "holdout is the old single-slice rule. Run both to "
                          "see whether the fix actually fixed anything.")
+    ap.add_argument("--at", default=None,
+                    help="comma-separated cut dates (YYYY-MM-DD) to use "
+                         "instead of the quantiles, e.g. the dates a sweep "
+                         "before a fix printed. Written to a separate _at "
+                         "file that train.py never quotes.")
     args = ap.parse_args()
+    points = None
+    if args.at:
+        points = [d.strip() for d in args.at.split(",") if d.strip()]
+        bad = [d for d in points if pd.isna(
+            pd.to_datetime(d, errors="coerce", format="%Y-%m-%d"))]
+        if bad:
+            sys.exit(f"--at wants dates like 2025-09-29; not a date: {bad}")
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
@@ -342,7 +387,9 @@ def main() -> None:
     labels = (["label", "label_scoped", "label_alias"] if args.all_labels
               else [args.label])
 
-    print(f"\n{len(df):,} rows   {len(CUTS)} cut points   "
+    where = (f"{len(points)} cut dates given with --at" if points
+             else f"{len(CUTS)} cut points")
+    print(f"\n{len(df):,} rows   {where}   "
           f"{len(feats)} features   objective {args.objective}   "
           f"stopping {args.stopping}")
     print("Each cut refits the model AND the baselines, so lift is computed")
@@ -350,9 +397,11 @@ def main() -> None:
 
     summary = {}
     for label in labels:
-        t = run_label(df, label, feats, args.objective, args.stopping)
+        t = run_label(df, label, feats, args.objective, args.stopping,
+                      points)
         report(t, label)
-        out = DATA / f"stability_{label}_{args.stopping}.csv"
+        out = DATA / (f"stability_{label}_{args.stopping}"
+                      + ("_at" if points else "") + ".csv")
         t.to_csv(out, index=False)
         print(f"\n  saved -> {out}")
         ok = t[~t["skipped"]]
