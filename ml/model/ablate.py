@@ -3,6 +3,7 @@ Is the result real, or is it one feature wearing a hat?
 
     python ml/model/ablate.py
     python ml/model/ablate.py --label label_scoped
+    python ml/model/ablate.py --relevance graded
 
 The first ranker scored 1.85x popularity, and its top two features were
 module_depth and name_length — not `kind`, not `package_rank`. Before
@@ -49,8 +50,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.metrics import evaluate  # noqa: E402
-from ml.model.train import (cv_tree_count, fit_fixed, prepare,  # noqa: E402
-                            score_with, GROUP)
+from ml.model.train import (RELEVANCE, SHIPPED_RELEVANCE,  # noqa: E402
+                            cv_tree_count, fit_fixed, prepare,
+                            relevance_problem, score_with, GROUP)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -117,13 +119,21 @@ def main() -> None:
     ap.add_argument("--trees", type=int, default=None,
                     help="fix the tree count for EVERY run. Default: the "
                          "CV-chosen count for the full feature set.")
+    ap.add_argument("--relevance", default=SHIPPED_RELEVANCE,
+                    choices=RELEVANCE,
+                    help="what every run is taught; the default is what "
+                         "train.py ships")
     args = ap.parse_args()
     label = args.label
+    rel = args.relevance
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
     assert_no_holdout(df, "ablate.py")
+    problem = relevance_problem(df, label, args.objective, rel)
+    if problem:
+        sys.exit(f"ablate.py: {problem}")
     everything = NUMERIC + BOOLEAN + CATEGORICAL
 
     full_train = df[df.split == "train"].sort_values(GROUP)
@@ -166,9 +176,9 @@ def main() -> None:
         n_trees, folds = args.trees, []
     else:
         n_trees, folds = cv_tree_count(full_train, everything, label,
-                                       args.objective)
+                                       args.objective, relevance=rel)
 
-    print(f"\nlabel {label}   test {len(test):,} rows "
+    print(f"\nlabel {label}   relevance {rel}   test {len(test):,} rows "
           f"({test[label].mean():.2%} positive)")
     print(f"every run fixed at {n_trees} trees"
           + (f" (CV median of {folds})" if folds else " (set by --trees)"))
@@ -194,7 +204,7 @@ def main() -> None:
     # Discovered, not hardcoded — which features go unused changes with
     # the label and the data, and a stale list would be worse than none.
     full_model = fit_fixed(full_train, everything, label, n_trees,
-                           args.objective)
+                           args.objective, rel)
     gains = dict(zip(everything,
                      full_model.booster_.feature_importance("gain")))
     unused = [f for f in everything if gains.get(f, 0) <= 0]
@@ -210,7 +220,8 @@ def main() -> None:
 
     out = {}
     for name, feats in runs.items():
-        model = fit_fixed(full_train, feats, label, n_trees, args.objective)
+        model = fit_fixed(full_train, feats, label, n_trees, args.objective,
+                          rel)
         scored = test.copy()
         scored["s"] = score_with(model, test, feats)
         m = evaluate(scored, "s", label)
@@ -291,7 +302,8 @@ def main() -> None:
               "so the result rests on a combination rather than one "
               "dressed-up feature.")
 
-    out_path = DATA / f"ablation_{label}.csv"
+    out_path = DATA / (f"ablation_{label}"
+                       + ("_graded" if rel == "graded" else "") + ".csv")
     t.to_csv(out_path)
     print(f"\nsaved -> {out_path}")
 

@@ -4,8 +4,11 @@ The ranker. Everything before this was making the data honest.
     python ml/model/train.py
     python ml/model/train.py --label label
     python ml/model/train.py --objective binary
+    python ml/model/train.py --relevance graded
 
 The default label is label_alias, chosen 30 Sep by the rule in NOTES §24.
+The default relevance is SHIPPED_RELEVANCE below; NOTES §25 says how
+item 3 decides it.
 
 Reads  data/features.csv         (must have a `split` column)
 Writes artifacts/ranker.txt      the model
@@ -27,6 +30,15 @@ seen, and taking it randomly out of train would leak the future backwards
 through the stopping rule — a subtle version of the same mistake the
 train/test split exists to avoid. So the newest slice of TRAIN becomes
 validation, and test is never touched until the end.
+
+WHAT THE RANKER IS TAUGHT (--relevance, F2). `binary` tells lambdarank
+that every positive is worth the same: a change one package uses counts
+as much as one forty packages use. `graded` gives each positive a grade
+from 1 to 4 by how many packages use it (grades() below), so the ranker
+is pushed to put the widest breaks first. Only the training target
+changes. Which rows are positive, the test halves, and PR-AUC,
+precision@10 and nDCG@20 all still come from the 0/1 label, so the two
+are scored on the same exam.
 """
 
 import argparse
@@ -48,12 +60,89 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import compare, evaluate, n_rankable  # noqa: E402
+from ml.model.metrics import (compare, evaluate, n_rankable,  # noqa: E402
+                              ndcg_at_k)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
 FEATURES = DATA / "features.csv"
 GROUP = ["package", "version_from", "version_to"]
+
+
+# ------------------------------------------ what the ranker is taught (F2)
+
+RELEVANCE = ["binary", "graded"]
+
+# What train.py, stability.py, final_eval.py and ablate.py use when
+# --relevance is not given: the shipped model's. One constant, so the four
+# cannot drift apart. Item 3 decides whether it changes (NOTES §25).
+#
+# The fit functions below default to "binary" instead, on purpose.
+# fold_effect.py, label_blindspot.py and item2_effects.py re-measure
+# results that were about the binary model, and have to keep doing so
+# whatever ships.
+SHIPPED_RELEVANCE = "binary"
+
+# The count each label is built from (ml/features/labels.py): label is
+# user_count > 0, label_alias is alias_user_count > 0, label_scoped is
+# scoped_user_count > 0. A grade is read from the same count.
+COUNT_OF = {"label": "user_count", "label_scoped": "scoped_user_count",
+            "label_alias": "alias_user_count"}
+
+# The gain of grades 0 to 4 is 2**grade - 1: LightGBM's own default, and
+# the usual nDCG gain. A change 20 or more packages use is worth 15 of one
+# that a single package uses.
+GRADE_GAIN = [0, 1, 3, 7, 15]
+
+
+def grades(df: pd.DataFrame, label: str) -> pd.Series:
+    """0 for a negative. A positive gets 1 to 4 by how many packages use
+    it, on a log scale, ceil(ln(1 + n)):
+
+        1 package -> 1    2 to 6 -> 2    7 to 19 -> 3    20 or more -> 4
+
+    A log scale because, for ranking, one user against five is a bigger
+    difference than 100 against 104. The label decides WHICH rows count
+    and the count only decides how much: a positive is never graded 0,
+    whatever its count says, and a negative is never graded above it."""
+    n = pd.to_numeric(df[COUNT_OF[label]], errors="coerce").fillna(0)
+    g = np.ceil(np.log1p(n.clip(lower=0))).clip(1, 4).astype(int)
+    return g.where(df[label].astype(int) == 1, 0).astype(int)
+
+
+def graded_gain(df: pd.DataFrame, label: str) -> np.ndarray:
+    """Each row's gain under graded relevance: 0, 1, 3, 7 or 15."""
+    return np.asarray(GRADE_GAIN)[grades(df, label).to_numpy()]
+
+
+def target(df: pd.DataFrame, label: str, relevance: str) -> pd.Series:
+    """What LightGBM is handed as y: the 0/1 label, or its grades."""
+    return grades(df, label) if relevance == "graded" else df[label]
+
+
+def relevance_problem(df: pd.DataFrame, label: str, objective: str,
+                      relevance: str) -> str | None:
+    """Why this run cannot train with this relevance, or None if it can."""
+    if relevance not in RELEVANCE:
+        return f"relevance must be one of {RELEVANCE}, not {relevance!r}"
+    if relevance == "graded" and objective != "lambdarank":
+        return ("graded relevance is a ranking target, and --objective "
+                "binary trains a classifier.\nUse --objective lambdarank.")
+    if relevance == "graded" and COUNT_OF[label] not in df.columns:
+        return (f"graded relevance reads {COUNT_OF[label]}, and this "
+                "features.csv has no such column.\nRe-run "
+                "ml/features/labels.py, then ml/features/build.py.")
+    return None
+
+
+def _check(df: pd.DataFrame, label: str, objective: str,
+           relevance: str) -> None:
+    """relevance_problem, raised. Called before any fit, and before
+    cv_tree_count's try block, so a graded run can never fail quietly
+    into a default tree count."""
+    problem = relevance_problem(df, label, objective, relevance)
+    if problem:
+        raise ValueError(problem)
 
 
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,15 +166,22 @@ def split_valid(train: pd.DataFrame, frac: float = 0.2):
 
 
 def fit_model(train: pd.DataFrame, valid: pd.DataFrame, feats: list[str],
-              label: str, objective: str = "lambdarank"):
-    """Fit one model. Split out so ablate.py can refit with fewer features."""
+              label: str, objective: str = "lambdarank",
+              relevance: str = "binary"):
+    """Fit one model. Split out so ablate.py can refit with fewer features.
+
+    With relevance="graded" the validation rows are graded too, so early
+    stopping watches the same target the trees are fitted to."""
+    _check(train, label, objective, relevance)
     common = dict(n_estimators=600, learning_rate=0.05, num_leaves=31,
                   min_child_samples=30, subsample=0.9, subsample_freq=1,
                   colsample_bytree=0.9, random_state=0, verbose=-1)
 
     if objective == "lambdarank":
-        model = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1],
-                               **common)
+        model = lgb.LGBMRanker(
+            objective="lambdarank",
+            label_gain=GRADE_GAIN if relevance == "graded" else [0, 1],
+            **common)
         fit_kw = dict(group=group_sizes(train),
                       eval_group=[group_sizes(valid)], eval_at=[10])
     else:
@@ -97,8 +193,8 @@ def fit_model(train: pd.DataFrame, valid: pd.DataFrame, feats: list[str],
             scale_pos_weight=(len(train) - pos) / pos, **common)
         fit_kw = {}
 
-    model.fit(train[feats], train[label],
-              eval_set=[(valid[feats], valid[label])],
+    model.fit(train[feats], target(train, label, relevance),
+              eval_set=[(valid[feats], target(valid, label, relevance))],
               callbacks=[lgb.early_stopping(60, verbose=False),
                          lgb.log_evaluation(0)],
               **fit_kw)
@@ -120,7 +216,7 @@ MIN_TREES = 20
 
 
 def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
-                  objective: str, cap: int = 600):
+                  objective: str, cap: int = 600, relevance: str = "binary"):
     """Pick the tree count by expanding-window CV inside train.
 
     THE PROBLEM. `split_valid` hands early stopping ONE slice — the newest
@@ -148,7 +244,14 @@ def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
     TEST IS NEVER TOUCHED. Every fold lives inside train. The temporal
     train/test split is unchanged, and the tree count is a hyperparameter
     chosen on training data, exactly like any other.
+
+    Under graded relevance each fold stops on graded nDCG@10, the target
+    it is fitting. A fold still needs a 0/1 positive on both sides.
     """
+    # Before the try below, which skips a fold that fails to fit: a graded
+    # run with no count column must stop here, not fail every fold quietly
+    # and come back with the 600-tree cap.
+    _check(full_train, label, objective, relevance)
     d = pd.to_datetime(full_train["released_at"], errors="coerce")
     known = d.dropna()
     if known.empty:
@@ -164,7 +267,7 @@ def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
         if sub.empty or val.empty or not sub[label].sum() or not val[label].sum():
             continue
         try:
-            m = fit_model(sub, val, feats, label, objective)
+            m = fit_model(sub, val, feats, label, objective, relevance)
         except Exception:
             continue
         iters.append(int(getattr(m, "best_iteration_", None) or cap))
@@ -176,20 +279,25 @@ def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
 
 
 def fit_fixed(train: pd.DataFrame, feats: list[str], label: str,
-              n_trees: int, objective: str = "lambdarank"):
+              n_trees: int, objective: str = "lambdarank",
+              relevance: str = "binary"):
     """Refit on ALL of train with the tree count already decided.
 
     No early stopping and no validation set, deliberately: the number was
     chosen by cv_tree_count() and re-deciding it here on a slice would put
     the §5.6 problem straight back.
     """
+    _check(train, label, objective, relevance)
     common = dict(n_estimators=n_trees, learning_rate=0.05, num_leaves=31,
                   min_child_samples=30, subsample=0.9, subsample_freq=1,
                   colsample_bytree=0.9, random_state=0, verbose=-1)
     if objective == "lambdarank":
-        model = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1],
-                               **common)
-        model.fit(train[feats], train[label], group=group_sizes(train))
+        model = lgb.LGBMRanker(
+            objective="lambdarank",
+            label_gain=GRADE_GAIN if relevance == "graded" else [0, 1],
+            **common)
+        model.fit(train[feats], target(train, label, relevance),
+                  group=group_sizes(train))
     else:
         pos = max(int(train[label].sum()), 1)
         model = lgb.LGBMClassifier(
@@ -200,11 +308,12 @@ def fit_fixed(train: pd.DataFrame, feats: list[str], label: str,
 
 
 def fit_cv(full_train: pd.DataFrame, feats: list[str], label: str,
-           objective: str = "lambdarank"):
+           objective: str = "lambdarank", relevance: str = "binary"):
     """cv_tree_count + fit_fixed. Returns (model, n_trees, fold_iters)."""
-    n_trees, iters = cv_tree_count(full_train, feats, label, objective)
+    n_trees, iters = cv_tree_count(full_train, feats, label, objective,
+                                   relevance=relevance)
     model = fit_fixed(full_train.sort_values(GROUP), feats, label,
-                      n_trees, objective)
+                      n_trees, objective, relevance)
     return model, n_trees, iters
 
 
@@ -221,9 +330,18 @@ def main() -> None:
                          "inside train, then refit on all of it. holdout: "
                          "the old single-slice early stopping, kept so the "
                          "two can be compared rather than asserted.")
+    ap.add_argument("--relevance", default=SHIPPED_RELEVANCE,
+                    choices=RELEVANCE,
+                    help="binary: every positive counts the same. graded: "
+                         "a positive counts more the more packages use it "
+                         "(F2, NOTES §25).")
     args = ap.parse_args()
     label = args.label
-    version = args.version or f"{args.objective}-{label}"
+    graded = args.relevance == "graded"
+    # A graded model is a different model, so it gets its own model_run
+    # row. The binary name is unchanged, so earlier runs keep theirs.
+    version = args.version or (f"{args.objective}-{label}"
+                               + ("-graded" if graded else ""))
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
@@ -232,6 +350,9 @@ def main() -> None:
     # (ml/holdout.py) is not in features.csv, and a stale file that still
     # holds it stops here rather than being scored.
     assert_no_holdout(df, "train.py")
+    problem = relevance_problem(df, label, args.objective, args.relevance)
+    if problem:
+        sys.exit(f"train.py: {problem}")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
 
     full_train = df[df.split == "train"].sort_values(GROUP)
@@ -240,7 +361,7 @@ def main() -> None:
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
 
     print(f"\nlabel {label}   objective {args.objective}   "
-          f"stopping {args.stopping}")
+          f"relevance {args.relevance}   stopping {args.stopping}")
     print(f"train {len(train):,} ({train[label].mean():.2%} pos)   "
           f"valid {len(valid):,} ({valid[label].mean():.2%} pos)   "
           f"test {len(test):,} ({test[label].mean():.2%} pos)")
@@ -249,9 +370,18 @@ def main() -> None:
         print(f"** that slice is {valid[label].mean() / test[label].mean():.1f}x "
               "denser in positives than test — which is exactly\n"
               "** why --stopping cv exists (§5.6).")
+    if graded:
+        g = grades(full_train, label)
+        share = g[g > 0].value_counts(normalize=True).reindex(
+            [1, 2, 3, 4], fill_value=0)
+        print("training positives by grade:   "
+              + "   ".join(f"{k} ({w}) {v:.0%}" for (k, v), w in
+                           zip(share.items(), ["1 package", "2-6", "7-19",
+                                               "20+"])))
 
     if args.stopping == "cv":
-        model, best, folds = fit_cv(full_train, feats, label, args.objective)
+        model, best, folds = fit_cv(full_train, feats, label, args.objective,
+                                    relevance=args.relevance)
         fit_on = full_train
         print(f"\nCV folds chose {folds} trees -> median {best}, "
               f"refitted on all {len(full_train):,} training rows")
@@ -260,7 +390,8 @@ def main() -> None:
                   "The median is doing real work here;\n** any single slice "
                   "could have handed back either end of that.")
     else:
-        model = fit_model(train, valid, feats, label, args.objective)
+        model = fit_model(train, valid, feats, label, args.objective,
+                          relevance=args.relevance)
         best = getattr(model, "best_iteration_", None) or 600
         fit_on = train
         print(f"\nstopped at {best} trees")
@@ -281,6 +412,16 @@ def main() -> None:
     r10, r20 = n_rankable(test, label, 10), n_rankable(test, label, 20)
     print(f"test: {r10} pairs rankable at 10, {r20} at 20\n")
     print(compare(results, baseline="semver"))
+
+    # The measure graded relevance aims at, printed for either kind of
+    # model so the two can be read side by side: nDCG@20 over the same
+    # upgrades, a change's gain 1, 3, 7 or 15 by its grade instead of 1.
+    if COUNT_OF[label] in scored:
+        weighed = scored.assign(_gain=graded_gain(scored, label))
+        gn = {n: ndcg_at_k(weighed, n, label, 20, gain="_gain")
+              for n in ("model", "kind_prior", "popularity")}
+        print(f"\nnDCG@20 with graded gains (F2), the same {r20} upgrades:  "
+              + "   ".join(f"{n} {v:.4f}" for n, v in gn.items()))
 
     m, best_base = results["model"], max(
         (n for n in names if n != "model"), key=lambda n: results[n]["pr_auc"])
@@ -341,6 +482,7 @@ def main() -> None:
     # Record the floor beside the score.
     floor = float(test[label].mean())
     notes = (f"label={label} objective={args.objective} "
+             f"relevance={args.relevance} "
              f"stopping={args.stopping} trees={best} test_rows={len(test)} "
              f"positive_rate={floor:.4f} "
              f"best_baseline={best_base}:{bb:.4f} "
@@ -354,28 +496,42 @@ def main() -> None:
     # exact failure this project spent two days documenting. `notes` is
     # free text and reaches the API unchanged, so the range rides along
     # with the number instead of living only in a notebook.
-    stab = DATA / f"stability_{label}_{args.stopping}.csv"
+    stab = DATA / (f"stability_{label}_{args.stopping}"
+                   + ("_graded" if graded else "") + ".csv")
+    rerun = (f"ml/model/stability.py --label {label} --stopping "
+             f"{args.stopping}" + (" --relevance graded" if graded else ""))
     # A stability file written BEFORE the holdout froze scored every cut on
     # test halves that ran to the end of the data, holdout rows included.
     # Quoting it here would carry pre-freeze numbers into model_run and on
     # to the site. stability.py now stamps each row with the boundary it
     # ran under; a file without the stamp, or with a different one, is
     # stale and is not quoted.
+    #
+    # The same goes for what the sweep's models were taught. A range
+    # measured on binary models says nothing about a graded one, and the
+    # reverse, so each row also says its relevance (a file written before
+    # item 3 has none, and was binary) and a mismatch is not quoted either.
     fresh = False
     if not stab.exists():
         print(f"note: {stab} not found, so this model_run row will carry a "
-              "single-cut\nnumber with no range. Run ml/model/stability.py "
-              f"--label {label} --stopping {args.stopping} first.")
+              f"single-cut\nnumber with no range. Run {rerun} first.")
     else:
         st = pd.read_csv(stab)
         fresh = ("holdout_from" in st and len(st) > 0 and
                  (st["holdout_from"].astype(str)
                   == str(HOLDOUT_START.date())).all())
+        taught = (st["relevance"].astype(str) if "relevance" in st
+                  else pd.Series("binary", index=st.index))
         if not fresh:
             print(f"note: {stab} predates the holdout freeze, so its cuts "
                   "included holdout rows.\nNot quoted. Re-run "
-                  f"ml/model/stability.py --label {label} --stopping "
-                  f"{args.stopping}, then this script.")
+                  f"{rerun}, then this script.")
+        elif not taught.eq(args.relevance).all():
+            fresh = False
+            print(f"note: {stab} was measured on models with "
+                  f"{', '.join(sorted(set(taught)))} relevance, and this one "
+                  f"is {args.relevance}.\nNot quoted. Re-run {rerun}, then "
+                  "this script.")
     if fresh:
         st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
         if not st.empty:

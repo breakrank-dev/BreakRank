@@ -5,10 +5,20 @@ Does the result survive more than one arbitrary date?
     python ml/model/stability.py --label label_alias
     python ml/model/stability.py --all-labels
     python ml/model/stability.py --label label --at 2025-09-29,2026-01-13
+    python ml/model/stability.py --relevance graded
 
 Reads  data/features.csv
 Writes data/stability_<label>_<stopping>.csv, or with --at
-       data/stability_<label>_<stopping>_at.csv, which train.py never quotes
+       data/stability_<label>_<stopping>_at.csv, which train.py never quotes.
+       With --relevance graded, _graded comes before _at:
+       data/stability_label_alias_cv_graded.csv. Every row says the
+       relevance it was trained with, and train.py quotes a file only for
+       a model trained the same way.
+
+Each row also carries ndcg_20_graded: nDCG@20 over the same upgrades,
+with a change's gain 1, 3, 7 or 15 by how many packages use it (F2). It is
+measured whatever the model was taught, so a binary sweep and a graded
+one can be compared on it (scripts/item3_relevance.py).
 
 BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
 quantiles, so they move whenever the rows do: item 2 deleted 708 dev
@@ -66,9 +76,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import evaluate, n_rankable  # noqa: E402
-from ml.model.train import (GROUP, fit_cv, fit_model,  # noqa: E402
-                            prepare, score_with, split_valid)
+from ml.model.metrics import evaluate, n_rankable, ndcg_at_k  # noqa: E402
+from ml.model.train import (COUNT_OF, GROUP, RELEVANCE,  # noqa: E402
+                            SHIPPED_RELEVANCE, fit_cv, fit_model,
+                            graded_gain, prepare, relevance_problem,
+                            score_with, split_valid)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -155,9 +167,13 @@ def show(point) -> str:
 
 
 def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
-              objective: str, stopping: str = "cv") -> dict | None:
+              objective: str, stopping: str = "cv",
+              relevance: str = "binary") -> dict | None:
     """Train and score at one cut point (a quantile, or a date with --at).
-    None if the split is unusable."""
+    None if the split is unusable.
+
+    The gates below read the 0/1 label whatever the relevance, so a
+    binary sweep and a graded one skip exactly the same cuts."""
     cutoff, is_test = cut(df, q)
     test = df[is_test].sort_values(GROUP)
     full_train = df[~is_test].sort_values(GROUP)
@@ -179,10 +195,12 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
                 "rankable10": rankable, "skipped": True}
 
     if stopping == "cv":
-        model, trees, _folds = fit_cv(full_train, feats, label, objective)
+        model, trees, _folds = fit_cv(full_train, feats, label, objective,
+                                      relevance=relevance)
         fit_on = full_train
     else:
-        model = fit_model(train, valid, feats, label, objective)
+        model = fit_model(train, valid, feats, label, objective,
+                          relevance=relevance)
         trees = getattr(model, "best_iteration_", None) or 600
         fit_on = train
 
@@ -194,6 +212,11 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     pop = evaluate(scored, "popularity", label)
     sem = evaluate(scored, "semver", label)
     floor = float(test[label].mean())
+    # Measured for binary and graded models alike; NaN only where the file
+    # has no count to grade by.
+    ndcg_graded = (ndcg_at_k(scored.assign(_gain=graded_gain(scored, label)),
+                             "model", label, 20, gain="_gain")
+                   if COUNT_OF.get(label) in scored else float("nan"))
 
     return {
         "cut": str(cutoff.date()),
@@ -206,6 +229,7 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         "pr_auc": round(m["pr_auc"], 4),
         "p_at_10": round(m["precision_at_10"], 4),
         "ndcg_20": round(m["ndcg_at_20"], 4),
+        "ndcg_20_graded": round(ndcg_graded, 4),
         "popularity": round(pop["pr_auc"], 4),
         "semver": round(sem["pr_auc"], 4),
         "lift_vs_pop": round(m["pr_auc"] / pop["pr_auc"], 2)
@@ -218,7 +242,8 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
 
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv",
-              points: list | None = None) -> pd.DataFrame:
+              points: list | None = None,
+              relevance: str = "binary") -> pd.DataFrame:
     """One row per cut point: CUTS, or the dates given with --at."""
     # ONE SPLIT, ONE VOTE.
     #
@@ -259,12 +284,17 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
                          "shared_day_upgrades": int(on_day.sum())})
             continue
         first[key] = q
-        rows.append(one_split(df, q, label, feats, objective, stopping))
+        rows.append(one_split(df, q, label, feats, objective, stopping,
+                              relevance=relevance))
     t = pd.DataFrame([r for r in rows if r])
     # Stamp the boundary this sweep ran under. Every file written before the
     # freeze lacks the column, and its later cuts scored holdout rows, so
     # train.py refuses to quote any file whose stamp is missing or different.
     t["holdout_from"] = str(HOLDOUT_START.date())
+    # And what its models were taught. train.py quotes a sweep only for a
+    # model trained the same way; a file from before item 3 has no stamp
+    # and was binary.
+    t["relevance"] = relevance
     return t
 
 
@@ -304,6 +334,8 @@ def report(t: pd.DataFrame, label: str) -> None:
 
     cols = ["cut", "test_rows", "test_pos", "floor", "trees", "rankable10",
             "pr_auc", "popularity", "lift_vs_pop", "p_at_10", "ndcg_20"]
+    if "ndcg_20_graded" in t and t["ndcg_20_graded"].notna().any():
+        cols.append("ndcg_20_graded")
     # A skipped row has no tree count, which turns the column into floats
     # ("20.0") for the rows that do. Every fitted row has a whole number.
     t["trees"] = t["trees"].astype(int)
@@ -364,6 +396,11 @@ def main() -> None:
                          "instead of the quantiles, e.g. the dates a sweep "
                          "before a fix printed. Written to a separate _at "
                          "file that train.py never quotes.")
+    ap.add_argument("--relevance", default=SHIPPED_RELEVANCE,
+                    choices=RELEVANCE,
+                    help="what each cut's model is taught: binary, or "
+                         "graded by how many packages use a change (F2, "
+                         "NOTES §25). Written to a _graded file.")
     args = ap.parse_args()
     points = None
     if args.at:
@@ -386,21 +423,26 @@ def main() -> None:
 
     labels = (["label", "label_scoped", "label_alias"] if args.all_labels
               else [args.label])
+    for label in labels:
+        problem = relevance_problem(df, label, args.objective, args.relevance)
+        if problem:
+            sys.exit(f"stability.py: {problem}")
 
     where = (f"{len(points)} cut dates given with --at" if points
              else f"{len(CUTS)} cut points")
     print(f"\n{len(df):,} rows   {where}   "
           f"{len(feats)} features   objective {args.objective}   "
-          f"stopping {args.stopping}")
+          f"relevance {args.relevance}   stopping {args.stopping}")
     print("Each cut refits the model AND the baselines, so lift is computed")
     print("within a split before anything is summarised.")
 
     summary = {}
     for label in labels:
         t = run_label(df, label, feats, args.objective, args.stopping,
-                      points)
+                      points, relevance=args.relevance)
         report(t, label)
         out = DATA / (f"stability_{label}_{args.stopping}"
+                      + ("_graded" if args.relevance == "graded" else "")
                       + ("_at" if points else "") + ".csv")
         t.to_csv(out, index=False)
         print(f"\n  saved -> {out}")

@@ -17,7 +17,7 @@ holdout's start moved, the same sweep gave 4 distinct splits from 7 cut
 points, because two release days held a fifth of dev. F38 then moved the
 quantiles from rows to upgrades.
 
-Five cases. The first three use upgrades of one row each, so rows and
+Six cases. The first three use upgrades of one row each, so rows and
 upgrades coincide and only the counting is under test:
 
   1. Cut points that select the same rows: the later one is written as a
@@ -35,6 +35,10 @@ upgrades coincide and only the counting is under test:
      windows row for row, which is what lets a fix be judged before and
      after on the same exam. Two dates with no release between them are
      one split, and the report names the repeat by its date.
+  6. --relevance (item 3): what the models are taught reaches every fit
+     and is stamped on every row, repeats included, because train.py
+     quotes a sweep only for a model taught the same way. Left out, it is
+     binary, as every sweep before item 3 was.
 """
 
 import contextlib
@@ -56,6 +60,9 @@ failures = []
 # were fitted and counted, the median would come out 2.01x, not 2.04x.
 LIFTS = {0.55: 2.34, 0.60: 1.91, 0.65: 2.19, 0.70: 2.07, 0.75: 2.01,
          0.80: 2.01, 0.85: 1.96}
+
+# What each stand-in fit was told to train on, in order (case 6).
+taught: list[str] = []
 
 
 def check(name: str, got, want) -> None:
@@ -94,12 +101,18 @@ def fixture(crowded: range, n: int = 1002, gap_days: int = 10
     })
 
 
-def sweep(df: pd.DataFrame, cuts=None) -> tuple[pd.DataFrame, list[float]]:
-    """run_label with the fit swapped out. Returns (table, cuts fitted)."""
+def sweep(df: pd.DataFrame, cuts=None, relevance: str | None = None
+          ) -> tuple[pd.DataFrame, list[float]]:
+    """run_label with the fit swapped out. Returns (table, cuts fitted).
+    With relevance given, it is passed to run_label, and `taught` records
+    what each fit was handed."""
     fitted = []
+    taught.clear()
 
-    def stand_in(df, q, label, feats, objective, stopping="cv"):
+    def stand_in(df, q, label, feats, objective, stopping="cv",
+                 relevance="binary"):
         fitted.append(q)
+        taught.append(relevance)
         cutoff, is_test = stability.cut(df, q)
         lift = LIFTS.get(q, 1.5)
         return {"cut": str(cutoff.date()), "q": stability.qval(q),
@@ -116,7 +129,11 @@ def sweep(df: pd.DataFrame, cuts=None) -> tuple[pd.DataFrame, list[float]]:
     if cuts is not None:
         stability.CUTS = cuts
     try:
-        t = stability.run_label(df, "label", [], "lambdarank")
+        if relevance is None:
+            t = stability.run_label(df, "label", [], "lambdarank")
+        else:
+            t = stability.run_label(df, "label", [], "lambdarank",
+                                    relevance=relevance)
     finally:
         stability.one_split, stability.CUTS = real_fit, real_cuts
     return t, fitted
@@ -254,12 +271,29 @@ def case_at() -> None:
           in out.getvalue(), True)
 
 
+def case_relevance() -> None:
+    print("\n6. WHAT THE MODELS ARE TAUGHT REACHES EVERY FIT AND EVERY ROW")
+    # A sweep whose fits trained binary while its file said graded would
+    # hand train.py a range measured on a different model.
+    df = fixture(range(740, 851))
+    t, fitted = sweep(df, relevance="graded")
+    check("every fitted cut is told graded",
+          (len(fitted), taught), (5, ["graded"] * 5))
+    check("every row says graded, the two repeats included",
+          t["relevance"].tolist(), ["graded"] * 7)
+    t, fitted = sweep(df)
+    check("left out, it is binary, as in every sweep before item 3",
+          (taught, t["relevance"].tolist()),
+          (["binary"] * 5, ["binary"] * 7))
+
+
 def main() -> None:
     case_repeats()
     case_near_repeat()
     case_report()
     case_upgrades()
     case_at()
+    case_relevance()
 
     print("\n" + "=" * 60)
     if failures:

@@ -36,8 +36,11 @@ never invisible. data/ is not committed, so the ledger is a local record;
 the block this script prints at the end goes into NOTES, which is.
 
 KEEP IT IN STEP WITH train.py. It must fit exactly what train.py ships.
-When F2 (graded relevance) or F7 (tuning) changes how train.py fits, this
-file changes in the same commit.
+When F7 (tuning) changes how train.py fits, this file changes in the same
+commit. F2 did: --relevance defaults to train.SHIPPED_RELEVANCE, the same
+constant train.py's default reads, so the two cannot disagree about what
+the shipped model was taught. A graded opening is written to the ledger
+as objective "lambdarank+graded".
 """
 
 import argparse
@@ -55,8 +58,10 @@ from ml.holdout import (FROZEN_ON, GROUP, HOLDOUT_FILE,  # noqa: E402
                         HOLDOUT_START, MIN_POSITIVES, MIN_RANKABLE_PAIRS,
                         assert_no_holdout, fingerprint, holdout_mask, track)
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import evaluate, n_rankable  # noqa: E402
-from ml.model.train import fit_cv, prepare, score_with  # noqa: E402
+from ml.model.metrics import evaluate, n_rankable, ndcg_at_k  # noqa: E402
+from ml.model.train import (COUNT_OF, RELEVANCE,  # noqa: E402
+                            SHIPPED_RELEVANCE, fit_cv, graded_gain, prepare,
+                            relevance_problem, score_with)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -138,6 +143,10 @@ def main() -> None:
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank",
                     choices=["lambdarank", "binary"])
+    ap.add_argument("--relevance", default=SHIPPED_RELEVANCE,
+                    choices=RELEVANCE,
+                    help="what the model is taught; the default is what "
+                         "train.py ships")
     args = ap.parse_args()
 
     if not args.unseal:
@@ -158,7 +167,12 @@ def main() -> None:
                  "\"<reason>\", and the reason is recorded.")
 
     label = args.label
+    graded = args.relevance == "graded"
     dev, hold = load(label)
+    # Before anything is fitted or recorded, like every refusal above.
+    problem = relevance_problem(dev, label, args.objective, args.relevance)
+    if problem:
+        sys.exit(f"final_eval.py: {problem}")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
     commit = git_commit()
     if commit.endswith("+uncommitted"):
@@ -167,7 +181,8 @@ def main() -> None:
               "that made this number.\n** Commit first unless you have a "
               "reason not to.\n")
 
-    model, trees, folds = fit_cv(dev, feats, label, args.objective)
+    model, trees, folds = fit_cv(dev, feats, label, args.objective,
+                                 relevance=args.relevance)
     scored = hold.copy()
     scored["model"] = score_with(model, scored, feats)
     scored = add_baseline_scores(dev, scored, label)
@@ -178,6 +193,12 @@ def main() -> None:
     floor = float(hold[label].mean())
     pos = int(hold[label].sum())
     r10, r20 = n_rankable(scored, label, 10), n_rankable(scored, label, 20)
+    # nDCG@20 with graded gains (F2), for either kind of model: printed
+    # below and in the NOTES block, not in the ledger, whose columns stay
+    # as they were so no earlier row is left misaligned.
+    ndcg_g = (ndcg_at_k(scored.assign(_gain=graded_gain(scored, label)),
+                        "model", label, 20, gain="_gain")
+              if COUNT_OF[label] in scored else None)
     pairs = len(hold[GROUP].drop_duplicates())
     lift = m["pr_auc"] / pop["pr_auc"] if pop["pr_auc"] else float("nan")
     moved_text, moved = track(hold, write=False)
@@ -191,7 +212,7 @@ def main() -> None:
         "holdout_from": str(HOLDOUT_START.date()),
         "commit": commit,
         "label": label,
-        "objective": args.objective,
+        "objective": args.objective + ("+graded" if graded else ""),
         "trees": trees,
         "cv_folds": " ".join(map(str, folds)),
         "dev_rows": len(dev),
@@ -226,7 +247,7 @@ def main() -> None:
           f"fingerprint {row['fingerprint']}")
     print(" " * 13 + moved_text.strip().replace("\n  ", "\n" + " " * 13))
     print(f"  trained on {len(dev):,} rows released before it   label "
-          f"{label}   {args.objective}")
+          f"{label}   {args.objective}   relevance {args.relevance}")
     print(f"             CV folds chose {folds} -> {trees} trees   "
           f"code {commit}")
     print()
@@ -247,6 +268,8 @@ def main() -> None:
 
     print(per_pair("precision@10", m["precision_at_10"], r10))
     print(per_pair("nDCG@20", m["ndcg_at_20"], r20))
+    if ndcg_g is not None:
+        print(per_pair("nDCG@20 graded", ndcg_g, r20))
     if pos < MIN_POSITIVES:
         print(f"\n** Only {pos} positives. PR-AUC on this few is fragile; "
               "say so beside it.")
@@ -257,14 +280,17 @@ def main() -> None:
           f"{HOLDOUT_START.date()}, frozen {FROZEN_ON}, fingerprint "
           f"{row['fingerprint']}),")
     print(f"  opened {row['opened_at']} at commit {commit}: label {label}, "
-          f"{len(hold):,} rows / {pairs} pairs, floor {floor:.4f}.")
+          f"{args.relevance} relevance, {len(hold):,} rows / {pairs} pairs, "
+          f"floor {floor:.4f}.")
     if moved:
         print(f"  Against the frozen list of {moved['frozen_pairs']} pairs: "
               f"{moved['gone']} gone, {moved['added']} added.")
     print(f"  PR-AUC {m['pr_auc']:.4f} vs popularity {pop['pr_auc']:.4f} "
           f"({lift:.2f}x) and semver {sem['pr_auc']:.4f};")
     print(f"  precision@10 {m['precision_at_10']:.4f} over {r10} upgrades; "
-          f"nDCG@20 {m['ndcg_at_20']:.4f} over {r20}.")
+          f"nDCG@20 {m['ndcg_at_20']:.4f} over {r20}"
+          + (f" ({ndcg_g:.4f} with graded gains)." if ndcg_g is not None
+             else "."))
 
 
 if __name__ == "__main__":

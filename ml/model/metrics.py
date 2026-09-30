@@ -69,11 +69,19 @@ def precision_at_k(df: pd.DataFrame, score: str, label: str, k: int = 10) -> flo
     return float(np.mean(out)) if out else 0.0
 
 
-def ndcg_at_k(df: pd.DataFrame, score: str, label: str, k: int = 20) -> float:
-    """Mean nDCG@k over rankable pairs (same restriction as precision@k)."""
+def ndcg_at_k(df: pd.DataFrame, score: str, label: str, k: int = 20,
+              gain: str | None = None) -> float:
+    """Mean nDCG@k over rankable pairs (same restriction as precision@k).
+
+    gain names a column of per-row gains to use in place of the 0/1 label:
+    graded relevance (F2) scores a change 1, 3, 7 or 15 by how many
+    packages use it. The pairs judged are the same either way, the ones
+    rankable under the 0/1 label, so the two numbers describe one exam.
+    Plain nDCG@k scores "the change 25 packages use, then the one 1 uses"
+    and the reverse order the same; with gains, the first scores higher."""
     out = []
     for g in _rankable(df, label, k):
-        rel = g[label].to_numpy(int)
+        rel = (g[gain].to_numpy(float) if gain else g[label].to_numpy(int))
         gains = _ranked(g[score].to_numpy(float), rel, k)
         disc = 1.0 / np.log2(np.arange(2, len(gains) + 2))
         ideal = np.sort(rel)[::-1][:k]
