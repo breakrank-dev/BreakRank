@@ -58,7 +58,8 @@ from ml.holdout import (FROZEN_ON, GROUP, HOLDOUT_FILE,  # noqa: E402
                         HOLDOUT_START, MIN_POSITIVES, MIN_RANKABLE_PAIRS,
                         assert_no_holdout, fingerprint, holdout_mask, track)
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import evaluate, n_rankable, ndcg_at_k  # noqa: E402
+from ml.model.metrics import (DRAWS, evaluate, intervals,  # noqa: E402
+                              n_rankable, ndcg_at_k)
 from ml.model.train import (COUNT_OF, RELEVANCE,  # noqa: E402
                             SHIPPED_RELEVANCE, fit_cv, graded_gain, prepare,
                             relevance_problem, score_with)
@@ -199,6 +200,11 @@ def main() -> None:
     ndcg_g = (ndcg_at_k(scored.assign(_gain=graded_gain(scored, label)),
                         "model", label, 20, gain="_gain")
               if COUNT_OF[label] in scored else None)
+    # F11: the interval on each number, over the holdout's upgrades with
+    # the model held fixed. Printed and put in the NOTES block; like
+    # ndcg_g, not in the ledger, whose columns stay as they were.
+    ci = intervals(scored, label, "model", "popularity")
+    changes = len(hold.drop_duplicates(GROUP + ["symbol"]))
     pairs = len(hold[GROUP].drop_duplicates())
     lift = m["pr_auc"] / pop["pr_auc"] if pop["pr_auc"] else float("nan")
     moved_text, moved = track(hold, write=False)
@@ -251,25 +257,39 @@ def main() -> None:
     print(f"             CV folds chose {folds} -> {trees} trees   "
           f"code {commit}")
     print()
-    print(f"  floor (positive rate)   {floor:.4f}   ({pos} positives)")
+    print(f"  floor (positive rate)   {floor:.4f}   ({pos} positives, "
+          f"{changes:,} changes in {pairs:,} upgrades)")
     for n in names:
-        print(f"  {n:<12} PR-AUC     {res[n]['pr_auc']:.4f}")
-    print(f"\n  lift over popularity    {lift:.2f}x")
+        print(f"  {n:<12} PR-AUC     {res[n]['pr_auc']:.4f}"
+              + (f"   95% interval {ci['pr_auc'][0]:.4f} to "
+                 f"{ci['pr_auc'][1]:.4f}" if n == "model" else
+                 f"   95% interval {ci['baseline_pr_auc'][0]:.4f} to "
+                 f"{ci['baseline_pr_auc'][1]:.4f}" if n == "popularity"
+                 else ""))
+    print(f"\n  lift over popularity    {lift:.2f}x   95% interval "
+          f"{ci['lift'][0]:.2f} to {ci['lift'][1]:.2f}")
     print(f"  model vs floor          {m['pr_auc'] / floor:.1f}x")
     print(f"  beats semver (the gate) "
           f"{'yes' if m['pr_auc'] > sem['pr_auc'] else 'NO'}")
 
-    def per_pair(name: str, value: float, n: int) -> str:
+    def per_pair(name: str, value: float, n: int,
+                 band: tuple[float, float] | None = None) -> str:
+        text = f"  {name:<15} {value:.4f}"
+        if band:
+            text += f"   95% interval {band[0]:.4f} to {band[1]:.4f}"
+        text += f"   over {n} upgrades"
         if n < MIN_RANKABLE_PAIRS:
-            return (f"  {name:<15} {value:.4f} over {n} upgrades  <- BELOW "
-                    f"the {MIN_RANKABLE_PAIRS}-pair gate. Quote it only "
-                    "with that n, as an anecdote.")
-        return f"  {name:<15} {value:.4f} over {n} upgrades"
+            text += (f"  <- BELOW the {MIN_RANKABLE_PAIRS}-pair gate. Quote "
+                     "it only with that n, as an anecdote.")
+        return text
 
-    print(per_pair("precision@10", m["precision_at_10"], r10))
-    print(per_pair("nDCG@20", m["ndcg_at_20"], r20))
+    print(per_pair("precision@10", m["precision_at_10"], r10,
+                   ci["precision_at_10"]))
+    print(per_pair("nDCG@20", m["ndcg_at_20"], r20, ci["ndcg_at_20"]))
     if ndcg_g is not None:
         print(per_pair("nDCG@20 graded", ndcg_g, r20))
+    print(f"  (intervals: {DRAWS:,} resamples of the {ci['upgrades']:,} "
+          "holdout upgrades, the model not refitted)")
     if pos < MIN_POSITIVES:
         print(f"\n** Only {pos} positives. PR-AUC on this few is fragile; "
               "say so beside it.")
@@ -285,10 +305,15 @@ def main() -> None:
     if moved:
         print(f"  Against the frozen list of {moved['frozen_pairs']} pairs: "
               f"{moved['gone']} gone, {moved['added']} added.")
-    print(f"  PR-AUC {m['pr_auc']:.4f} vs popularity {pop['pr_auc']:.4f} "
-          f"({lift:.2f}x) and semver {sem['pr_auc']:.4f};")
-    print(f"  precision@10 {m['precision_at_10']:.4f} over {r10} upgrades; "
-          f"nDCG@20 {m['ndcg_at_20']:.4f} over {r20}"
+    print(f"  PR-AUC {m['pr_auc']:.4f} (95% interval {ci['pr_auc'][0]:.4f}"
+          f"-{ci['pr_auc'][1]:.4f}) vs popularity {pop['pr_auc']:.4f}: "
+          f"{lift:.2f}x ({ci['lift'][0]:.2f}-{ci['lift'][1]:.2f});")
+    print(f"  semver {sem['pr_auc']:.4f}. {changes:,} changes in {pairs} "
+          "upgrades; intervals resample upgrades.")
+    print(f"  precision@10 {m['precision_at_10']:.4f} "
+          f"({ci['precision_at_10'][0]:.4f}-{ci['precision_at_10'][1]:.4f}) "
+          f"over {r10} upgrades; nDCG@20 {m['ndcg_at_20']:.4f} "
+          f"({ci['ndcg_at_20'][0]:.4f}-{ci['ndcg_at_20'][1]:.4f}) over {r20}"
           + (f" ({ndcg_g:.4f} with graded gains)." if ndcg_g is not None
              else "."))
 

@@ -60,8 +60,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import (compare, evaluate, n_rankable,  # noqa: E402
-                              ndcg_at_k)
+from ml.model.metrics import (DRAWS, compare, evaluate,  # noqa: E402
+                              intervals, n_rankable, ndcg_at_k)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -365,6 +365,12 @@ def main() -> None:
     print(f"train {len(train):,} ({train[label].mean():.2%} pos)   "
           f"valid {len(valid):,} ({valid[label].mean():.2%} pos)   "
           f"test {len(test):,} ({test[label].mean():.2%} pos)")
+    # F12. Rows are not independent observations: a symbol's parameter
+    # rows share its label, and a release's changes rise and fall together.
+    n_changes = len(test.drop_duplicates(GROUP + ["symbol"]))
+    n_upgrades = len(test.drop_duplicates(GROUP))
+    print(f"test's {len(test):,} rows are {n_changes:,} changes (a symbol in "
+          f"one upgrade) in {n_upgrades:,} upgrades")
     print(f"the holdout validation slice is train after {vcut.date()}")
     if valid[label].mean() > 1.5 * test[label].mean():
         print(f"** that slice is {valid[label].mean() / test[label].mean():.1f}x "
@@ -437,6 +443,29 @@ def main() -> None:
               "— report it and\n** fix the features before touching the "
               "hyperparameters.")
 
+    # F11. How far each number could move on another draw of test
+    # upgrades, the models held fixed (metrics.intervals says why whole
+    # upgrades, and why no refit). The range across cut dates is
+    # stability.py's; this is the other kind of uncertainty.
+    ci = intervals(scored, label, "model", "popularity")
+    pop = results["popularity"]["pr_auc"]
+    lift_pop = m["pr_auc"] / pop if pop else float("nan")
+    print(f"\n95% intervals, from {DRAWS:,} resamples of the test half's "
+          f"{ci['upgrades']:,} upgrades (the models are not refitted):")
+    for name, v, (lo, hi), fmt, n in (
+            ("PR-AUC", m["pr_auc"], ci["pr_auc"], "{:.3f}", None),
+            ("popularity PR-AUC", pop, ci["baseline_pr_auc"], "{:.3f}", None),
+            ("lift over popularity", lift_pop, ci["lift"], "{:.2f}x", None),
+            ("precision@10", m["precision_at_10"], ci["precision_at_10"],
+             "{:.3f}", r10),
+            ("nDCG@20", m["ndcg_at_20"], ci["ndcg_at_20"], "{:.3f}", r20)):
+        print(f"  {name:<22}{fmt.format(v):>7}   {fmt.format(lo)} to "
+              f"{fmt.format(hi)}" + (f"   over {n} upgrades" if n else ""))
+    if not ci["lift"][0] > 1:
+        print("** The lift's interval reaches 1.0x: on some draws of test "
+              "upgrades this\n** model does not beat popularity. Say so "
+              "beside the number.")
+
     ART.mkdir(exist_ok=True)
     model.booster_.save_model(str(ART / "ranker.txt")) if hasattr(
         model, "booster_") else None
@@ -486,7 +515,11 @@ def main() -> None:
              f"stopping={args.stopping} trees={best} test_rows={len(test)} "
              f"positive_rate={floor:.4f} "
              f"best_baseline={best_base}:{bb:.4f} "
-             f"holdout_from={HOLDOUT_START.date()}")
+             f"holdout_from={HOLDOUT_START.date()} "
+             f"test_changes={n_changes} test_upgrades={n_upgrades} "
+             f"pr_auc_95={ci['pr_auc'][0]:.4f}-{ci['pr_auc'][1]:.4f} "
+             f"lift_vs_popularity={lift_pop:.2f}x "
+             f"lift_95={ci['lift'][0]:.2f}-{ci['lift'][1]:.2f}")
 
     # CARRY THE RANGE INTO THE ROW ITSELF. pr_auc here is ONE cut date, and
     # §5.6 measured that a single cut can sit anywhere in a band half as
@@ -545,6 +578,12 @@ def main() -> None:
                       f"{wins}/{len(st)}, lift vs popularity median "
                       f"{lift.median():.2f}x min {lift.min():.2f}x "
                       f"max {lift.max():.2f}x")
+            # A sweep from before item 5 has no intervals; say nothing
+            # about them rather than read their absence as zero.
+            if "lift_lo" in st and st["lift_lo"].notna().all():
+                clear = int((st["lift_lo"].astype(float) > 1).sum())
+                notes += (f", lift's 95% interval above 1.0x at "
+                          f"{clear}/{len(st)}")
         else:
             print("note: stability file has no usable splits; the model_run "
                   "row will carry a single-cut number with no range.")

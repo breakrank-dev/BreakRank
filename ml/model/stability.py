@@ -76,7 +76,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import evaluate, n_rankable, ndcg_at_k  # noqa: E402
+from ml.model.metrics import (evaluate, intervals,  # noqa: E402
+                              n_rankable, ndcg_at_k)
 from ml.model.train import (COUNT_OF, GROUP, RELEVANCE,  # noqa: E402
                             SHIPPED_RELEVANCE, fit_cv, fit_model,
                             graded_gain, prepare, relevance_problem,
@@ -217,6 +218,10 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     ndcg_graded = (ndcg_at_k(scored.assign(_gain=graded_gain(scored, label)),
                              "model", label, 20, gain="_gain")
                    if COUNT_OF.get(label) in scored else float("nan"))
+    # F11: this cut's own uncertainty, over its test half's upgrades with
+    # the model held fixed. The spread ACROSS cuts, which report() prints
+    # as the range, is the other kind; neither stands in for the other.
+    ci = intervals(scored, label, "model", "popularity")
 
     return {
         "cut": str(cutoff.date()),
@@ -234,6 +239,12 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         "semver": round(sem["pr_auc"], 4),
         "lift_vs_pop": round(m["pr_auc"] / pop["pr_auc"], 2)
         if pop["pr_auc"] else float("nan"),
+        "lift_lo": round(ci["lift"][0], 2),
+        "lift_hi": round(ci["lift"][1], 2),
+        "pr_auc_lo": round(ci["pr_auc"][0], 4),
+        "pr_auc_hi": round(ci["pr_auc"][1], 4),
+        "test_changes": len(test.drop_duplicates(GROUP + ["symbol"])),
+        "test_upgrades": ci["upgrades"],
         "beats_pop": bool(m["pr_auc"] > pop["pr_auc"]),
         "beats_semver": bool(m["pr_auc"] > sem["pr_auc"]),
         "skipped": False,
@@ -334,6 +345,13 @@ def report(t: pd.DataFrame, label: str) -> None:
 
     cols = ["cut", "test_rows", "test_pos", "floor", "trees", "rankable10",
             "pr_auc", "popularity", "lift_vs_pop", "p_at_10", "ndcg_20"]
+    # Each cut's lift with its own 95% interval (F11), where the file has
+    # them; a sweep from before item 5 does not.
+    has_ci = "lift_lo" in t and t["lift_lo"].notna().all()
+    if has_ci:
+        t["lift_95"] = [f"{lo:.2f}-{hi:.2f}"
+                        for lo, hi in zip(t["lift_lo"], t["lift_hi"])]
+        cols.insert(cols.index("lift_vs_pop") + 1, "lift_95")
     if "ndcg_20_graded" in t and t["ndcg_20_graded"].notna().any():
         cols.append("ndcg_20_graded")
     # A skipped row has no tree count, which turns the column into floats
@@ -357,6 +375,10 @@ def report(t: pd.DataFrame, label: str) -> None:
     gate = int(t["beats_semver"].sum())
     n = len(t)
     print(f"\n  beats popularity at {wins}/{n} cut dates")
+    if has_ci:
+        clear = int((t["lift_lo"].astype(float) > 1).sum())
+        print(f"  and by more than its own 95% interval (lower end above "
+              f"1.0x) at {clear}/{n}")
     print(f"  beats semver (the kill-date gate) at {gate}/{n}")
 
     if wins == n:
