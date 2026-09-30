@@ -2615,6 +2615,8 @@ version strings more than the model was.
 before anything else; delete the feature. One filter line.
 
 **F2. "Impact" means "one of 1,500 packages imports it."**
+*[Built 30 Sep as `--relevance graded`; the rule that decides whether it
+ships was fixed before it was run on real data (§25).]*
 `user_count` among the 859 positives: 55% have exactly 1 user, 68% have
 ≤ 2, only 9 rows (1%) exceed 50. The median "high-impact" change has one
 user. Binarising at `user_count > 0` discards the ordering signal that
@@ -2887,6 +2889,8 @@ Each of the first four both fixes a defect AND raises the headline.
    popularity FELL (median 3.22x → 2.38x), all of it F1's doing; F5 alone
    is close to neutral. The [better ×2] did not replicate.
 3. F2 — graded relevance. Re-run.
+   **Built 30 Sep; the rule was fixed before the run (§25).** Result
+   pending.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
 6. F3 — evaluate the alias label; pick one.
@@ -3508,3 +3512,116 @@ The holdout can measure it: 263 positives, 19 upgrades rankable at 10 and
   `label_alias` that count is alias_user_count, the one the label is
   built from. It changes what the ranker trains on, not the rows, so it
   is judged at these same dates.
+
+## 25. Item 3: graded relevance (F2), the rule fixed before the run (30 Sep)
+
+Written and committed before any graded model was fitted on the real
+data. The only graded fits so far are on the synthetic fixtures the tests
+build.
+
+### 25.1 What changes, and what does not
+
+- `--relevance graded` (train.py, stability.py, final_eval.py, ablate.py)
+  changes what lambdarank is taught. `binary`: every positive is worth
+  the same, so one package using a change counts as much as forty.
+  `graded`: a positive gets a grade by how many packages use it, read
+  from the count its label is built from (`alias_user_count` for
+  `label_alias`).
+
+  | packages using the change | grade | gain |
+  |---|---|---|
+  | none (a negative) | 0 | 0 |
+  | 1 | 1 | 1 |
+  | 2 to 6 | 2 | 3 |
+  | 7 to 19 | 3 | 7 |
+  | 20 or more | 4 | 15 |
+
+  The grade is ceil(ln(1 + n)), a log scale because one user against
+  five matters more to the ranking than 100 against 104. The gain is
+  2^grade − 1, LightGBM's default and the usual nDCG gain: when the
+  ranker decides what goes first, a change 20 or more packages use
+  counts 15 times one that a single package uses.
+- What stays: the rows, the 17 features, the baselines, the CV scheme
+  and its 20-tree clamp (F7), and the 0/1 label. The label still decides
+  which rows are positive, the skip gates, PR-AUC, precision@10 and
+  nDCG@20, so binary and graded sit the same exams. Under graded, each
+  CV fold stops on graded nDCG@10, the target it is fitting.
+- `binary` stays the default until the rule below says otherwise
+  (`SHIPPED_RELEVANCE` in train.py, which all four scripts read). With
+  `binary`, every output is what it was before item 3, checked on the
+  test fixture against the pushed code: the same stability numbers, the
+  same ranker.txt byte for byte, the same ablation table and the same
+  holdout ledger row. What is added: two columns in the stability file
+  (`relevance`, and the measure below), `relevance=binary` in
+  model_run's notes, and a few printed lines.
+- A graded model is written as its own model_run version,
+  `lambdarank-label_alias-graded`, so loading it never overwrites the
+  binary row. train.py quotes a stability range only from a sweep whose
+  models were taught the same way (each row now says its relevance).
+- One new measure: **nDCG@20 with graded gains**. The same upgrades as
+  nDCG@20 (a positive, and more than 20 changes), with each change's
+  gain 1, 3, 7 or 15 instead of 1. Plain nDCG@20 cannot see the order
+  among positives: "the change 25 packages use, then the one a single
+  package uses" and the reverse score the same. This is what graded
+  training aims at. stability.py records it for every model, binary or
+  graded (`ndcg_20_graded`), and train.py and final_eval.py print it.
+- Tested by `scripts/test_relevance.py` (seven cases, on the synthetic
+  fixture) and a sixth case in `test_stability.py`. Among them: every fit
+  each script makes under `graded` is watched at LightGBM itself, and the
+  rule is tested at each of its edges. Every guard was also broken on
+  purpose, one at a time, 21 breaks in all: the refit, the CV folds, the
+  validation rows, the early check, the grade edges, each script's
+  pass-through under both stopping rules, the row stamp, the version
+  name, the sweep file name, the metric, and both of the rule's
+  thresholds. Each break turned at least one check to FAIL.
+
+### 25.2 How it is judged
+
+`scripts/item3_relevance.py` fits both on `label_alias` at the seven cut
+dates of §23.5, where §24 measured the model that ships, and compares
+them date by date. It checks itself first: the binary run must reproduce
+§24.2's `label_alias` column (4.42, 4.86, 5.70, 4.02, 3.01, 4.08,
+2.30x) exactly, or it prints no verdict.
+
+### 25.3 The rule
+
+Graded ships only if both of these hold:
+
+1. **It loses nothing that matters.** Its worst lift over popularity
+   across the seven dates is at most 0.25x below binary's (at least
+   2.05x, if binary reproduces 2.30x), and it beats popularity at all
+   seven.
+2. **It wins clearly somewhere.** Its worst lift is more than 0.25x
+   above binary's (above 2.55x), or its nDCG@20 with graded gains is
+   higher than binary's at 6 or more of the 7 dates (a tie, to four
+   places, is not higher).
+
+Otherwise binary stays, and graded remains an option in the code.
+
+Why these numbers:
+
+- 0.25x is §24.1's margin: two worst cases closer than that are more
+  than this sweep can tell apart. Graded may cost that much on the ship
+  metric and still ship, because the ship metric cannot see what graded
+  is for. Losing more than that is a real loss.
+- 6 of 7: a coin would come up 5 or more of 7 about one time in four,
+  and 6 or more about one time in sixteen. The seven dates share most of
+  their data, so that is a floor on how often chance could do it, not a
+  p-value.
+- precision@10 and plain nDCG@20 are printed beside the rule and are not
+  in it. Graded training moves weight from "any positive above the
+  negatives" to "the widest positives first", so those two can move
+  either way for reasons that are the point of the change. The ship
+  metric in part 1 already guards the overall ranking.
+
+### 25.4 What each outcome leads to
+
+- **Graded ships.** `SHIPPED_RELEVANCE` becomes `"graded"`, one line.
+  Then `stability.py --relevance graded` for the range train.py quotes,
+  and train.py for the graded ranker.txt. The report quotes nDCG@20 with
+  graded gains beside the three headline numbers.
+- **Binary stays.** Nothing ships. The option and the new measure stay
+  in the code.
+
+Either way the table and the verdict go into §25.5, and item 4 (F9 and
+F10, the two findings rewritten) comes next.
