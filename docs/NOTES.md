@@ -2692,6 +2692,8 @@ evidence.
 ### 21.3 Statistical honesty
 
 **F9. Finding 1 (deprecation) is underpowered, not "no signal."**
+*[Item 4, 30 Sep: re-measured under wording rules fixed before the run
+(§26.1).]*
 278 deprecated rows, 10 positives. 95% CI on 3.60% is [1.4%, 5.8%]; the
 comparison 3.69% sits inside it. The data cannot distinguish "no effect"
 from a ±2-point effect either way.
@@ -2701,6 +2703,8 @@ points." A larger deprecated sample (a wider version window) is the only
 way to actually answer the book's question.
 
 **F10. Finding 2's U-shape is mostly a version-string artifact.**
+*[Item 4, 30 Sep: re-measured under wording rules fixed before the run
+(§26.1).]*
 With version strings: 2.58 → 8.21 → 8.69 → 0.25%. Without:
 2.30 → 3.92 → 2.76 → 0.03%. The middle peak ("3× more likely") largely
 evaporates; the feature keeps real gain (6.3% → 5.4%). What survives
@@ -2895,6 +2899,8 @@ Each of the first four both fixes a defect AND raises the headline.
    before the run: graded won nDCG@20 with graded gains at 3 of 7
    dates, and its worst case rose by exactly the 0.25x tie margin.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
+   **Wording rules fixed 30 Sep, before the run (§26.1).** Result
+   pending.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
 6. F3 — evaluate the alias label; pick one.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
@@ -3697,3 +3703,66 @@ What this says:
   package against a handful", and there are 30 grade-4 positives in all
   of dev. How widely a change is used is a property of downstream code,
   which none of the 17 features describes.
+
+## 26. Item 4: the report's two findings, measured again (F9, F10)
+
+### 26.1 What is measured, and the wording rules, fixed before the run
+
+Written and committed before `scripts/item4_findings.py` was first run
+on the real data.
+
+The two findings the report and deck carry are §20.2's:
+
+- **Deprecation.** A symbol deprecated before it was removed is used
+  downstream 3.60% of the time, against 3.69% for the rest, over 278
+  rows: "zero signal".
+- **Earlier breaks in the module**, U-shaped: 2.58% with none, 8.21% and
+  8.69% with 1–5 and 6–20, 0.25% with 21 or more. "Middle buckets are
+  3.2–3.4x the quiet bucket."
+
+The audit found both saying more than the data can. F9: 278 rows with
+10 positives cannot tell "no effect" from two points either way. F10:
+the middle peak was mostly version strings; without them the middle
+buckets were 3.92% and 2.76% against 2.30%, and what held was the
+collapse at 21+.
+
+How they are measured now:
+
+- **Dev rows only** (`features.csv`). Version strings are already gone
+  (F1), and the holdout stays sealed: these are descriptive numbers, but
+  they read labels, so the holdout's labels stay out of them too.
+- **Once per change**, a symbol in one upgrade, not once per row. A
+  symbol's parameter rows share its label, so counting rows counts one
+  observation several times (F12).
+- **95% intervals from 2,000 resamples of whole upgrades.** The changes
+  in one release tend to be used or ignored together, so the upgrade is
+  the unit that can be treated as independent. Resampling changes would
+  give intervals narrower than the data supports.
+- **Both labels**: `label_alias`, which ships and which the rewritten
+  findings quote, and `label`, which §19 and §20 used, so each old
+  number has a like-for-like successor.
+- §19.2's buckets: 0 | 1–5 | 6–20 | 21+. The gain shares come from the
+  shipped model's `artifacts/importance.csv`, checked against
+  `metrics.json` to be `lambdarank-label_alias`.
+
+The wording rules:
+
+1. **Deprecation.** If the interval for the difference (deprecated minus
+   the rest) contains 0, the finding is "no detectable difference",
+   stated with the range of differences the data cannot rule out. If it
+   excludes 0, the finding says which way and by how much, with the
+   interval.
+2. **The middle peak** ("moderate churn raises the rate") is claimed
+   only if 1–5 or 6–20 is above the 0 bucket with an interval that
+   excludes 0.
+3. **The collapse** ("modules with 21+ earlier breaks are almost never
+   used") is claimed only if 21+ is below all other changes with an
+   interval that excludes 0.
+
+The report and deck say only what these rules allow, with each rate's
+interval and its count of changes beside it.
+
+Tested by `scripts/test_findings.py`, five cases, among them that the
+intervals come out wide when one release decides a rate, against a
+control that resamples changes. Each guard in the script was broken on
+purpose, eight breaks in all, and each turned a check to FAIL.
