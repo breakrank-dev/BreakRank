@@ -111,7 +111,7 @@ PER_CHANGE = ["kind", "bump", "is_private", "is_dunder", "in_dunder_all",
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Feature ablations.")
-    ap.add_argument("--label", default="label",
+    ap.add_argument("--label", default="label_alias",
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank")
     ap.add_argument("--trees", type=int, default=None,

@@ -2,8 +2,10 @@
 The ranker. Everything before this was making the data honest.
 
     python ml/model/train.py
-    python ml/model/train.py --label label_scoped
+    python ml/model/train.py --label label
     python ml/model/train.py --objective binary
+
+The default label is label_alias, chosen 30 Sep by the rule in NOTES §24.
 
 Reads  data/features.csv         (must have a `split` column)
 Writes artifacts/ranker.txt      the model
@@ -208,7 +210,7 @@ def fit_cv(full_train: pd.DataFrame, feats: list[str], label: str,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the BreakRank ranker.")
-    ap.add_argument("--label", default="label",
+    ap.add_argument("--label", default="label_alias",
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--objective", default="lambdarank",
                     choices=["lambdarank", "binary"])

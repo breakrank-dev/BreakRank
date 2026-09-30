@@ -487,13 +487,15 @@ def case_serving(tmp: pathlib.Path) -> None:
           "NEWEST RELEASES")
     # A stability file from before the freeze: no holdout_from stamp. Its
     # late cuts scored holdout rows, so its range must not reach model_run.
+    # The file is `label`'s, so train.py is told the label rather than
+    # left to its default (label_alias since 30 Sep).
     stab = tmp / "data" / "stability_label_cv.csv"
     sweep = pd.DataFrame({"cut": ["2026-05-01", "2026-06-01"],
                           "skipped": [False, False],
                           "lift_vs_pop": [1.5, 1.7],
                           "beats_pop": [True, True]})
     sweep.to_csv(stab, index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--label", "label")
     check("train.py runs on the frozen features.csv", code, 0)
     if code:
         print(out[-2000:])
@@ -507,7 +509,7 @@ def case_serving(tmp: pathlib.Path) -> None:
     # fails if train.py simply stopped quoting stability files at all.
     sweep.assign(holdout_from=str(HOLDOUT_START.date())).to_csv(
         stab, index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--label", "label")
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",
                          typ="series")["notes"]
     check("a stamped stability file is quoted as before",

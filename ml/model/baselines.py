@@ -2,7 +2,7 @@
 The bar the model has to clear. Run this BEFORE training anything.
 
     python ml/model/baselines.py
-    python ml/model/baselines.py --label label_scoped
+    python ml/model/baselines.py --label label
 
 A learning-to-rank model that cannot beat "sort by download count" is not
 a contribution, it is a slower way to sort by download count — and you
@@ -86,9 +86,10 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score the dumb baselines.")
-    ap.add_argument("--label", default="label",
+    ap.add_argument("--label", default="label_alias",
                     choices=["label", "label_scoped", "label_alias"],
-                    help="which label to score against")
+                    help="which label to score against (label_alias "
+                         "ships, NOTES §24)")
     args = ap.parse_args()
 
     if not FEATURES.exists():
