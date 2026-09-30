@@ -2625,6 +2625,8 @@ binary label for PR-AUC. This is the single biggest modelling change
 available and it is ~10 lines in `train.py`.
 
 **F3. The usage join is sparse and its failure rate is unmeasured.**
+*[Done 30 Sep, ahead of items 3–5: `label_alias` ships, by a rule fixed
+before the run (§24).]*
 Only 430 of 12,489 distinct changed symbols (3.4%) appear in the usage
 index at all. Some of that is genuine (internal symbols), but
 `ablate.py`'s own docstring warns the strict join fails on deep
@@ -2888,6 +2890,8 @@ Each of the first four both fixes a defect AND raises the headline.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
 6. F3 — evaluate the alias label; pick one.
+   **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
+   ships: worst-case lift 2.30x against `label`'s 1.91x.
 7. F7 + F8 — tune the ensemble; add the linear baseline.
 8. F16 + F17 — collapse echoes, flag prereleases; re-run.
 9. F19 + F18 — retry the 149; chase numpy.
@@ -3403,3 +3407,104 @@ item 4 rewrites the findings against.
   kind_prior 0.075 (best baseline), popularity 0.068, precision@10 0.150
   over 12 upgrades.
 - `artifacts/ranker.txt` is this model: 17 features.
+
+## 24. Item 6, moved up: `label_alias` ships (29–30 Sep)
+
+Taken ahead of items 3–5 for the reason §23.3 gave. After F1, `label` is
+at the edge of measurable (the single split's nDCG@20 rests on 8
+upgrades), and items 3 and 5 produce numbers for one label; done on
+`label` first, they would have had to be done again.
+
+### 24.1 The rule, fixed before the run
+
+- The contest is `label` against `label_alias`, as F3 frames it.
+  `label_scoped` is measured and reported but cannot ship: a large share
+  of its extra positives have no import statement behind them (§9.3), and
+  its labels can be flipped by holdout rows (KNOWN CROSSINGS in
+  ml/holdout.py).
+- The label with the better worst-case lift over popularity (lift_MIN),
+  on the cut dates both are measured on, ships. That is the rule §1 and
+  §15.1 settled; lift is each label's model over the same label's
+  popularity baseline, because raw PR-AUC is not comparable across labels
+  (each one's floor is its own positive rate).
+- If the two worst cases are within 0.25x, this sweep cannot tell them
+  apart, and `label_alias` ships: its positives are import paths griffe
+  can show, and it has more of them to measure with.
+
+### 24.2 The result
+
+`stability.py --all-labels`, the seven cut dates of §23.5. No label was
+skipped at any cut, so all three sat the same seven exams.
+
+| cut | `label` | `label_scoped` | `label_alias` |
+|---|---|---|---|
+| 2025-08-07 | 2.29x | 4.00x | 4.42x |
+| 2025-10-06 | 2.79x | 4.71x | 4.86x |
+| 2025-12-03 | 2.99x | 3.79x | 5.70x |
+| 2026-01-18 | 2.47x | 4.76x | 4.02x |
+| 2026-03-02 | 1.91x | 2.90x | 3.01x |
+| 2026-04-02 | 1.95x | 2.34x | 4.08x |
+| 2026-05-04 | 3.01x | 2.13x | 2.30x |
+| **worst** | **1.91x** | 2.13x | **2.30x** |
+| median | 2.47x | 3.79x | 4.08x |
+| test positives per cut | 50–146 | 90–355 | 139–310 |
+| rankable at 10 per cut | 10–26 | 12–31 | 15–35 |
+
+**`label_alias` ships.** Its worst case beats `label`'s by 0.39x, more
+than the 0.25x margin, so it wins by the rule itself and not the
+tie-break. Every label beats popularity at 7/7 and semver at 7/7. The
+script's "median lift does NOT separate these" concerns `label_scoped`
+and `label_alias` (3.79x against 4.08x); `label_scoped` was out before
+the run, and its worst case is lower anyway.
+
+### 24.3 The shipped numbers
+
+The sweep, `label_alias`: beats popularity 7/7 and semver 7/7, lift
+median **4.08x (2.30–5.70x)**, PR-AUC median 0.234 (0.170–0.283), floor
+0.028–0.086.
+
+The single split at 5 Apr (train 14,673 rows, 3.11% positive; test 1,955,
+7.88%):
+
+| | PR-AUC | precision@10 (17 upgrades) | nDCG@20 (11 upgrades) |
+|---|---|---|---|
+| **model** | **0.232** | **0.253** | **0.550** |
+| kind_prior (best baseline) | 0.122 | 0.224 | 0.436 |
+| popularity | 0.112 | 0.176 | 0.255 |
+| semver (kill-date gate) | 0.090 | 0.176 | 0.255 |
+| floor (positive rate) | 0.079 | | |
+
+1.9x the best baseline, 2.1x popularity, 2.9x the floor. The single
+split's 2.08x over popularity is **below every cut of the sweep** (the
+lowest is 2.30x): one more window, and the reason the sweep's range, not
+a single split, is what gets quoted.
+
+The model: CV folds chose [2, 46, 10] trees, so the 20 is still the
+clamp (F7). public_depth leads the gain table at 18.3%, reachability
+again (§9.4), then release_size 17.2%, name_length 17.0%, package_rank
+10.5% and kind 9.6%; inherited_by and bump at zero.
+
+The holdout can measure it: 263 positives, 19 upgrades rankable at 10 and
+13 at 20 as built (§23.1).
+
+### 24.4 What changed
+
+- train.py, baselines.py and ablate.py default to `label_alias`, as
+  stability.py, final_eval.py, label_blindspot.py and fold_effect.py
+  already did. item2_effects.py keeps `label`: the result it re-measures
+  was about `label`. test_holdout.py now names `label` for the one check
+  whose fixture file is `label`'s, so no test depends on a default.
+- `artifacts/ranker.txt` is the `label_alias` model; metrics.json (local)
+  reads `lambdarank-label_alias`.
+- `label` stays everywhere as a column and an option, and §23 stays as
+  written: it is the record of what the version strings did.
+
+### 24.5 The starting point for item 3
+
+- The sweep above for `label_alias`, on the dates of §23.5: median 4.08x,
+  2.30–5.70x, 7/7.
+- The single split above.
+- Item 3 (F2) grades relevance by how many packages use a change. For
+  `label_alias` that count is alias_user_count, the one the label is
+  built from. It changes what the ranker trains on, not the rows, so it
+  is judged at these same dates.
