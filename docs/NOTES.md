@@ -2733,6 +2733,7 @@ never used downstream," not "moderate churn triples risk." Re-measure
 after F1.
 
 **F11. No confidence intervals anywhere.**
+*[Item 5, 30 Sep: built (§27.1); the numbers come from the next run.]*
 Every number in the deck and report is a point estimate on one cut or a
 median of six.
 *Fix:* bootstrap over version pairs (resample groups, not rows — see
@@ -2740,6 +2741,8 @@ F12) for PR-AUC and lift; report 95% intervals. ~30 lines in
 `stability.py`. This would have caught F9 automatically.
 
 **F12. Row counts overstate the sample; rows are not independent.**
+*[Item 5, 30 Sep: every script now says its changes and upgrades beside
+its rows, and every interval resamples upgrades (§27.1).]*
 23,268 rows collapse to 15,139 distinct (pair, symbol) changes. 8,129
 rows are parameter-level entries sharing a symbol-level label (e.g.
 `redis.client.Redis.__init__` with 49 "moved" parameters → 49 rows, one
@@ -2922,6 +2925,7 @@ Each of the first four both fixes a defect AND raises the headline.
    to a small rise at 1–5 and the collapse at 21+. The report and deck
    wording is §26.4.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
+   **Built 30 Sep (§27.1).** Numbers pending.
 6. F3 — evaluate the alias label; pick one.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
    ships: worst-case lift 2.30x against `label`'s 1.91x.
@@ -3893,3 +3897,50 @@ For a slide:
   against 4.5%; +5.8 points (95% CI +0.6 to +14.3), 215 changes.
 - Modules with 21+ earlier breaks: 1 of 494 changes used (0.2%).
   1–5 earlier breaks: 1.65x the quiet modules (1.10–2.45).
+
+## 27. Item 5: intervals on the headline numbers, and changes counted (F11, F12)
+
+### 27.1 What is added, and how it is read, fixed before the run
+
+Written and committed before the scripts below were run on the real data
+with intervals.
+
+- **Every headline number gets a 95% interval**: PR-AUC for the model
+  and for popularity, the lift over popularity, precision@10 and
+  nDCG@20. From 2,000 resamples of the test half's upgrades (version
+  pairs), every row of an upgrade kept together (`metrics.intervals`).
+- **What an interval is here**: how far the number would move on
+  another draw of upgrades to test on, with the models held fixed. It is
+  not how far it moves with another training set, and not the spread
+  across cut dates, which stability.py's range already shows. The two
+  are different questions, and the report names which it quotes.
+- **Upgrades, not rows** (F12). A symbol's parameter rows share one
+  label, and a release's changes tend to be used or ignored together,
+  so resampling rows would make every interval narrower than the data
+  supports. On the test fixture, with how well the model does decided
+  upgrade by upgrade, resampling rows gave an interval a third as wide.
+- **Where**: train.py prints them for the single split and writes
+  `pr_auc_95` and `lift_95` into model_run's notes. stability.py writes
+  each cut's `lift_lo`, `lift_hi` and PR-AUC interval, and counts the
+  cuts where the lift's interval clears 1.0x; train.py quotes that
+  count. final_eval.py prints them for the holdout and puts them in its
+  NOTES block, not in the ledger, whose columns stay as they are.
+- **Counts** (F12). train.py, stability.py and final_eval.py now say how
+  many distinct changes (a symbol in one upgrade) and upgrades their rows
+  are. Today's dev set: 16,628 rows, 9,946 changes, 977 upgrades
+  (§26.2).
+- **The reading rule.** "Beats popularity" at a cut stays what it was,
+  the point comparison. "Clearly beats popularity" is said only where
+  the lift's 95% interval has its lower end above 1.0x, and the report
+  quotes that count beside the other.
+- **Nothing a model is trained on changes.** Checked on the test fixture
+  against the pushed code: the same ranker.txt byte for byte, the same
+  stability numbers in every column the file already had, the same
+  PR-AUC, precision@10 and nDCG@20. What is added: six columns in the
+  stability file, five fields in model_run's notes and the count of
+  cuts clear of 1.0x in its quoted range, and printed lines.
+- Tested by `scripts/test_intervals.py`, six cases. Among them: one
+  resample is recomputed by hand for all five numbers, and "clear of
+  1.0x" is shown to read each cut's lower bound and not its lift. Every
+  guard was broken on purpose, ten breaks in all, and each turned a
+  check to FAIL.
