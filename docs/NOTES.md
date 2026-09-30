@@ -2615,8 +2615,10 @@ version strings more than the model was.
 before anything else; delete the feature. One filter line.
 
 **F2. "Impact" means "one of 1,500 packages imports it."**
-*[Built 30 Sep as `--relevance graded`; the rule that decides whether it
-ships was fixed before it was run on real data (§25).]*
+*[Done 30 Sep, by a rule fixed before the run (§25). Binary stays:
+graded relevance beat binary on its own target measure at 3 of 7 dates,
+and raised the worst-case lift by exactly the margin the rule calls a
+tie (§25.5). Kept as the option `--relevance graded`.]*
 `user_count` among the 859 positives: 55% have exactly 1 user, 68% have
 ≤ 2, only 9 rows (1%) exceed 50. The median "high-impact" change has one
 user. Binarising at `user_count > 0` discards the ordering signal that
@@ -2889,8 +2891,9 @@ Each of the first four both fixes a defect AND raises the headline.
    popularity FELL (median 3.22x → 2.38x), all of it F1's doing; F5 alone
    is close to neutral. The [better ×2] did not replicate.
 3. F2 — graded relevance. Re-run.
-   **Built 30 Sep; the rule was fixed before the run (§25).** Result
-   pending.
+   **Done 30 Sep; binary stays (§25.5).** Judged by a rule pushed
+   before the run: graded won nDCG@20 with graded gains at 3 of 7
+   dates, and its worst case rose by exactly the 0.25x tie margin.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
 6. F3 — evaluate the alias label; pick one.
@@ -3513,11 +3516,12 @@ The holdout can measure it: 263 positives, 19 upgrades rankable at 10 and
   built from. It changes what the ranker trains on, not the rows, so it
   is judged at these same dates.
 
-## 25. Item 3: graded relevance (F2), the rule fixed before the run (30 Sep)
+## 25. Item 3: graded relevance (F2). Binary stays, by a rule fixed before the run (30 Sep)
 
-Written and committed before any graded model was fitted on the real
-data. The only graded fits so far are on the synthetic fixtures the tests
-build.
+§25.1–25.4 were written and committed before any graded model was fitted
+on the real data (38ad369, pushed 30 Sep at 20:11, before the run). The
+only graded fits before then were on the synthetic fixtures the tests
+build. The result is §25.5.
 
 ### 25.1 What changes, and what does not
 
@@ -3625,3 +3629,71 @@ Why these numbers:
 
 Either way the table and the verdict go into §25.5, and item 4 (F9 and
 F10, the two findings rewritten) comes next.
+
+### 25.5 The result: binary stays
+
+`scripts/item3_relevance.py`, run 30 Sep straight after the rule was
+pushed. Self-check passed: the binary sweep reproduced §24.2 lift for
+lift.
+
+The grades, over the 611 dev positives under `label_alias`:
+
+| packages using the change | grade | positives | share |
+|---|---|---|---|
+| 1 | 1 | 272 | 44.5% |
+| 2 to 6 | 2 | 262 | 42.9% |
+| 7 to 19 | 3 | 47 | 7.7% |
+| 20 or more | 4 | 30 | 4.9% |
+
+At the seven dates of §23.5:
+
+| cut | lift, binary | lift, graded | nDCG@20 graded gains, binary | graded | change |
+|---|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 4.01x | 0.5684 | 0.4992 | −0.0692 |
+| 2025-10-06 | 4.86x | 5.64x | 0.5384 | 0.5483 | +0.0099 |
+| 2025-12-03 | 5.70x | 6.01x | 0.5084 | 0.5064 | −0.0020 |
+| 2026-01-18 | 4.02x | 5.03x | 0.5110 | 0.4776 | −0.0334 |
+| 2026-03-02 | 3.01x | 2.95x | 0.4888 | 0.5336 | +0.0448 |
+| 2026-04-02 | 4.08x | 3.91x | 0.5839 | 0.5290 | −0.0549 |
+| 2026-05-04 | 2.30x | 2.55x | 0.5730 | 0.6242 | +0.0512 |
+| **worst** | **2.30x** | **2.55x** | | | |
+| median | 4.08x | 4.01x | 0.5384 | 0.5290 | |
+
+Medians of the other numbers: PR-AUC 0.2344 binary, 0.2491 graded;
+precision@10 0.2800 and 0.2686; nDCG@20 0.5592 and 0.5630. Trees:
+graded's CV chose 49 and 40 at the two earliest dates, where binary sat
+at the 20-tree clamp; at the other five, both chose between 20 and 36.
+
+The rule, part by part:
+
+1. Loses nothing that matters: **yes**. Worst lift 2.55x, above the
+   2.05x floor, and it beats popularity at 7/7.
+2. Wins clearly somewhere: **no**. Its worst lift is 2.55x against a bar
+   of more than 2.55x: exactly the 0.25x margin, which the rule counts
+   as a tie, because §24.1 set 0.25x as the gap this sweep cannot
+   resolve. Its nDCG@20 with graded gains is higher at 3 of 7 dates,
+   and its median on that measure is lower, 0.5290 against 0.5384.
+
+**Binary stays.** `SHIPPED_RELEVANCE` is unchanged, so is ranker.txt, and
+the numbers of §24.3 are still the shipped ones. `--relevance graded`
+stays in the code as an option, and every sweep keeps recording
+`ndcg_20_graded`.
+
+What this says:
+
+- Graded training did not do what it is for. On the one measure it aims
+  at, it won 3 dates and lost 4, by as much as 0.07. On lift it won 4 and
+  lost 3. Two coin-flip patterns are not an improvement.
+- The worst case landed exactly on the line. Had the rule been written
+  after the run, "graded raised the worst case by 0.25x" would have
+  been an easy sentence to write. It was written before, and it says
+  that is a tie.
+- F2 called graded relevance "the single biggest modelling change
+  available". It is the second audit expectation in a row that did not
+  replicate on the frozen dev set, after item 2's [better ×2] (§23).
+  Audit predictions made on §20's setup are hypotheses, not results.
+- Possible reasons, not tested: 87% of positives are grade 1 or 2, so
+  most of the time the only thing graded training can learn is "one
+  package against a handful", and there are 30 grade-4 positives in all
+  of dev. How widely a change is used is a property of downstream code,
+  which none of the 17 features describes.
