@@ -2404,6 +2404,12 @@ the semver kill-date gate at 7 of 7. That is the robust claim.
 
 ### 19.1 `was_deprecated_before` — the book's "single strongest feature" — is a dud
 
+*[Superseded 30 Sep by §26. Counted once per change on today's dev rows,
+under the label that ships, deprecated changes are used downstream MORE
+often: 10.2% against 4.5%, +5.8 points (+0.6 to +14.3). Under the strict
+label used here there is still no detectable difference, which says the
+sample is small, not that the effect is zero (F9).]*
+
 | | |
 |---|---|
 | rows where True | 199 of 17,802 (1.1%) |
@@ -2432,6 +2438,10 @@ tested honestly, and found to contribute nothing. That is what testing a
 hypothesis looks like.
 
 ### 19.2 `prior_breaks_in_module` — the one nobody bet on — works, and non-monotonically
+
+*[Superseded 30 Sep by §26. Per change, the rise is at 1–5 earlier
+breaks only, 1.65x the quiet modules (1.10–2.45); 6–20 shows no
+detectable rise; the collapse at 21+ holds, 1 of 494 changes used.]*
 
 Gain share 4.2%, 8th of 18. Modest, and real. The reason it earns a slot
 is the shape of it:
@@ -2546,6 +2556,12 @@ temporal split concentrates positives unevenly — both are reported,
 neither is "the" base rate without saying which).
 
 ### 20.2 Both findings hold, and sharpen
+
+*[Superseded 30 Sep by §26, and the report and deck take §26.4's wording
+in place of this section's. Neither finding held as written here: the
+deprecation comparison ran the other way once version strings left the
+"rest", and the middle peak shrank to 1.65x at 1–5 once each change was
+counted once.]*
 
 `was_deprecated_before`: 278 / 23,268 rows carry the marker. Used
 downstream 3.60% when deprecated vs 3.69% when not — now marginally
@@ -2692,8 +2708,9 @@ evidence.
 ### 21.3 Statistical honesty
 
 **F9. Finding 1 (deprecation) is underpowered, not "no signal."**
-*[Item 4, 30 Sep: re-measured under wording rules fixed before the run
-(§26.1).]*
+*[Done 30 Sep (§26). Under `label_alias` the difference is detectable
+and runs the other way: deprecated changes are used more often, +5.8
+points (+0.6 to +14.3), 215 changes. Under `label`, not detectable.]*
 278 deprecated rows, 10 positives. 95% CI on 3.60% is [1.4%, 5.8%]; the
 comparison 3.69% sits inside it. The data cannot distinguish "no effect"
 from a ±2-point effect either way.
@@ -2703,8 +2720,9 @@ points." A larger deprecated sample (a wider version window) is the only
 way to actually answer the book's question.
 
 **F10. Finding 2's U-shape is mostly a version-string artifact.**
-*[Item 4, 30 Sep: re-measured under wording rules fixed before the run
-(§26.1).]*
+*[Done 30 Sep (§26). Per change, the rise is at 1–5 earlier breaks only,
+1.65x (1.10–2.45); 6–20 shows none; the collapse at 21+ holds, 1 of 494
+changes used.]*
 With version strings: 2.58 → 8.21 → 8.69 → 0.25%. Without:
 2.30 → 3.92 → 2.76 → 0.03%. The middle peak ("3× more likely") largely
 evaporates; the feature keeps real gain (6.3% → 5.4%). What survives
@@ -2899,8 +2917,10 @@ Each of the first four both fixes a defect AND raises the headline.
    before the run: graded won nDCG@20 with graded gains at 3 of 7
    dates, and its worst case rose by exactly the 0.25x tie margin.
 4. F9 + F10 — rewrite both findings honestly against the new numbers.
-   **Wording rules fixed 30 Sep, before the run (§26.1).** Result
-   pending.
+   **Measured 30 Sep under rules fixed before the run (§26).**
+   Deprecation turned round under `label_alias`; the U-shape comes down
+   to a small rise at 1–5 and the collapse at 21+. The report and deck
+   wording is §26.4.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
 6. F3 — evaluate the alias label; pick one.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
@@ -3766,3 +3786,110 @@ Tested by `scripts/test_findings.py`, five cases, among them that the
 intervals come out wide when one release decides a rate, against a
 control that resamples changes. Each guard in the script was broken on
 purpose, eight breaks in all, and each turned a check to FAIL.
+
+### 26.2 The result
+
+`scripts/item4_findings.py`, run 30 Sep straight after the rules were
+pushed (2ddc8ee). The 16,628 dev rows are 9,946 changes in 977 upgrades.
+
+**Deprecated before it was removed**
+
+| | changes | used | rate | 95% interval |
+|---|---|---|---|---|
+| `label_alias`, deprecated | 215 | 22 | 10.23% | 5.04–18.98% |
+| `label_alias`, not deprecated | 9,731 | 434 | 4.46% | 3.53–5.56% |
+| **difference** | | | **+5.77 points** | **+0.58 to +14.33** |
+| `label`, deprecated | 215 | 8 | 3.72% | 0.63–9.57% |
+| `label`, not deprecated | 9,731 | 287 | 2.95% | 2.20–3.87% |
+| difference | | | +0.77 points | −2.49 to +6.38 |
+
+Rule 1: under `label_alias` the interval excludes 0, so the finding
+says which way: deprecated changes are used downstream **more** often,
+not less. Under `label` there is no detectable difference.
+
+**Earlier breaks in the same module**, `label_alias`
+
+| earlier breaks | changes | used | rate | 95% interval | against 0 earlier breaks |
+|---|---|---|---|---|---|
+| 0 | 7,018 | 306 | 4.36% | 3.30–5.53% | |
+| 1–5 | 1,504 | 108 | 7.18% | 5.04–9.62% | 1.65x (1.10–2.45) |
+| 6–20 | 930 | 41 | 4.41% | 2.09–9.27% | 1.01x (0.45–2.21) |
+| 21+ | 494 | 1 | 0.20% | 0.00–1.14% | 0.05x (0.00–0.26) |
+
+Under `label`: 2.59%, then 5.19% (2.00x, 1.19–3.23), 3.66% (1.41x,
+0.58–3.32) and 0.20% (0.08x, 0.00–0.46).
+
+Rule 2, the middle peak: supported under both labels, by 1–5 alone.
+Rule 3, the collapse: supported under both. Under `label_alias`, 21+
+sits 4.61 points below all other changes (−5.74 to −3.44).
+
+Gain shares in the shipped model (`lambdarank-label_alias`):
+`was_deprecated_before` 0.1%, rank 14 of 17; `prior_breaks_in_module`
+5.0%, rank 8.
+
+### 26.3 What changed, and why
+
+**Deprecation turned round.** §19.1 and §20.2 called it a dud: 3.60%
+against 3.69%. Three things moved it.
+
+1. **Version strings.** §20.2's "not deprecated" group held the version
+   strings: 1,769 rows in that file, 21.65% positive, when everything
+   else was 2.21% (F1). That is what lifted it to 3.69%. Counted per row
+   today, without them, it is 3.58% under `label_alias` and 2.00% under
+   `label`.
+2. **The label.** 14 of the 22 used deprecated changes are found only
+   through an alias path (22 under `label_alias`, 8 under `label`).
+   Under the exact join they looked unused.
+3. **The counting.** Per change, with upgrades resampled, the interval
+   is as wide as 215 changes with 22 used can support. Its lower end,
+   +0.58 points, is close to 0. The direction is the finding; the size
+   is known only to lie somewhere between half a point and fourteen.
+
+A possible reason, not tested: maintainers deprecate what people use
+and simply delete what nobody does, so a deprecation marks a used API.
+
+The model gives the feature 0.1% of its gain. A difference in the data
+and a feature the model can use are different things: 215 of 9,946
+changes carry the flag (2.2%).
+
+**The U-shape mostly goes; the collapse holds.** The rise with moderate
+churn is at 1–5 earlier breaks only, 1.65x the quiet modules, not
+§20.2's 3.2–3.4x, and at 6–20 there is no detectable rise. Per row,
+6–20 reads 8.42%; per change, 4.41%: a few used symbols with many
+parameter rows made that bucket (F12). The collapse is the robust part:
+of 494 changes in modules with 21 or more earlier breaks, one is used.
+
+### 26.4 The two findings, as the report and deck should now say them
+
+The report and deck quote §20.2 today. These replace it, in
+`label_alias`'s numbers, per the rules of §26.1.
+
+**Finding 1, deprecation.**
+
+> A deprecation warning did not make the break safer. Under the label
+> BreakRank ships, breaking changes to symbols that had been deprecated
+> were used downstream more often than other breaking changes: 10.2% of
+> 215 deprecated changes (95% interval 5.0–19.0%) against 4.5% of 9,731
+> others (3.5–5.6%), a difference of +5.8 points (+0.6 to +14.3). The
+> interval is wide, so the size is uncertain; the direction is the
+> opposite of the expectation that a warning lets users migrate first.
+> Under the stricter exact-path label the difference is not detectable
+> (+0.8 points, −2.5 to +6.4). Each symbol counts once per upgrade, and
+> the intervals resample whole upgrades.
+
+**Finding 2, earlier breaks in the module.**
+
+> Breaking changes in modules that had already broken 21 or more times
+> are almost never used downstream: 1 of 494 (0.2%, 95% interval
+> 0.0–1.1%), against 4.4% (3.3–5.5%) in modules with no earlier breaks.
+> Modules that break this often are most likely being refactored
+> wholesale. Moderate churn raises the rate only a little: 7.2% with 1
+> to 5 earlier breaks, 1.65 times the quiet modules (1.10–2.45); with 6
+> to 20 there is no detectable difference.
+
+For a slide:
+
+- Deprecated before the break: used **more** downstream, not less. 10.2%
+  against 4.5%; +5.8 points (95% CI +0.6 to +14.3), 215 changes.
+- Modules with 21+ earlier breaks: 1 of 494 changes used (0.2%).
+  1–5 earlier breaks: 1.65x the quiet modules (1.10–2.45).
