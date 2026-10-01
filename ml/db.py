@@ -776,6 +776,38 @@ def write_all(conn, changes, usage, packages, caps, score_map,
     preds = [{"breakage_id": br_id[k], "model_version": run["version"],
               "score": float(s)}
              for k, s in score_map.items() if k in br_id]
+
+    # ONE VERSION, ONE MODEL'S SCORES. The insert below only reaches the
+    # rows this run scored, and until 1 Oct every other row kept whatever
+    # an earlier load had given it under the same version. Measured on
+    # Neon after the 1 Oct load: lambdarank-label_alias held 27,184
+    # scores, 21,498 of them from that run. The other 5,686 came from an
+    # earlier model, on rows the new one does not score, the version-
+    # string rows F1 took out of the model among them, and the site
+    # served them beside the new scores as if one model had ranked them
+    # all. Two models' scores are not on one scale.
+    #
+    # So this run's scores replace the version's, whole: the old ones are
+    # deleted and the new ones written in the same transaction, which a
+    # reader sees as one step, never a mix and never a moment with none.
+    # A run that would leave the version with no scores, or with under
+    # half as many as it had, stops before anything is written: that is a
+    # smaller dataset loaded under a name already serving the site, and it
+    # needs a name of its own.
+    before = conn.execute(text(
+        "SELECT count(*) FROM prediction WHERE model_version = :v"),
+        {"v": run["version"]}).scalar() or 0
+    if not preds:
+        sys.exit(f"No score matched a breakage row, so this load would leave "
+                 f"{run['version']} with none.\nNothing was written.")
+    if len(preds) < before / 2:
+        sys.exit(f"{run['version']} holds {before:,} scores, and this run has "
+                 f"{len(preds):,}, under half. Nothing was written.\nA smaller "
+                 "dataset under a name the site already serves would wipe the "
+                 "rest of its scores.\nGive it its own name: python "
+                 "ml/model/train.py --version <name>, then this again.")
+    conn.execute(text("DELETE FROM prediction WHERE model_version = :v"),
+                 {"v": run["version"]})
     executemany(conn, """
         INSERT INTO prediction (breakage_id, model_version, score, computed_at)
         VALUES (:breakage_id, :model_version, :score, now())
@@ -784,6 +816,8 @@ def write_all(conn, changes, usage, packages, caps, score_map,
     """, preds)
     unmatched = len(score_map) - len(preds)
     print(f"  prediction    {len(preds):>7,}"
+          + (f"   (replacing {before:,} from earlier loads of this version)"
+             if before else "")
           + (f"   ({unmatched:,} scores had no breakage row)"
              if unmatched else ""))
 

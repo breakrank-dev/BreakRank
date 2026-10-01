@@ -23,7 +23,7 @@ And a third, found the same day: the API's sentences read `old_value`,
 wrote any of them, so those sentences always fell back to "X changed in
 this release."
 
-Seven cases:
+Eight cases:
 
   1. A package where releases.csv agrees with changes.csv gets every
      status, including the clean newest release that used to be missing.
@@ -43,6 +43,12 @@ Seven cases:
      with all its rows. The first dry run on the real data would have
      written 10,006 of 23,268 breakage rows, because packages.csv listed
      187 of the 314 packages.
+  8. A --scores load replaces the version's scores whole: the earlier
+     ones are deleted and the new ones written in one transaction. Until
+     1 Oct a re-load only overwrote the rows it scored, and on Neon 5,686
+     of a version's 27,184 scores were an earlier model's. A run that
+     would leave the version with no scores, or under half of them, is
+     refused before anything is deleted.
 
 The same fixture was also loaded into a real Postgres built from Varad's
 migrations 001-006, 001-005 and 001-004, first with the old loader
@@ -246,6 +252,9 @@ class _Result:
     def fetchone(self):
         return self.rows[0] if self.rows else None
 
+    def scalar(self):
+        return self.rows[0][0] if self.rows else None
+
     def fetchall(self):
         return self.rows
 
@@ -372,6 +381,90 @@ def case_unlisted(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
           len(conn.brk), len(chg))
 
 
+class ScoringConn(FakeConn):
+    """FakeConn that also reads the breakage ids back, says how many scores
+    the version already holds, and records what each DELETE was for."""
+
+    def __init__(self, held: int):
+        super().__init__()
+        self.held, self.deleted = held, []
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "SELECT count(*) FROM prediction" in sql:
+            self.sql.append(sql)
+            return _Result([(self.held,)])
+        if "DELETE FROM prediction" in sql:
+            self.sql.append(sql)
+            self.deleted.append(params["v"])
+            return _Result([])
+        if "SELECT b.id, r.package_id" in sql:
+            self.sql.append(sql)
+            names = {i: n for n, i in self.pkg.items()}
+            rel = {i: (r["package_id"], r["version"])
+                   for i, r in enumerate(self.rel, 1)}
+            return _Result([(bid, rel[b["release_id"]][0],
+                             names[rel[b["release_id"]][0]],
+                             rel[b["release_id"]][1], b["symbol_path"],
+                             b["kind"], b.get("sub_target", ""))
+                            for bid, b in enumerate(self.brk, 1)])
+        return super().execute(stmt, params)
+
+
+def case_scores(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
+    print("\n8. A LOAD REPLACES THE VERSION'S SCORES, WHOLE")
+    # Measured on Neon on 1 Oct: after a re-load, lambdarank-label_alias
+    # held 27,184 scores, 5,686 of them an earlier model's, on rows the
+    # new one does not score (the version strings among them).
+    caps = {"sub_target": True, "inherited_by": True, "positive_rate": True,
+            "analysis_status": True, "statuses": set(db.DB_STATUSES)}
+    usage = pd.DataFrame({"symbol": ["alpha.f1"], "user_count": [4]})
+    scores = {(r.package, r.version_to, r.symbol, r.kind, ""): 0.5
+              for r in chg.itertuples()}
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="breakrank-scores-"))
+    metrics = tmp / "metrics.json"
+    metrics.write_text('{"version": "lambdarank-test", "pr_auc": 0.2, '
+                       '"precision_at_10": 0.1, "ndcg_at_20": 0.3, '
+                       '"positive_rate": 0.05, "notes": "x"}')
+    original = db.METRICS
+    db.METRICS = metrics
+
+    def load(held: int, score_map: dict):
+        conn, out, code = ScoringConn(held), io.StringIO(), None
+        try:
+            with contextlib.redirect_stdout(out):
+                db.write_all(conn, chg, usage, None, caps, score_map, rel)
+        except SystemExit as e:
+            code = str(e.code)
+        order = [("DELETE FROM prediction" in q, "INSERT INTO prediction" in q)
+                 for q in conn.sql]
+        first = (next((i for i, (d, _) in enumerate(order) if d), None),
+                 next((i for i, (_, w) in enumerate(order) if w), None))
+        return conn, out.getvalue(), code, first
+
+    try:
+        conn, out, code, (dele, ins) = load(12, scores)
+        check("the version's earlier scores are deleted, then this run's "
+              "written: one transaction, never a mix",
+              (code, conn.deleted, dele is not None and ins is not None
+               and dele < ins), (None, ["lambdarank-test"], True))
+        check("and the load says how many it replaced",
+              "replacing 12 from earlier loads" in out, True)
+        conn, out, code, (dele, ins) = load(19, scores)
+        check("under half the scores the version holds: refused, before "
+              "any delete or write",
+              (code is not None and "under half" in code, conn.deleted,
+               ins), (True, [], None))
+        nothing = {("nobody", "0.0", "x", "OBJECT_REMOVED", ""): 0.5}
+        conn, out, code, (dele, ins) = load(0, nothing)
+        check("no score matching any row: refused, the version left as it "
+              "was", (code is not None and "with none" in code,
+                      conn.deleted, ins), (True, [], None))
+    finally:
+        db.METRICS = original
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> None:
     chg, rel = changes(), releases()
     check("load_releases collapses the duplicate delta 3.2.0 row",
@@ -385,6 +478,7 @@ def main() -> None:
     case_sql(chg, rel)
     case_detail()
     case_unlisted(chg, rel)
+    case_scores(chg, rel)
 
     print("\n" + "=" * 60)
     if failures:
