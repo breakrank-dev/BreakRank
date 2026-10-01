@@ -2733,7 +2733,10 @@ never used downstream," not "moderate churn triples risk." Re-measure
 after F1.
 
 **F11. No confidence intervals anywhere.**
-*[Item 5, 30 Sep: built (§27.1); the numbers come from the next run.]*
+*[Done 1 Oct (§27). Every cut's lift interval clears 1.0x, the lowest at
+1.27x; the size of the lift is uncertain by a factor of 3 to 5 at each
+cut. The single split: PR-AUC 0.232 (0.186–0.331), 2.08x popularity
+(1.33–4.08).]*
 Every number in the deck and report is a point estimate on one cut or a
 median of six.
 *Fix:* bootstrap over version pairs (resample groups, not rows — see
@@ -2741,8 +2744,10 @@ F12) for PR-AUC and lift; report 95% intervals. ~30 lines in
 `stability.py`. This would have caught F9 automatically.
 
 **F12. Row counts overstate the sample; rows are not independent.**
-*[Item 5, 30 Sep: every script now says its changes and upgrades beside
-its rows, and every interval resamples upgrades (§27.1).]*
+*[Done 1 Oct (§27). Every script says its changes and upgrades beside
+its rows, and every interval resamples upgrades. Dev: 16,628 rows are
+9,946 changes in 977 upgrades; the single split's test, 1,955 rows, is
+1,511 changes in 191 upgrades.]*
 23,268 rows collapse to 15,139 distinct (pair, symbol) changes. 8,129
 rows are parameter-level entries sharing a symbol-level label (e.g.
 `redis.client.Redis.__init__` with 49 "moved" parameters → 49 rows, one
@@ -2925,7 +2930,9 @@ Each of the first four both fixes a defect AND raises the headline.
    to a small rise at 1–5 and the collapse at 21+. The report and deck
    wording is §26.4.
 5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
-   **Built 30 Sep (§27.1).** Numbers pending.
+   **Done 1 Oct (§27).** Beats popularity by more than its interval at
+   7/7 cuts; the lift's size is uncertain by a factor of 3 to 5. The
+   report and deck wording is §27.3.
 6. F3 — evaluate the alias label; pick one.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
    ships: worst-case lift 2.30x against `label`'s 1.91x.
@@ -3944,3 +3951,78 @@ with intervals.
   1.0x" is shown to read each cut's lower bound and not its lift. Every
   guard was broken on purpose, ten breaks in all, and each turned a
   check to FAIL.
+
+### 27.2 The result
+
+`stability.py` and `train.py`, run 1 Oct after the rule was pushed
+(44179c7). Both check out: the sweep's seven lifts are §24.2's exactly,
+and `git status` was empty afterwards, so ranker.txt came out byte for
+byte the same.
+
+**The sweep**, `label_alias`, each cut's lift with its own 95% interval:
+
+| cut | lift over popularity | 95% interval | PR-AUC | floor |
+|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 1.69–8.00 | 0.2109 | 0.0281 |
+| 2025-10-06 | 4.86x | 1.87–8.32 | 0.2344 | 0.0289 |
+| 2025-12-03 | 5.70x | 2.13–9.50 | 0.2680 | 0.0288 |
+| 2026-01-18 | 4.02x | 1.84–6.87 | 0.1990 | 0.0324 |
+| 2026-03-02 | 3.01x | 1.27–5.71 | 0.1704 | 0.0360 |
+| 2026-04-02 | 4.08x | 1.78–7.23 | 0.2554 | 0.0362 |
+| 2026-05-04 | 2.30x | 1.55–4.72 | 0.2828 | 0.0857 |
+
+Beats popularity at 7/7, and clearly, with the interval's lower end
+above 1.0x, at 7/7. The lowest lower end is 1.27x.
+
+**The single split**: test is 1,955 rows, which are 1,511 changes in
+191 upgrades.
+
+| | value | 95% interval |
+|---|---|---|
+| PR-AUC | 0.232 | 0.186–0.331 |
+| popularity PR-AUC | 0.111 | 0.069–0.176 |
+| lift over popularity | 2.08x | 1.33–4.08x |
+| precision@10, 17 upgrades | 0.253 | 0.165–0.344 |
+| nDCG@20, 11 upgrades | 0.550 | 0.397–0.706 |
+
+What this says:
+
+- **"Beats popularity" is now a measured claim** at every cut and on
+  the single split, not only a point comparison: no interval reaches
+  1.0x.
+- **The size of the lift is much less certain than its point.** Each
+  cut's interval runs over a factor of 3 to 5 from end to end (1.69 to
+  8.00 at the first). "About 4x" is the honest reading of the 4.08x
+  median; at the first cut alone, another draw of test upgrades could
+  have given anything from 1.7x to 8.0x.
+- **The per-upgrade numbers are the least certain**, resting on 17 and
+  11 upgrades: precision@10 could be anywhere from 0.17 to 0.34. F14
+  said so in words; this is the number.
+- 1,955 test rows are 191 upgrades, and only 17 of those can be ranked
+  at 10. That, more than the row count, is the size of this exam.
+
+### 27.3 For the report and deck
+
+> On the held-back test window (1,955 rows: 1,511 distinct changes in
+> 191 upgrades), the ranker reaches PR-AUC 0.232 (95% interval
+> 0.186–0.331) against a floor of 0.079, 2.1 times the popularity
+> baseline (1.3–4.1). Across seven cut dates its lift over popularity
+> has a median of 4.1x (2.3x to 5.7x across the dates), and at every
+> date the lower end of its own 95% interval stays above 1.0x; the
+> lowest is 1.27x. The size of the lift is uncertain: at one date,
+> another draw of test upgrades could move it by a factor of three to
+> five. Precision@10 is 0.253 (0.165–0.344) over 17 upgrades and
+> nDCG@20 0.550 (0.397–0.706) over 11. Intervals come from 2,000
+> resamples of whole upgrades, the model held fixed.
+
+For a slide:
+
+- PR-AUC 0.232 (95% CI 0.186–0.331); floor 0.079.
+- 2.1x popularity (1.3–4.1x). Median 4.1x across 7 cut dates; every
+  date's interval stays above 1.0x.
+- precision@10 0.253 (0.165–0.344, 17 upgrades); nDCG@20 0.550
+  (0.397–0.706, 11 upgrades).
+
+The strongest baseline on this split, kind_prior (PR-AUC 0.122), has no
+interval of its own yet; the report quotes the lift over popularity,
+the comparison every cut uses.
