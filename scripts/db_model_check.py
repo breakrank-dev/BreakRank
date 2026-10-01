@@ -22,6 +22,14 @@ after `ml/db.py --scores` has loaded a new one:
 This prints every model_run row, newest first, with how many predictions
 each holds, and says which one a restarted API would serve and whether
 that is the model in artifacts/metrics.json.
+
+Then, for the model in artifacts/metrics.json, the day each of its scores
+was written, and how many version-string rows have one. Added 1 Oct,
+after this check found 5,686 of lambdarank-label_alias's scores left over
+from an earlier load beside 21,498 new ones: before that day's ml/db.py
+fix, a re-load only overwrote the rows it scored. A version's scores
+should all come from one load, and F1 took the version-string rows out of
+the model, so after a load the first list has one day and the count is 0.
 """
 
 import json
@@ -31,6 +39,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.db import connect  # noqa: E402
+from ml.features.build import VERSION_LEAVES  # noqa: E402
 
 METRICS = pathlib.Path("artifacts") / "metrics.json"
 
@@ -50,6 +59,17 @@ def main() -> None:
         """)).fetchall()
         breakages = conn.execute(
             text("SELECT count(*) FROM breakage")).scalar()
+        days = conn.execute(text("""
+            SELECT date(computed_at) AS day, count(*) FROM prediction
+            WHERE model_version = :v GROUP BY 1 ORDER BY 1
+        """), {"v": ours}).fetchall() if ours else []
+        stale_vs = conn.execute(text(r"""
+            SELECT count(*) FROM prediction p
+            JOIN breakage b ON b.id = p.breakage_id
+            WHERE p.model_version = :v
+              AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
+        """), {"v": ours, "leaves": sorted(VERSION_LEAVES)}).scalar() \
+            if ours else 0
 
     print(f"\nmodel_run rows, newest first ({breakages:,} breakage rows in "
           "the table):\n")
@@ -59,6 +79,20 @@ def main() -> None:
         mark = "   <- artifacts/metrics.json" if version == ours else ""
         print(f"  {version:<34}{str(at)[:26]:<28}"
               f"{'-' if pr is None else f'{pr:.4f}':>8}{n:>13,}{mark}")
+
+    if days:
+        print(f"\n{ours}'s scores, by the day they were written:")
+        for day, n in days:
+            print(f"  {day}   {n:>8,}")
+        if len(days) > 1:
+            print("** These come from more than one load, so from more than "
+                  "one model, ranked\n** together on the site. Re-run "
+                  "python ml/db.py --scores with the 1 Oct loader:\n** it "
+                  "replaces the version's scores whole.")
+        print(f"version-string rows with a score: {stale_vs:,}"
+              + ("   (none, as F1 intends)" if not stale_vs else
+                 "   ** F1 took these out of the model; these scores are "
+                 "an earlier model's"))
 
     if not runs:
         print("  (none) Load one with: python ml/db.py --scores")
