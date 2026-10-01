@@ -3047,7 +3047,8 @@ holdout freeze, these loader fixes) exists only on ml/db-writer, which
 lacks Varad's API, migrations 005–006, tests and CI. The two branches
 touch no file in common, and a trial merge on 25 Sep was clean. Anyone
 reading main, a reviewer included, reads 6 Sep ML code. Fix: a pull
-request from ml/db-writer into main.
+request from ml/db-writer into main. *[Re-checked 2 Oct: still a clean
+merge; §28.6.]*
 
 **F36. API, CI and web gaps (owner Varad).** Checked on main, 25 Sep:
 - only 1 of the 4 contract endpoints exists; `POST /analyze`, which the
@@ -4026,3 +4027,125 @@ For a slide:
 The strongest baseline on this split, kind_prior (PR-AUC 0.122), has no
 interval of its own yet; the report quotes the lift over popularity,
 the comparison every cut uses.
+
+## 28. The site's scores: one model's, loaded 1 Oct (1–2 Oct)
+
+### 28.1 The load
+
+`python ml/db.py --scores` on 1 Oct, with the model §24 ships:
+`lambdarank-label_alias`, the ranker.txt §27.2 re-ran byte for byte.
+
+| | |
+|---|---|
+| breakage rows sent | 23,267, of 27,900 in the table |
+| scored | **21,498**: every row sent except the 1,769 version-string rows F1 took out of the model (§23.1) |
+| no score from this model | those 1,769, and the 4,633 rows from earlier loads (§21.9) |
+| model_run | positive_rate 0.078772, §24.3's floor; trained_at still 2026-09-12 |
+
+trained_at is the day the name was first loaded, and a re-load never
+moves it (§13.5). It is still the newest model_run row, ahead of
+`lambdarank-label_scoped` (6 Sep, 19,134 scores) and the fixture's
+`v0-fake` (2020, 6), so it is the model the API picks.
+
+On the site a release's rows sort by score. Rows with no score come
+after every scored row, by how many packages use them (the API's
+`NULLS LAST`, then user_count).
+
+### 28.2 Found the same day: two models' scores under one name
+
+The first check after the load (`scripts/db_model_check.py`, 96f3782)
+counted **27,184** scores under `lambdarank-label_alias`. The load had
+written 21,498.
+
+The loader's insert reached only the rows it scored, so a row that an
+earlier load of the same name had scored, and this one did not, kept
+the earlier score. 5,686 rows did, out of the 6,402 this model does not
+score (27,900 − 21,498). The name was first loaded on 12 Sep, two weeks
+before F1, when every model still scored version strings.
+
+The API ranks a release's rows by score, so for those rows the site put
+an older model's score in one list with the new model's, and two
+models' scores are not on one scale. How many of the 5,686 were
+version-string rows was never counted: the check that counts them came
+with the fix, and first ran after the fix had deleted them.
+
+### 28.3 The fix: a load replaces the version's scores, whole
+
+f62e8c3, 1 Oct. `ml/db.py` deletes the version's scores and writes the
+run's in one transaction, so a reader sees the old set or the new one,
+never a mix and never none. Before writing anything it refuses two
+runs: one whose scores match no breakage row, and one with under half
+the scores the version holds. The second is a smaller dataset loaded
+under a name the site already serves, which would wipe the rest of its
+scores; it needs a name of its own (`train.py --version <name>`).
+`scripts/test_db_loader.py` case 8 checks each of these, and the count
+of replaced scores the load prints.
+
+`scripts/db_model_check.py` (570b80c) now also lists the day each of a
+version's scores was written, and counts version-string rows with a
+score. After any load the first should read one day and the second 0.
+
+### 28.4 Checked
+
+The fixed loader has run twice. The first run, right after f62e8c3 on
+1 Oct, deleted all 27,184 and wrote 21,498. That is inferred, not
+printed: by the second run the check already read 21,498 from one day,
+and the only other code that deletes a score, `scripts/db_prune.py`,
+has not been run (the table still holds 27,900 rows, as on 25 Sep).
+
+The second run, just after 570b80c (01:23 on 2 Oct, India time),
+printed `prediction 21,498 (replacing 21,498 from earlier loads of this
+version)`. db_model_check.py read the same before and after it. The
+database dates in UTC, so a load in the early hours of 2 Oct in India
+reads 2026-10-01:
+
+```
+version                    trained_at            pr_auc  predictions
+lambdarank-label_alias     2026-09-12 06:55:27   0.2317       21,498
+lambdarank-label_scoped    2026-09-06 09:35:06   0.3465       19,134
+v0-fake                    2020-01-01 00:00:00   0.0000            6
+
+lambdarank-label_alias's scores, by the day they were written:
+  2026-10-01     21,498
+version-string rows with a score: 0
+```
+
+### 28.5 Which model the site serves: no restart needed
+
+The API picks its model once, when it starts (`resolve_model`,
+api/config.py on main: MODEL_VERSION if set, else the newest
+trained_at), and reads that model's scores on every request.
+`lambdarank-label_alias` has been the newest row since 12 Sep. The API
+that picks a model went up on 18 Sep (4265517), and every start since,
+each deploy and each wake from the free tier's sleep (F29), resolves to
+it unless MODEL_VERSION pins another. So each load's scores were live
+the moment it committed: the new scores, and from the first 1 Oct load
+until the fix, the leftovers beside them. A restart is needed only
+after a load that adds a new name.
+
+To see the model it serves: `curl -s https://breakrank.onrender.com/health`
+returns `model_version`. If that names another model, restart the API.
+If it still does, MODEL_VERSION is pinning it: set it to
+`lambdarank-label_alias` on Render, or remove it. A mistyped pin serves
+no model at all (`model_version` null, every list in usage order; F36).
+db_model_check.py says this from 2 Oct; on 1 Oct it asked for a restart,
+which a re-load under the served name never needs.
+
+### 28.6 Still open
+
+- **The 4,633 rows from earlier loads** have no score from the served
+  model, so on the site they sort after every scored row of their
+  release. db_prune.py (§13) sorts
+  the superseded, which it deletes, from the aged-out, which it keeps.
+  Not run yet, and its 5% guard stands.
+- **The 1,769 version-string rows** stay in the breakage table,
+  unscored. In 868 upgrades they were the only change (§23.1): clean
+  releases, F15's all_clear, for which the API still lists the version
+  constant as a breaking change. Either the API reports those releases
+  as all clear, or the loader stops writing version strings and
+  db_prune removes the ones in the table. Varad's call, with item 12.
+- **F35, the pull request** from ml/db-writer into main. Re-checked 2
+  Oct: main (c02ad2a) and the branch (570b80c) still change no file in
+  common, and a trial merge is clean. It brings every commit since
+  af0c059 (6 Sep) and touches nothing under api/, web/, db/, tests/ or
+  .github/.

@@ -6,8 +6,11 @@ Remove breakage rows that are wrong or superseded. Nothing else.
 
 WHY THIS IS A SEPARATE SCRIPT.
 
-ml/db.py has no DELETE anywhere, deliberately — a loader that can remove
-rows is a loader that can remove the wrong ones when a run half-fails. And
+ml/db.py deletes no breakage row, deliberately — a loader that can remove
+rows is a loader that can remove the wrong ones when a run half-fails.
+(Its one DELETE, added 1 Oct, replaces a model version's scores in the
+same transaction that writes the new ones, and refuses a run with under
+half as many; NOTES §28.) And
 scripts/db_extras.py is documented READ ONLY, which is exactly what makes
 it safe to point at a live database while you are still thinking. Neither
 property should be given up to save a file.
@@ -42,10 +45,11 @@ three different things and only two of them should go:
       not of their upgrade. Deleting these would make the product worse to
       satisfy a tidiness rule. Accumulation is correct here.
 
-Varad's pandas 2.2.0 fixtures fall into the third group and are therefore
-never touched by this script. That is luck rather than design — the
-classifier cannot tell a fixture from a real aged-out release — but the
-outcome is right: his rows are his to remove.
+Varad's fixtures fall into the third group and are therefore never
+touched by this script: since migration 005 they are the package
+breakrank-fixture, which no changes.csv contains. That is luck rather
+than design — the classifier cannot tell a fixture from a real aged-out
+release — but the outcome is right: his rows are his to remove.
 """
 
 import argparse
@@ -69,11 +73,13 @@ def main() -> None:
         description="Delete un-importable and superseded breakage rows.")
     ap.add_argument("--yes", action="store_true",
                     help="actually delete. Without it this only reports.")
+    # %% because argparse %-formats help text: a bare "5%)" made --help
+    # crash with "unsupported format character" until 2 Oct.
     ap.add_argument("--max-share", type=float, default=MAX_SHARE,
                     help=f"refuse if the prune exceeds this share of the "
-                         f"table (default {MAX_SHARE:.0%}). Raise it ONLY "
-                         "after reading the classification and agreeing "
-                         "with every category.")
+                         f"table (default {MAX_SHARE * 100:.0f}%%). Raise "
+                         "it ONLY after reading the classification and "
+                         "agreeing with every category.")
     args = ap.parse_args()
 
     from sqlalchemy import text

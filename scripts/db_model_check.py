@@ -9,15 +9,20 @@ against the live database at any time.
 WHY THIS EXISTS. The API does not ask for the newest model on every
 request. It picks one ONCE, when it starts: the model_run row with the
 newest trained_at, unless the MODEL_VERSION setting pins one (decision 8,
-api/config.py on main). So two things can leave the site on an old model
-after `ml/db.py --scores` has loaded a new one:
+api/config.py on main). It reads that model's scores on every request,
+so a load under the name it already serves is live at once, with no
+restart. Two things can still leave the site on an old model after
+`ml/db.py --scores` has loaded a new one:
 
-  1. The API has not restarted since the load. It keeps serving what it
-     picked when it last started.
+  1. The load added a new version, and the API has not restarted since.
+     It keeps serving what it picked when it last started.
   2. The version was already in the table from an earlier load. The
      loader never moves trained_at on a re-load (NOTES §13.5, so that
      re-scoring an old model cannot make it current by accident), and so
      a re-loaded version keeps its old date and may not be the newest.
+
+A MODEL_VERSION pin overrides both. The API's /health answer names the
+model it is serving now; this prints the command that asks it.
 
 This prints every model_run row, newest first, with how many predictions
 each holds, and says which one a restarted API would serve and whether
@@ -42,6 +47,9 @@ from ml.db import connect  # noqa: E402
 from ml.features.build import VERSION_LEAVES  # noqa: E402
 
 METRICS = pathlib.Path("artifacts") / "metrics.json"
+# /health answers {"ok": true, "model_version": ...}, the model the API is
+# serving now. The address is docs/api-contract.md's, on main.
+HEALTH = "https://breakrank.onrender.com/health"
 
 
 def main() -> None:
@@ -85,8 +93,8 @@ def main() -> None:
         for day, n in days:
             print(f"  {day}   {n:>8,}")
         if len(days) > 1:
-            print("** These come from more than one load, so from more than "
-                  "one model, ranked\n** together on the site. Re-run "
+            print("** These come from more than one load, and can be more "
+                  "than one model's,\n** ranked together on the site. Re-run "
                   "python ml/db.py --scores with the 1 Oct loader:\n** it "
                   "replaces the version's scores whole.")
         print(f"version-string rows with a score: {stale_vs:,}"
@@ -98,22 +106,28 @@ def main() -> None:
         print("  (none) Load one with: python ml/db.py --scores")
         return
     newest = runs[0][0]
+    ask = f"To see the model it serves now:  curl -s {HEALTH}"
     print()
     if ours is None:
         print(f"A restarted API would serve {newest}. There is no "
               f"{METRICS} here to compare it with.")
+        print(ask)
     elif newest == ours:
         print(f"A restarted API serves {ours}, the model in {METRICS}.")
-        print("The API picks its model when it starts, so if it has not "
-              "restarted since\nthe load, it is still serving whatever it "
-              "picked then. Ask whoever runs it\nto restart it, or to set "
-              f"MODEL_VERSION={ours}.")
+        print(ask)
+        print("It reads that model's scores on every request, so if that "
+              f"names\n{ours}, the scores loaded under it are live, with no "
+              "restart.\nIf it names another model, restart the API. If it "
+              "still does after that,\nMODEL_VERSION is pinning it: set "
+              f"MODEL_VERSION={ours} where\nthe API runs, or remove it, "
+              "and restart again.")
     else:
         print(f"** A restarted API would serve {newest}, NOT {ours}, the "
               f"model in\n** {METRICS}: {newest} has the newer trained_at.")
         print(f"** Fix without touching data: set MODEL_VERSION={ours} "
               "where the API runs,\n** and restart it. That setting exists "
               "for exactly this (api/config.py on main).")
+        print(f"** {ask}")
 
 
 if __name__ == "__main__":
