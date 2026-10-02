@@ -2701,6 +2701,9 @@ ensemble size is tuned.
 clamp; re-run ablation and expect the noise floor to drop.
 
 **F8. "Trees exploit the U-shape a linear model can't" is asserted, not tested.**
+*[Rule fixed 2 Oct, §29.1: the line is in `baselines.py` and every sweep
+row; a classifier on the same features is judged against it at the seven
+dates, 6 of 7 and a 1.25x median to keep the claim. Result: §29.2.]*
 *Fix:* add a logistic-regression baseline in `baselines.py` on the same
 18 features. If it matches LightGBM, the claim goes; if not, it is now
 evidence.
@@ -2852,7 +2855,11 @@ built. Cheap: diff of consecutive `released_at` within package.
 Book §4.7 sequences LGBMClassifier (weeks 3–6) THEN LGBMRanker (7–8)
 and says compare them. `train.py --objective binary` exists; no
 recorded comparison. *Fix:* run it once, record in NOTES; ship whichever
-wins on nDCG@20.
+wins on nDCG@20. *[Found 2 Oct: it could not have been made. The binary
+objective was scored by its 0/1 class labels, not its probabilities, so
+every classifier number since 5 Sep was wrong; fixed in
+`train.score_with` (§29.1). Item 7's sweep prints the classifier beside
+the ranker at seven dates; the shipping decision stays item 15's.]*
 
 **F26. "One story of a real release it got right" — 30 Oct DoD.**
 Not produced. One hour with `features.csv` + the model's scores.
@@ -2937,6 +2944,8 @@ Each of the first four both fixes a defect AND raises the headline.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
    ships: worst-case lift 2.30x against `label`'s 1.91x.
 7. F7 + F8 — tune the ensemble; add the linear baseline.
+   **F8 first, rule fixed 2 Oct (§29.1); the result is §29.2. F7
+   follows with its own rule.**
 8. F16 + F17 — collapse echoes, flag prereleases; re-run.
 9. F19 + F18 — retry the 149; chase numpy.
 10. F20 + F21 — pin deps; test the metrics.
@@ -4026,7 +4035,8 @@ For a slide:
 
 The strongest baseline on this split, kind_prior (PR-AUC 0.122), has no
 interval of its own yet; the report quotes the lift over popularity,
-the comparison every cut uses.
+the comparison every cut uses. *[From 2 Oct train.py prints the paired
+interval of the lift over whichever baseline wins the split; §29.1.]*
 
 ## 28. The site's scores: one model's, loaded 1 Oct (1–2 Oct)
 
@@ -4149,3 +4159,127 @@ which a re-load under the served name never needs.
   common, and a trial merge is clean. It brings every commit since
   af0c059 (6 Sep) and touches nothing under api/, web/, db/, tests/ or
   .github/.
+
+## 29. Item 7, first half: the linear baseline (F8). The rule, fixed before the run (2 Oct)
+
+§29.1 was written and committed before the line was fitted on the real
+data. The only fits before then were on the fixtures the tests build.
+The result is §29.2. F7, the tuning, is the second half and gets its own
+rule after this one has an answer, because tuning changes the trees and
+the comparison below is with the trees as they ship (§24).
+
+### 29.1 What is compared, how it is judged, and what each outcome means
+
+**The claim under test.** The report says the trees exploit a U-shape a
+linear model cannot (`prior_breaks_in_module`, §19.2, §26). F8: that was
+asserted, never measured. The honest form of the question is whether a
+straight line through the same 17 features does as well as the trees.
+
+**The line.** A logistic regression (`baselines.linear_scores`) on the
+ranker's feature list exactly: the 8 numbers, 7 booleans and 2
+categories train.py uses. Numbers are median-imputed and standardised;
+`inherited_by`, `prior_breaks_in_module`, `package_rank`, `release_size`
+and `package_churn` are log1p'd first, because one transformers release
+with inherited_by 3,242 would otherwise set the scale for every other
+row. log1p is monotone, so it gives the line nothing a line could not
+already express; a U-shape stays out of its reach. `kind` and `bump` are
+one-hot, a value unseen in training scoring as all zeros. Classes are
+weighted to balance. Nothing is tuned: it is a baseline, and the trees'
+settings are constants too (F7). It is fitted on train only, on exactly
+the rows the ranker is refitted on, and it joins `add_baseline_scores`,
+so every script that prints the baselines prints it.
+
+**Three models at the seven cut dates of §23.5**, by
+`scripts/item7_linear.py`, each fitted on everything before a date and
+scored on what follows:
+
+| | what it is | why it is here |
+|---|---|---|
+| line | the logistic regression above | F8 |
+| classifier | LightGBM, binary objective, same features, tree count by the same CV | trees, pointwise: the like-for-like test |
+| ranker | LightGBM lambdarank, the model that ships | what the report describes |
+
+The like-for-like test is **classifier against line**. Both score each
+change on its own, so the only difference between them is trees against
+a line. The ranker is trained to order changes inside one upgrade and
+never to compare them across upgrades, and pooled PR-AUC grades exactly
+that comparison (F14 and F25, §21.9), so ranker-against-line mixes two
+questions. The ranker is printed beside the other on PR-AUC and on
+nDCG@20, the within-upgrade measure it is fitted for, and read, not
+ruled on.
+
+**The rule**, for the classifier against the line, on PR-AUC. At each
+date r = classifier PR-AUC / line PR-AUC.
+
+1. **The trees win**: r > 1 at 6 or more of the 7 dates, and the median
+   r is 1.25 or more. The claim stays in the report, as a measurement:
+   the line's number beside the trees'.
+2. **The line wins**: r < 1 at 6 or more of the 7 dates, and the median
+   r is 0.80 or less. The claim is withdrawn, and whether the line
+   should ship becomes a question, item 15's (F25), with a rule of its
+   own.
+3. **No difference the rule can see**: anything else. The claim is
+   withdrawn; the result is in the features, not the model class, and
+   the report says so.
+
+Why these numbers:
+
+- A ratio, not a difference. PR-AUC's floor is the positive rate, and
+  the floors differ across the seven dates (0.028 to 0.086, §27.2). On
+  one date's test half the two models share a floor, so their ratio is
+  on one scale, and the median of seven ratios is comparable where the
+  median of seven differences is not.
+- 1.25 is a quarter, §24.1's and §25.3's margin, as a ratio. §27.2's
+  intervals say a single date's PR-AUC is uncertain by far more than a
+  quarter, but the comparison here is paired: both models are scored on
+  the same test half at each date, and the question is whether one is
+  consistently ahead. The count of dates carries the consistency; the
+  margin says the gap is worth a sentence.
+- 6 of 7, as in §25.3: a coin comes up 6 or more of 7 about one time in
+  sixteen, and the dates share most of their data, so that is a floor on
+  how often chance could do it, not a p-value.
+- A tie at four places is neither a win nor a loss.
+
+**It checks itself.** The lambdarank sweep must reproduce §24.2's
+`label_alias` column lift for lift (4.42, 4.86, 5.70, 4.02, 3.01, 4.08,
+2.30x), as §27.2 did on 1 Oct; otherwise the ranker is not the one that
+ships and no verdict is printed. The line is fitted twice, once in each
+sweep, on the same rows, and must agree at every date.
+
+**Also on the single split.** train.py prints the line in its table and
+the paired 95% interval of the ranker's lift over it (each resample of
+test upgrades scores both), and writes `linear`, `lift_vs_linear` and
+`lift_vs_linear_95` into model_run's notes. Where the best baseline on
+the split is neither popularity nor the line, its lift gets an interval
+too, which closes §27.3's open line about kind_prior.
+
+**Found on the way, fixed first.** `train.score_with` scored a
+classifier by `predict()`, which for LightGBM's classifier returns the
+class, 0 or 1, not a probability. A column of 0s and 1s ranks nothing,
+so every `--objective binary` number since 5 Sep was wrong, and F25's
+comparison could not have been made. On the test fixture a 20-tree
+classifier scores PR-AUC 0.150 by its probabilities and 0.097 by its
+labels, floor 0.084. The ranker has no `predict_proba` and its
+`predict()` is already a score, so nothing the shipped model reports
+changes. And `stability.py --objective binary` wrote over the lambdarank
+sweep file; another objective now gets its own name
+(`train.stability_name`, `stability_label_alias_cv_binary.csv`), and the
+shipped sweep keeps the name it always had.
+
+**Nothing a model is trained on changes.** Checked on the test fixture:
+the four earlier baselines come out of `add_baseline_scores` as the
+formulas they were, the ranker's scores are its `predict()` as before,
+and a sweep's existing columns are unchanged. What is added: `linear`,
+`linear_ndcg_20`, `lift_vs_linear` and `beats_linear` in each sweep row,
+three fields in model_run's notes, and printed lines. Tested by
+`scripts/test_linear.py`, eight cases: the line is fitted on train only
+(flipping every test label moves no score), learns a straight signal
+(3.5x the floor on a fixture built to have one) and not a middle bump
+(1.06x the floor where twenty trees reach 4.5x), scores values training
+never showed, and the rule at every edge. Nine guards were broken on
+purpose and each turned a check to FAIL.
+
+**What each outcome leads to.** Whatever the verdict, the table goes
+into §29.2, the report's F8 sentence follows the rule above, and F7 (the
+tuning) comes next with its own rule. If the line wins, item 15 moves up,
+as item 6 did.

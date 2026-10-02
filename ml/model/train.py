@@ -152,6 +152,20 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def stability_name(label: str, stopping: str, objective: str = "lambdarank",
+                   relevance: str = "binary", at: bool = False) -> str:
+    """The file a sweep writes and train.py quotes, one name for both.
+
+    The shipped kind of sweep keeps the name it always had, so every file
+    written so far is still the right one. A sweep of another objective
+    gets its own: until 2 Oct `--objective binary` wrote over the
+    lambdarank file, so F8's classifier sweep would have erased §27.2's."""
+    return (f"stability_{label}_{stopping}"
+            + ("" if objective == "lambdarank" else f"_{objective}")
+            + ("_graded" if relevance == "graded" else "")
+            + ("_at" if at else "") + ".csv")
+
+
 def group_sizes(df: pd.DataFrame) -> np.ndarray:
     """lambdarank needs group sizes, and rows must already be contiguous."""
     return df.groupby(GROUP, sort=False).size().to_numpy()
@@ -202,6 +216,21 @@ def fit_model(train: pd.DataFrame, valid: pd.DataFrame, feats: list[str],
 
 
 def score_with(model, frame: pd.DataFrame, feats: list[str]):
+    """One score per row, from whichever model this is.
+
+    A classifier's predict() returns CLASS LABELS, 0 or 1, not
+    probabilities, and a column of 0s and 1s ranks nothing: every row in a
+    class ties. Until 2 Oct this function scored `--objective binary` with
+    those labels, so the classifier-versus-ranker comparison F25 asks for
+    was never possible, and the binary objective looked far worse than it
+    is. On the test fixture (scripts/test_holdout.py's, cut at 15 May) a
+    20-tree classifier scores PR-AUC 0.150 by its probabilities and 0.097
+    by its labels, against a floor of 0.084. Its probabilities are its
+    scores.
+    The ranker has no predict_proba and its predict() is already a score,
+    so nothing the shipped model reports changes."""
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(frame[feats])[:, 1]
     raw = model.predict(frame[feats])
     return raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
 
@@ -412,7 +441,8 @@ def main() -> None:
     scored["model"] = score_with(model, test, feats)
     scored = add_baseline_scores(fit_on, scored, label)
 
-    names = ["model", "popularity", "kind_prior", "semver", "griffe_all"]
+    names = ["model", "linear", "popularity", "kind_prior", "semver",
+             "griffe_all"]
     results = {n: evaluate(scored, n, label) for n in names}
 
     r10, r20 = n_rankable(test, label, 10), n_rankable(test, label, 20)
@@ -437,7 +467,12 @@ def main() -> None:
           f"lift {m['pr_auc'] / bb if bb else float('nan'):.2f}x")
     print(f"kill-date gate (semver {results['semver']['pr_auc']:.4f}): "
           f"{'PASSED' if m['pr_auc'] > results['semver']['pr_auc'] else 'NOT PASSED'}")
-    if m["pr_auc"] <= bb:
+    if m["pr_auc"] <= bb and best_base == "linear":
+        print("\n** The line wins this split: a logistic regression on the "
+              "same features\n** beats the trees. One split is not the "
+              "answer; scripts/item7_linear.py\n** measures it at seven "
+              "dates and NOTES §29.1 says what each outcome means.")
+    elif m["pr_auc"] <= bb:
         print(f"\n** {best_base} still wins. Do not ship this. A ranker that "
               f"loses to\n** a one-line heuristic is a finding, not a failure "
               "— report it and\n** fix the features before touching the "
@@ -465,6 +500,27 @@ def main() -> None:
         print("** The lift's interval reaches 1.0x: on some draws of test "
               "upgrades this\n** model does not beat popularity. Say so "
               "beside the number.")
+
+    # F8. The same again against the line, and against whichever baseline
+    # won this split if that was neither. Each draw scores both models on
+    # the same upgrades, so these are paired: the interval of the ratio,
+    # not two intervals held side by side.
+    lin = results["linear"]["pr_auc"]
+    lift_lin = m["pr_auc"] / lin if lin else float("nan")
+    ci_lin = intervals(scored, label, "model", "linear")
+    print(f"  {'lift over the line':<22}{lift_lin:>6.2f}x   "
+          f"{ci_lin['lift'][0]:.2f}x to {ci_lin['lift'][1]:.2f}x   "
+          f"(logistic regression, the same {len(feats)} features)")
+    if best_base not in ("popularity", "linear"):
+        ci_best = intervals(scored, label, "model", best_base)
+        print(f"  {'lift over ' + best_base:<22}"
+              f"{m['pr_auc'] / bb:>6.2f}x   {ci_best['lift'][0]:.2f}x to "
+              f"{ci_best['lift'][1]:.2f}x   (the best baseline here)")
+    if not ci_lin["lift"][0] > 1:
+        print("** The line's interval reaches 1.0x: on some draws of test "
+              "upgrades the\n** trees do not beat a logistic regression on "
+              "their own features.\n** NOTES §29 says what that does to the "
+              "report.")
 
     ART.mkdir(exist_ok=True)
     model.booster_.save_model(str(ART / "ranker.txt")) if hasattr(
@@ -519,7 +575,10 @@ def main() -> None:
              f"test_changes={n_changes} test_upgrades={n_upgrades} "
              f"pr_auc_95={ci['pr_auc'][0]:.4f}-{ci['pr_auc'][1]:.4f} "
              f"lift_vs_popularity={lift_pop:.2f}x "
-             f"lift_95={ci['lift'][0]:.2f}-{ci['lift'][1]:.2f}")
+             f"lift_95={ci['lift'][0]:.2f}-{ci['lift'][1]:.2f} "
+             f"linear={lin:.4f} lift_vs_linear={lift_lin:.2f}x "
+             f"lift_vs_linear_95={ci_lin['lift'][0]:.2f}-"
+             f"{ci_lin['lift'][1]:.2f}")
 
     # CARRY THE RANGE INTO THE ROW ITSELF. pr_auc here is ONE cut date, and
     # §5.6 measured that a single cut can sit anywhere in a band half as
@@ -529,10 +588,13 @@ def main() -> None:
     # exact failure this project spent two days documenting. `notes` is
     # free text and reaches the API unchanged, so the range rides along
     # with the number instead of living only in a notebook.
-    stab = DATA / (f"stability_{label}_{args.stopping}"
-                   + ("_graded" if graded else "") + ".csv")
+    stab = DATA / stability_name(label, args.stopping, args.objective,
+                                 args.relevance)
     rerun = (f"ml/model/stability.py --label {label} --stopping "
-             f"{args.stopping}" + (" --relevance graded" if graded else ""))
+             f"{args.stopping}"
+             + (f" --objective {args.objective}"
+                if args.objective != "lambdarank" else "")
+             + (" --relevance graded" if graded else ""))
     # A stability file written BEFORE the holdout froze scored every cut on
     # test halves that ran to the end of the data, holdout rows included.
     # Quoting it here would carry pre-freeze numbers into model_run and on

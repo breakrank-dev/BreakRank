@@ -188,7 +188,9 @@ def main() -> None:
     scored["model"] = score_with(model, scored, feats)
     scored = add_baseline_scores(dev, scored, label)
 
-    names = ["model", "popularity", "kind_prior", "semver", "griffe_all"]
+    # linear (F8) is printed and goes in the NOTES block, not the ledger.
+    names = ["model", "linear", "popularity", "kind_prior", "semver",
+             "griffe_all"]
     res = {n: evaluate(scored, n, label) for n in names}
     m, pop, sem = res["model"], res["popularity"], res["semver"]
     floor = float(hold[label].mean())
@@ -308,8 +310,9 @@ def main() -> None:
     print(f"  PR-AUC {m['pr_auc']:.4f} (95% interval {ci['pr_auc'][0]:.4f}"
           f"-{ci['pr_auc'][1]:.4f}) vs popularity {pop['pr_auc']:.4f}: "
           f"{lift:.2f}x ({ci['lift'][0]:.2f}-{ci['lift'][1]:.2f});")
-    print(f"  semver {sem['pr_auc']:.4f}. {changes:,} changes in {pairs} "
-          "upgrades; intervals resample upgrades.")
+    print(f"  semver {sem['pr_auc']:.4f}; the line (logistic regression, "
+          f"same features) {res['linear']['pr_auc']:.4f}. {changes:,} "
+          f"changes in {pairs} upgrades; intervals resample upgrades.")
     print(f"  precision@10 {m['precision_at_10']:.4f} "
           f"({ci['precision_at_10'][0]:.4f}-{ci['precision_at_10'][1]:.4f}) "
           f"over {r10} upgrades; nDCG@20 {m['ndcg_at_20']:.4f} "

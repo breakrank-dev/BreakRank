@@ -6,19 +6,27 @@ Does the result survive more than one arbitrary date?
     python ml/model/stability.py --all-labels
     python ml/model/stability.py --label label --at 2025-09-29,2026-01-13
     python ml/model/stability.py --relevance graded
+    python ml/model/stability.py --objective binary
 
 Reads  data/features.csv
 Writes data/stability_<label>_<stopping>.csv, or with --at
        data/stability_<label>_<stopping>_at.csv, which train.py never quotes.
-       With --relevance graded, _graded comes before _at:
-       data/stability_label_alias_cv_graded.csv. Every row says the
-       relevance it was trained with, and train.py quotes a file only for
-       a model trained the same way.
+       Another objective adds its name, then _graded, then _at:
+       data/stability_label_alias_cv_binary.csv,
+       data/stability_label_alias_cv_graded.csv (train.stability_name).
+       Every row says the relevance it was trained with, and train.py
+       quotes a file only for a model trained the same way.
 
 Each row also carries ndcg_20_graded: nDCG@20 over the same upgrades,
 with a change's gain 1, 3, 7 or 15 by how many packages use it (F2). It is
 measured whatever the model was taught, so a binary sweep and a graded
 one can be compared on it (scripts/item3_relevance.py).
+
+And, since item 7 (F8), the line: `linear` is the PR-AUC at that cut of a
+logistic regression on the model's own features, fitted on the same rows
+the model was, with `linear_ndcg_20`, `lift_vs_linear` (model PR-AUC over
+the line's) and `beats_linear`. scripts/item7_linear.py reads a
+lambdarank sweep and a binary one and applies NOTES §29.1's rule.
 
 BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
 quantiles, so they move whenever the rows do: item 2 deleted 708 dev
@@ -81,7 +89,7 @@ from ml.model.metrics import (evaluate, intervals,  # noqa: E402
 from ml.model.train import (COUNT_OF, GROUP, RELEVANCE,  # noqa: E402
                             SHIPPED_RELEVANCE, fit_cv, fit_model,
                             graded_gain, prepare, relevance_problem,
-                            score_with, split_valid)
+                            score_with, split_valid, stability_name)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -212,6 +220,8 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     m = evaluate(scored, "model", label)
     pop = evaluate(scored, "popularity", label)
     sem = evaluate(scored, "semver", label)
+    # F8: the line, fitted on the same rows this cut's model was.
+    lin = evaluate(scored, "linear", label)
     floor = float(test[label].mean())
     # Measured for binary and graded models alike; NaN only where the file
     # has no count to grade by.
@@ -247,7 +257,21 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         "test_upgrades": ci["upgrades"],
         "beats_pop": bool(m["pr_auc"] > pop["pr_auc"]),
         "beats_semver": bool(m["pr_auc"] > sem["pr_auc"]),
+        **against_the_line(m, lin),
         "skipped": False,
+    }
+
+
+def against_the_line(m: dict, lin: dict) -> dict:
+    """The F8 columns of a sweep row, from the model's and the line's
+    evaluate() dicts: the line's PR-AUC and nDCG@20, the model's PR-AUC
+    over the line's, and whether the model is ahead. A tie is not ahead."""
+    return {
+        "linear": round(lin["pr_auc"], 4),
+        "linear_ndcg_20": round(lin["ndcg_at_20"], 4),
+        "lift_vs_linear": round(m["pr_auc"] / lin["pr_auc"], 2)
+        if lin["pr_auc"] else float("nan"),
+        "beats_linear": bool(m["pr_auc"] > lin["pr_auc"]),
     }
 
 
@@ -354,6 +378,12 @@ def report(t: pd.DataFrame, label: str) -> None:
         cols.insert(cols.index("lift_vs_pop") + 1, "lift_95")
     if "ndcg_20_graded" in t and t["ndcg_20_graded"].notna().any():
         cols.append("ndcg_20_graded")
+    # F8: the line beside the model at each cut, where the file has it; a
+    # sweep from before item 7 does not.
+    has_line = "linear" in t and t["linear"].notna().all()
+    if has_line:
+        cols.insert(cols.index("popularity"), "linear")
+        cols.append("linear_ndcg_20")
     # A skipped row has no tree count, which turns the column into floats
     # ("20.0") for the rows that do. Every fitted row has a whole number.
     t["trees"] = t["trees"].astype(int)
@@ -380,6 +410,15 @@ def report(t: pd.DataFrame, label: str) -> None:
         print(f"  and by more than its own 95% interval (lower end above "
               f"1.0x) at {clear}/{n}")
     print(f"  beats semver (the kill-date gate) at {gate}/{n}")
+    if has_line:
+        # Point comparisons on one test half, so the ratio is on one scale
+        # at each cut; across cuts the floors differ, so the median of the
+        # ratios, not of the differences. NOTES §29.1 says how to read it.
+        ratio = t["lift_vs_linear"].astype(float)
+        print(f"  beats the line (logistic regression, same features) at "
+              f"{int(t['beats_linear'].sum())}/{n}; model/line PR-AUC "
+              f"median {ratio.median():.2f}x, range {ratio.min():.2f}x – "
+              f"{ratio.max():.2f}x")
 
     if wins == n:
         print("\n  ** Holds at every cut date. The result is not one lucky")
@@ -408,7 +447,12 @@ def main() -> None:
                     choices=["label", "label_scoped", "label_alias"])
     ap.add_argument("--all-labels", action="store_true",
                     help="run all three and compare them honestly")
-    ap.add_argument("--objective", default="lambdarank")
+    ap.add_argument("--objective", default="lambdarank",
+                    choices=["lambdarank", "binary"],
+                    help="binary fits a classifier at each cut instead of "
+                         "the ranker, and writes its own _binary file. "
+                         "F8 compares it with the line; F25 with the "
+                         "ranker.")
     ap.add_argument("--stopping", default="cv", choices=["cv", "holdout"],
                     help="cv picks the tree count by folds inside train; "
                          "holdout is the old single-slice rule. Run both to "
@@ -463,9 +507,8 @@ def main() -> None:
         t = run_label(df, label, feats, args.objective, args.stopping,
                       points, relevance=args.relevance)
         report(t, label)
-        out = DATA / (f"stability_{label}_{args.stopping}"
-                      + ("_graded" if args.relevance == "graded" else "")
-                      + ("_at" if points else "") + ".csv")
+        out = DATA / stability_name(label, args.stopping, args.objective,
+                                    args.relevance, at=bool(points))
         t.to_csv(out, index=False)
         print(f"\n  saved -> {out}")
         ok = t[~t["skipped"]]
