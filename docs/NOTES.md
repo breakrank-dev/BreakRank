@@ -2694,6 +2694,9 @@ cross-package ordering.
 package); say so.
 
 **F7. Model complexity is set by a constant, not the data.**
+*[Rule fixed 2 Oct, §30.1: `--tuning cv` chooses the setting and the
+tree count on the CV folds, each stopping on PR-AUC, no clamp; it ships
+if it costs nothing the sweep can see. Result: §30.2.]*
 CV folds chose [3, 10, 54, 6] trees; median 8; clamped to
 `MIN_TREES = 20`. This is why the ablation noise floor is 17% and why
 "path shape only" scores 116% of the full model. Nothing about the
@@ -2951,7 +2954,8 @@ Each of the first four both fixes a defect AND raises the headline.
 7. F7 + F8 — tune the ensemble; add the linear baseline.
    **F8 done 2 Oct (§29.2): the trees missed the margin fixed in
    advance by 0.0001, and the U-shape claim is withdrawn; the line is
-   now the strongest baseline. F7 next, with its own rule.**
+   now the strongest baseline. F7's rule fixed 2 Oct (§30.1); the
+   result is §30.2.**
 8. F16 + F17 — collapse echoes, flag prereleases; re-run.
 9. F19 + F18 — retry the 149; chase numpy.
 10. F20 + F21 — pin deps; test the metrics.
@@ -4413,3 +4417,111 @@ sentence crediting the trees with the U-shape.
   popularity at the seven dates, then the run. The CV tree counts above
   are its starting point: the ranker's 20–36 starts at the clamp, the
   classifier chose 35–144.
+
+## 30. Item 7, second half: the trees sized by the data (F7). The rule, fixed before the run (2 Oct)
+
+§30.1 was written and committed before any tuned model was fitted on the
+real data. The only tuned fits before then were on the fixtures the
+tests build. The result is §30.2.
+
+### 30.1 What changes, how it is judged, and what each outcome means
+
+**The defect (F7).** The shipped ranker's size is a constant. Its tree
+count is the median of four CV folds inside train, the folds disagree
+widely ([2, 46, 10] on the single split, §24.3), and when the median
+falls below 20 the clamp `MIN_TREES = 20` decides. Its setting (31
+leaves, learning rate 0.05, smallest leaf 30) was set by hand on 5 Sep
+and never chosen by the data.
+
+**Why the folds disagree, found 2 Oct.** Each fold stops when
+LightGBM's nDCG@10 on its window stops improving, and LightGBM scores an
+upgrade with no positive at nDCG 1.0 whatever the model does to it (on
+a toy fit, an all-negative group's implied score is exactly 1.0). Most
+upgrades have no positive, so the number the folds stop on is mostly a
+constant, moved by the few upgrades that have one. item7_tuning.py
+prints, for the four folds of all dev rows, how many validation upgrades
+have no positive.
+
+**What `--tuning cv` does** (`train.cv_tune`):
+
+- The same four expanding folds inside train (`train.cv_folds`, which
+  the shipped path now uses too, unchanged).
+- 18 settings (`train.GRID`): 7, 15 or 31 leaves; smallest leaf 100, 30
+  or 10; learning rate 0.05 or 0.02. The shipped setting is one of them,
+  so tuning can keep it and change only the tree count.
+- Each fold grows up to 1,000 trees and stops when PR-AUC on its window
+  has not improved for 60 rounds. LightGBM's `average_precision` is used
+  for speed; it equals scikit-learn's (checked 2 Oct).
+- A fold's score is its PR-AUC over its window's floor, so folds with
+  different floors count alike; a setting's score is the median over its
+  folds. The best wins, and a tie goes to the simpler setting.
+- Its tree count is the median of its folds' stopping points. No clamp.
+- Then the refit on all of train, as now. No test row and no holdout row
+  is seen by any choice.
+- Binary relevance and CV stopping only: PR-AUC is a 0/1 measure, and
+  the choice is made on the folds. Anything else is refused.
+
+**The comparison.** `scripts/item7_tuning.py` fits fixed and tuned at
+the seven dates of §23.5. It checks itself first: fixed must reproduce
+§24.2's lifts (4.42, 4.86, 5.70, 4.02, 3.01, 4.08, 2.30x), or no verdict
+is printed.
+
+**The rule.** Tuned ships only if all three hold:
+
+1. It beats popularity at all 7 dates.
+2. Its worst lift over popularity is at most 0.25x below fixed's (at
+   least 2.05x, if fixed reproduces 2.30x).
+3. Its median lift is at most 0.50x below fixed's (at least 3.58x, if
+   fixed reproduces 4.08x).
+
+Otherwise fixed stays. Exactly at a margin holds: lifts are stored to
+two places.
+
+Why these numbers, and why tuned does not have to win:
+
+- 0.25x is §24.1's margin for worst cases, and 0.50x is stability.py's
+  for medians ("median lift does NOT separate these" inside 0.5x). Two
+  models closer than that are more than the sweep can tell apart.
+- What F7 fixes is not a score. The shipped model's size is set by a
+  constant and its setting by hand; a model whose size and setting the
+  data chose is the one to defend in a viva. So tuned only has to cost
+  nothing the sweep can see. That is §24.1's tie-break: within the
+  margin, the choice with the better reason wins (there, the label built
+  from facts).
+
+**Printed beside the rule, not in it:** the share of validation upgrades
+with no positive; each date's chosen setting, and how often it sat at
+the grid's simplest corner (7 leaves, smallest leaf 100) or its most
+flexible (31 leaves, smallest leaf 10), which would say the best setting
+may lie beyond the grid; nDCG@20 and precision@10; and the tuned model
+against the line. F8 (§29.2) judged the shipped trees and is not
+reopened: whatever the tuned model does against the line is recorded,
+and the report's F8 sentence stays as §29.3 has it.
+
+**Nothing the shipped model does changes.** `--tuning fixed` is the
+default everywhere and fits byte for byte the model it did, checked
+against a LightGBM ranker built from the literal setting. What is added:
+`--tuning` in train.py, stability.py and final_eval.py; a `_tuned`
+stability file; `tuning` and `setting` columns in each sweep row;
+`tuning=` in model_run's notes, and train.py quotes a sweep only for a
+model sized the same way; a tuned model named apart
+(`lambdarank-label_alias-tuned`); "+tuned" and the setting in the
+holdout ledger. Tested by `scripts/test_tuning.py`, seven cases: among
+them, a hand-checked choice where the winning setting's folds stop at
+3, 9, 4 and 5 trees and the refit has 4, not 20. Twelve guards were
+broken on purpose and each turned a check to FAIL. test_stability.py
+gains a case 7.
+
+**What each outcome leads to.**
+
+- **Tuned ships.** `SHIPPED_TUNING` becomes `"cv"`, one line. Then
+  `stability.py --tuning cv` for the range train.py quotes, `train.py
+  --tuning cv` for ranker.txt, and a `--scores` load under the new name.
+  A new name needs one API restart to be served (§28.5), so Varad is
+  told. Then F7's other half: the ablation re-run on the tuned setting,
+  where the noise floor of §19.4 and §20.3 should drop (ablate.py gets
+  `--tuning` then).
+- **Fixed stays.** Tuning remains an option, and §19.4's and §20.3's
+  ablation notes stand.
+
+Either way the table and the verdict go into §30.2.

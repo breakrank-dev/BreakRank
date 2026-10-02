@@ -39,6 +39,8 @@ upgrades coincide and only the counting is under test:
      and is stamped on every row, repeats included, because train.py
      quotes a sweep only for a model taught the same way. Left out, it is
      binary, as every sweep before item 3 was.
+  7. --tuning (item 7, F7): the same for how the trees are sized. Left
+     out, it is fixed, as every sweep before item 7 was.
 """
 
 import contextlib
@@ -61,8 +63,10 @@ failures = []
 LIFTS = {0.55: 2.34, 0.60: 1.91, 0.65: 2.19, 0.70: 2.07, 0.75: 2.01,
          0.80: 2.01, 0.85: 1.96}
 
-# What each stand-in fit was told to train on, in order (case 6).
+# What each stand-in fit was told to train on, in order (case 6), and how
+# to size its trees (case 7).
 taught: list[str] = []
+sized: list[str] = []
 
 
 def check(name: str, got, want) -> None:
@@ -101,18 +105,20 @@ def fixture(crowded: range, n: int = 1002, gap_days: int = 10
     })
 
 
-def sweep(df: pd.DataFrame, cuts=None, relevance: str | None = None
-          ) -> tuple[pd.DataFrame, list[float]]:
+def sweep(df: pd.DataFrame, cuts=None, relevance: str | None = None,
+          tuning: str | None = None) -> tuple[pd.DataFrame, list[float]]:
     """run_label with the fit swapped out. Returns (table, cuts fitted).
-    With relevance given, it is passed to run_label, and `taught` records
-    what each fit was handed."""
+    With relevance or tuning given, it is passed to run_label, and
+    `taught` and `sized` record what each fit was handed."""
     fitted = []
     taught.clear()
+    sized.clear()
 
     def stand_in(df, q, label, feats, objective, stopping="cv",
-                 relevance="binary"):
+                 relevance="binary", tuning="fixed"):
         fitted.append(q)
         taught.append(relevance)
+        sized.append(tuning)
         cutoff, is_test = stability.cut(df, q)
         lift = LIFTS.get(q, 1.5)
         return {"cut": str(cutoff.date()), "q": stability.qval(q),
@@ -129,11 +135,12 @@ def sweep(df: pd.DataFrame, cuts=None, relevance: str | None = None
     if cuts is not None:
         stability.CUTS = cuts
     try:
-        if relevance is None:
-            t = stability.run_label(df, "label", [], "lambdarank")
-        else:
-            t = stability.run_label(df, "label", [], "lambdarank",
-                                    relevance=relevance)
+        kw = {}
+        if relevance is not None:
+            kw["relevance"] = relevance
+        if tuning is not None:
+            kw["tuning"] = tuning
+        t = stability.run_label(df, "label", [], "lambdarank", **kw)
     finally:
         stability.one_split, stability.CUTS = real_fit, real_cuts
     return t, fitted
@@ -287,6 +294,21 @@ def case_relevance() -> None:
           (["binary"] * 5, ["binary"] * 7))
 
 
+def case_tuning() -> None:
+    print("\n7. HOW THE TREES ARE SIZED REACHES EVERY FIT AND EVERY ROW")
+    # A sweep stamped tuned whose fits were fixed would hand train.py a
+    # range measured on the shipped model and quote it for a tuned one.
+    df = fixture(range(740, 851))
+    t, fitted = sweep(df, tuning="cv")
+    check("every fitted cut is told cv",
+          (len(fitted), sized), (5, ["cv"] * 5))
+    check("every row says cv, the two repeats included",
+          t["tuning"].tolist(), ["cv"] * 7)
+    t, fitted = sweep(df)
+    check("left out, it is fixed, as in every sweep before item 7",
+          (sized, t["tuning"].tolist()), (["fixed"] * 5, ["fixed"] * 7))
+
+
 def main() -> None:
     case_repeats()
     case_near_repeat()
@@ -294,6 +316,7 @@ def main() -> None:
     case_upgrades()
     case_at()
     case_relevance()
+    case_tuning()
 
     print("\n" + "=" * 60)
     if failures:

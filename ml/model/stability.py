@@ -7,15 +7,18 @@ Does the result survive more than one arbitrary date?
     python ml/model/stability.py --label label --at 2025-09-29,2026-01-13
     python ml/model/stability.py --relevance graded
     python ml/model/stability.py --objective binary
+    python ml/model/stability.py --tuning cv
 
 Reads  data/features.csv
 Writes data/stability_<label>_<stopping>.csv, or with --at
        data/stability_<label>_<stopping>_at.csv, which train.py never quotes.
-       Another objective adds its name, then _graded, then _at:
+       Another objective adds its name, then _graded, _tuned, _at:
        data/stability_label_alias_cv_binary.csv,
-       data/stability_label_alias_cv_graded.csv (train.stability_name).
-       Every row says the relevance it was trained with, and train.py
-       quotes a file only for a model trained the same way.
+       data/stability_label_alias_cv_graded.csv,
+       data/stability_label_alias_cv_tuned.csv (train.stability_name).
+       Every row says the relevance and the tuning it was trained with,
+       and train.py quotes a file only for a model trained the same way.
+       A tuned row also says the setting its cut chose (`setting`).
 
 Each row also carries ndcg_20_graded: nDCG@20 over the same upgrades,
 with a change's gain 1, 3, 7 or 15 by how many packages use it (F2). It is
@@ -86,10 +89,12 @@ from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (evaluate, intervals,  # noqa: E402
                               n_rankable, ndcg_at_k)
-from ml.model.train import (COUNT_OF, GROUP, RELEVANCE,  # noqa: E402
-                            SHIPPED_RELEVANCE, fit_cv, fit_model,
-                            graded_gain, prepare, relevance_problem,
-                            score_with, split_valid, stability_name)
+from ml.model.train import (COUNT_OF, FIXED_PARAMS, GROUP,  # noqa: E402
+                            RELEVANCE, SHIPPED_RELEVANCE, SHIPPED_TUNING,
+                            TUNING, fit_cv, fit_model, graded_gain,
+                            prepare, relevance_problem, score_with,
+                            setting_text, split_valid, stability_name,
+                            tuning_problem)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -177,7 +182,8 @@ def show(point) -> str:
 
 def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
               objective: str, stopping: str = "cv",
-              relevance: str = "binary") -> dict | None:
+              relevance: str = "binary",
+              tuning: str = "fixed") -> dict | None:
     """Train and score at one cut point (a quantile, or a date with --at).
     None if the split is unusable.
 
@@ -205,7 +211,7 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
 
     if stopping == "cv":
         model, trees, _folds = fit_cv(full_train, feats, label, objective,
-                                      relevance=relevance)
+                                      relevance=relevance, tuning=tuning)
         fit_on = full_train
     else:
         model = fit_model(train, valid, feats, label, objective,
@@ -258,6 +264,10 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         "beats_pop": bool(m["pr_auc"] > pop["pr_auc"]),
         "beats_semver": bool(m["pr_auc"] > sem["pr_auc"]),
         **against_the_line(m, lin),
+        # F7: the setting this cut's model was fitted with, as
+        # leaves/learning rate/smallest leaf. Always 31/0.05/30 untuned.
+        "setting": setting_text(getattr(model, "tuned_", {}).get(
+            "params", FIXED_PARAMS)),
         "skipped": False,
     }
 
@@ -278,7 +288,8 @@ def against_the_line(m: dict, lin: dict) -> dict:
 def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv",
               points: list | None = None,
-              relevance: str = "binary") -> pd.DataFrame:
+              relevance: str = "binary",
+              tuning: str = "fixed") -> pd.DataFrame:
     """One row per cut point: CUTS, or the dates given with --at."""
     # ONE SPLIT, ONE VOTE.
     #
@@ -320,7 +331,7 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
             continue
         first[key] = q
         rows.append(one_split(df, q, label, feats, objective, stopping,
-                              relevance=relevance))
+                              relevance=relevance, tuning=tuning))
     t = pd.DataFrame([r for r in rows if r])
     # Stamp the boundary this sweep ran under. Every file written before the
     # freeze lacks the column, and its later cuts scored holdout rows, so
@@ -330,6 +341,9 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
     # model trained the same way; a file from before item 3 has no stamp
     # and was binary.
     t["relevance"] = relevance
+    # And how its trees were sized (F7); a file from before item 7 has no
+    # stamp and was fixed.
+    t["tuning"] = tuning
     return t
 
 
@@ -378,6 +392,10 @@ def report(t: pd.DataFrame, label: str) -> None:
         cols.insert(cols.index("lift_vs_pop") + 1, "lift_95")
     if "ndcg_20_graded" in t and t["ndcg_20_graded"].notna().any():
         cols.append("ndcg_20_graded")
+    # F7: the setting each cut chose, when the sweep was tuned.
+    if "tuning" in t and t["tuning"].astype(str).eq("cv").all() \
+            and "setting" in t:
+        cols.insert(cols.index("trees") + 1, "setting")
     # F8: the line beside the model at each cut, where the file has it; a
     # sweep from before item 7 does not.
     has_line = "linear" in t and t["linear"].notna().all()
@@ -467,6 +485,11 @@ def main() -> None:
                     help="what each cut's model is taught: binary, or "
                          "graded by how many packages use a change (F2, "
                          "NOTES §25). Written to a _graded file.")
+    ap.add_argument("--tuning", default=SHIPPED_TUNING, choices=TUNING,
+                    help="fixed: the shipped setting, its tree count "
+                         "clamped at 20. cv: setting and tree count chosen "
+                         "on each cut's own folds (F7, NOTES §30). Written "
+                         "to a _tuned file.")
     args = ap.parse_args()
     points = None
     if args.at:
@@ -490,7 +513,10 @@ def main() -> None:
     labels = (["label", "label_scoped", "label_alias"] if args.all_labels
               else [args.label])
     for label in labels:
-        problem = relevance_problem(df, label, args.objective, args.relevance)
+        problem = (relevance_problem(df, label, args.objective,
+                                     args.relevance)
+                   or tuning_problem(args.tuning, args.relevance,
+                                     args.stopping))
         if problem:
             sys.exit(f"stability.py: {problem}")
 
@@ -498,17 +524,19 @@ def main() -> None:
              else f"{len(CUTS)} cut points")
     print(f"\n{len(df):,} rows   {where}   "
           f"{len(feats)} features   objective {args.objective}   "
-          f"relevance {args.relevance}   stopping {args.stopping}")
+          f"relevance {args.relevance}   stopping {args.stopping}   "
+          f"tuning {args.tuning}")
     print("Each cut refits the model AND the baselines, so lift is computed")
     print("within a split before anything is summarised.")
 
     summary = {}
     for label in labels:
         t = run_label(df, label, feats, args.objective, args.stopping,
-                      points, relevance=args.relevance)
+                      points, relevance=args.relevance, tuning=args.tuning)
         report(t, label)
         out = DATA / stability_name(label, args.stopping, args.objective,
-                                    args.relevance, at=bool(points))
+                                    args.relevance, at=bool(points),
+                                    tuning=args.tuning)
         t.to_csv(out, index=False)
         print(f"\n  saved -> {out}")
         ok = t[~t["skipped"]]

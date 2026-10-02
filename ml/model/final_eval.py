@@ -40,7 +40,9 @@ When F7 (tuning) changes how train.py fits, this file changes in the same
 commit. F2 did: --relevance defaults to train.SHIPPED_RELEVANCE, the same
 constant train.py's default reads, so the two cannot disagree about what
 the shipped model was taught. A graded opening is written to the ledger
-as objective "lambdarank+graded".
+as objective "lambdarank+graded". F7 did too: --tuning defaults to
+train.SHIPPED_TUNING, and a tuned opening is written as
+"lambdarank+tuned", with the chosen setting in the cv_folds column.
 """
 
 import argparse
@@ -61,8 +63,9 @@ from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (DRAWS, evaluate, intervals,  # noqa: E402
                               n_rankable, ndcg_at_k)
 from ml.model.train import (COUNT_OF, RELEVANCE,  # noqa: E402
-                            SHIPPED_RELEVANCE, fit_cv, graded_gain, prepare,
-                            relevance_problem, score_with)
+                            SHIPPED_RELEVANCE, SHIPPED_TUNING, TUNING,
+                            fit_cv, graded_gain, prepare, relevance_problem,
+                            score_with, setting_text, tuning_problem)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -148,6 +151,9 @@ def main() -> None:
                     choices=RELEVANCE,
                     help="what the model is taught; the default is what "
                          "train.py ships")
+    ap.add_argument("--tuning", default=SHIPPED_TUNING, choices=TUNING,
+                    help="how the trees are sized; the default is what "
+                         "train.py ships")
     args = ap.parse_args()
 
     if not args.unseal:
@@ -171,9 +177,11 @@ def main() -> None:
     graded = args.relevance == "graded"
     dev, hold = load(label)
     # Before anything is fitted or recorded, like every refusal above.
-    problem = relevance_problem(dev, label, args.objective, args.relevance)
+    problem = (relevance_problem(dev, label, args.objective, args.relevance)
+               or tuning_problem(args.tuning, args.relevance))
     if problem:
         sys.exit(f"final_eval.py: {problem}")
+    tuned = args.tuning == "cv"
     feats = NUMERIC + BOOLEAN + CATEGORICAL
     commit = git_commit()
     if commit.endswith("+uncommitted"):
@@ -183,7 +191,9 @@ def main() -> None:
               "reason not to.\n")
 
     model, trees, folds = fit_cv(dev, feats, label, args.objective,
-                                 relevance=args.relevance)
+                                 relevance=args.relevance,
+                                 tuning=args.tuning)
+    setting = (setting_text(model.tuned_["params"]) if tuned else None)
     scored = hold.copy()
     scored["model"] = score_with(model, scored, feats)
     scored = add_baseline_scores(dev, scored, label)
@@ -220,9 +230,11 @@ def main() -> None:
         "holdout_from": str(HOLDOUT_START.date()),
         "commit": commit,
         "label": label,
-        "objective": args.objective + ("+graded" if graded else ""),
+        "objective": args.objective + ("+graded" if graded else "")
+                     + ("+tuned" if tuned else ""),
         "trees": trees,
-        "cv_folds": " ".join(map(str, folds)),
+        "cv_folds": " ".join(map(str, folds))
+                    + (f" setting={setting}" if tuned else ""),
         "dev_rows": len(dev),
         "holdout_rows": len(hold),
         "holdout_pairs": pairs,
@@ -256,6 +268,9 @@ def main() -> None:
     print(" " * 13 + moved_text.strip().replace("\n  ", "\n" + " " * 13))
     print(f"  trained on {len(dev):,} rows released before it   label "
           f"{label}   {args.objective}   relevance {args.relevance}")
+    if tuned:
+        print(f"             tuned on the dev folds: setting {setting} "
+              "(leaves/learning rate/smallest leaf)")
     print(f"             CV folds chose {folds} -> {trees} trees   "
           f"code {commit}")
     print()

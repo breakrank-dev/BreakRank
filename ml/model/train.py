@@ -5,6 +5,7 @@ The ranker. Everything before this was making the data honest.
     python ml/model/train.py --label label
     python ml/model/train.py --objective binary
     python ml/model/train.py --relevance graded
+    python ml/model/train.py --tuning cv
 
 The default label is label_alias, chosen 30 Sep by the rule in NOTES §24.
 The default relevance is SHIPPED_RELEVANCE below; NOTES §25 says how
@@ -54,6 +55,7 @@ import lightgbm as lgb
 warnings.filterwarnings("ignore", module="lightgbm")
 import numpy as np
 import pandas as pd
+from sklearn.metrics import average_precision_score
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
@@ -120,6 +122,46 @@ def target(df: pd.DataFrame, label: str, relevance: str) -> pd.Series:
     return grades(df, label) if relevance == "graded" else df[label]
 
 
+# ------------------------------------------- how the trees are sized (F7)
+
+TUNING = ["fixed", "cv"]
+
+# What train.py, stability.py and final_eval.py use when --tuning is not
+# given: the shipped model's. NOTES §30 decides whether it changes.
+#
+#   fixed  one setting (FIXED_PARAMS). Its tree count is the median of
+#          CV folds that stop on LightGBM's nDCG@10, clamped at 20 trees.
+#   cv     the setting AND the tree count chosen on the same CV folds,
+#          each fold stopping on PR-AUC; no clamp (cv_tune below).
+SHIPPED_TUNING = "fixed"
+
+# The setting every model has used since 5 Sep.
+FIXED_PARAMS = dict(num_leaves=31, learning_rate=0.05, min_child_samples=30)
+
+# What --tuning cv chooses among: leaves per tree, the smallest leaf, the
+# learning rate. 18 settings, simplest first (fewest leaves, largest
+# leaves), so on a tie the simpler one wins. FIXED_PARAMS is one of them,
+# so tuning can keep the shipped setting and change only the tree count.
+GRID = [dict(num_leaves=nl, learning_rate=lr, min_child_samples=mc)
+        for nl in (7, 15, 31) for mc in (100, 30, 10) for lr in (0.05, 0.02)]
+TUNE_CAP = 1000      # most trees a tuned fold may grow
+STOP_ROUNDS = 60     # the early-stopping patience, as in fit_model
+
+
+def tuning_problem(tuning: str, relevance: str = "binary",
+                   stopping: str = "cv") -> str | None:
+    """Why this run cannot use this tuning, or None if it can."""
+    if tuning not in TUNING:
+        return f"tuning must be one of {TUNING}, not {tuning!r}"
+    if tuning == "cv" and relevance == "graded":
+        return ("--tuning cv stops each fold on PR-AUC, a 0/1 measure, and "
+                "is binary relevance only.\nUse --relevance binary.")
+    if tuning == "cv" and stopping != "cv":
+        return ("--tuning cv chooses the setting on the CV folds, so it "
+                "needs --stopping cv.")
+    return None
+
+
 def relevance_problem(df: pd.DataFrame, label: str, objective: str,
                       relevance: str) -> str | None:
     """Why this run cannot train with this relevance, or None if it can."""
@@ -153,16 +195,19 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def stability_name(label: str, stopping: str, objective: str = "lambdarank",
-                   relevance: str = "binary", at: bool = False) -> str:
+                   relevance: str = "binary", at: bool = False,
+                   tuning: str = "fixed") -> str:
     """The file a sweep writes and train.py quotes, one name for both.
 
     The shipped kind of sweep keeps the name it always had, so every file
     written so far is still the right one. A sweep of another objective
     gets its own: until 2 Oct `--objective binary` wrote over the
-    lambdarank file, so F8's classifier sweep would have erased §27.2's."""
+    lambdarank file, so F8's classifier sweep would have erased §27.2's.
+    A tuned sweep (F7) gets _tuned, after _graded and before _at."""
     return (f"stability_{label}_{stopping}"
             + ("" if objective == "lambdarank" else f"_{objective}")
             + ("_graded" if relevance == "graded" else "")
+            + ("_tuned" if tuning == "cv" else "")
             + ("_at" if at else "") + ".csv")
 
 
@@ -281,20 +326,9 @@ def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
     # run with no count column must stop here, not fail every fold quietly
     # and come back with the 600-tree cap.
     _check(full_train, label, objective, relevance)
-    d = pd.to_datetime(full_train["released_at"], errors="coerce")
-    known = d.dropna()
-    if known.empty:
-        return cap, []
 
     iters = []
-    for lo, hi in zip(CV_BOUNDS, CV_BOUNDS[1:]):
-        c_lo, c_hi = known.quantile(lo), known.quantile(hi)
-        sub = full_train[d <= c_lo].sort_values(GROUP)
-        val = full_train[(d > c_lo) & (d <= c_hi)].sort_values(GROUP)
-        # A fold with no positives on either side cannot rank anything and
-        # would contribute a meaningless number to the median.
-        if sub.empty or val.empty or not sub[label].sum() or not val[label].sum():
-            continue
+    for sub, val in cv_folds(full_train, label):
         try:
             m = fit_model(sub, val, feats, label, objective, relevance)
         except Exception:
@@ -307,19 +341,131 @@ def cv_tree_count(full_train: pd.DataFrame, feats: list[str], label: str,
     return max(n, MIN_TREES), iters
 
 
+def cv_folds(full_train: pd.DataFrame, label: str):
+    """The expanding folds inside TRAIN, as (fit on, validate on) frames,
+    each sorted by upgrade: everything up to a date, then the window after
+    it. cv_tree_count and cv_tune use the same ones."""
+    d = pd.to_datetime(full_train["released_at"], errors="coerce")
+    known = d.dropna()
+    if known.empty:
+        return
+    for lo, hi in zip(CV_BOUNDS, CV_BOUNDS[1:]):
+        c_lo, c_hi = known.quantile(lo), known.quantile(hi)
+        sub = full_train[d <= c_lo].sort_values(GROUP)
+        val = full_train[(d > c_lo) & (d <= c_hi)].sort_values(GROUP)
+        # A fold with no positives on either side cannot rank anything and
+        # would contribute a meaningless number to the median.
+        if sub.empty or val.empty or not sub[label].sum() or not val[label].sum():
+            continue
+        yield sub, val
+
+
+def fit_stopping_on_ap(sub: pd.DataFrame, val: pd.DataFrame,
+                       feats: list[str], label: str, objective: str,
+                       params: dict):
+    """One tuned fold: grow up to TUNE_CAP trees with `params`, and stop
+    when PR-AUC on the validation window has not improved for STOP_ROUNDS.
+
+    WHY PR-AUC AND NOT nDCG@10 (F7). LightGBM scores an upgrade with no
+    positive at nDCG 1.0, whatever the model does to it (measured 2 Oct:
+    an all-negative group's implied score is exactly 1.0), and most
+    upgrades have no positive. So the number fit_model stops on is mostly
+    a constant, and "stopped improving" is decided by a handful of
+    upgrades: the folds' tree counts for the shipped model ran from 2 to
+    46 on one training set (§24.3). PR-AUC is pooled over the window's
+    rows, so an all-negative upgrade still counts, and it is the number
+    every result here is judged on. LightGBM's own average_precision is
+    used for speed; it equals scikit-learn's (checked 2 Oct)."""
+    common = dict(n_estimators=TUNE_CAP, subsample=0.9, subsample_freq=1,
+                  colsample_bytree=0.9, random_state=0, verbose=-1,
+                  metric="average_precision", **params)
+    y, yv = sub[label].astype(int), val[label].astype(int)
+    if objective == "lambdarank":
+        model = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1],
+                               **common)
+        fit_kw = dict(group=group_sizes(sub), eval_group=[group_sizes(val)])
+    else:
+        pos = max(int(y.sum()), 1)
+        model = lgb.LGBMClassifier(objective="binary",
+                                   scale_pos_weight=(len(sub) - pos) / pos,
+                                   **common)
+        fit_kw = {}
+    model.fit(sub[feats], y, eval_set=[(val[feats], yv)],
+              callbacks=[lgb.early_stopping(STOP_ROUNDS, verbose=False),
+                         lgb.log_evaluation(0)],
+              **fit_kw)
+    return model
+
+
+def choose_setting(rows: list[dict]) -> dict:
+    """The winning row of cv_tune's table: the best median score, and on a
+    tie the one earliest in GRID, which is the simpler one."""
+    return max(rows, key=lambda r: (r["score"], -r["order"]))
+
+
+def cv_tune(full_train: pd.DataFrame, feats: list[str], label: str,
+            objective: str, grid: list[dict] | None = None):
+    """--tuning cv: choose the setting and the tree count on the folds.
+
+    For every setting in GRID, every fold grows trees on its past and
+    stops on PR-AUC in its window (fit_stopping_on_ap). The fold's score
+    is that PR-AUC over the window's floor, its positive rate, so folds
+    with different floors count alike; the setting's score is the median
+    over folds. The best setting wins, and its tree count is the median of
+    the trees its folds stopped at. NO CLAMP: if the data says 8 trees,
+    that is the answer (F7). TEST IS NEVER TOUCHED; every fold lives
+    inside train, as in cv_tree_count.
+
+    Returns (setting, n_trees, that setting's fold tree counts, the table
+    of every setting tried)."""
+    grid = GRID if grid is None else grid
+    folds = list(cv_folds(full_train, label))
+    rows = []
+    for order, params in enumerate(grid):
+        trees, scores = [], []
+        for sub, val in folds:
+            m = fit_stopping_on_ap(sub, val, feats, label, objective, params)
+            best = int(getattr(m, "best_iteration_", None) or TUNE_CAP)
+            yv = val[label].astype(int).to_numpy()
+            ap = float(average_precision_score(yv, score_with(m, val, feats)))
+            trees.append(best)
+            scores.append(ap / yv.mean())
+        if scores:
+            rows.append({"order": order, **params,
+                         "score": float(np.median(scores)),
+                         "trees": max(int(np.median(trees)), 1),
+                         "fold_trees": trees})
+    if not rows:
+        # No usable fold: what cv_tree_count does with none, the shipped
+        # setting at its cap.
+        return dict(FIXED_PARAMS), 600, [], []
+    best = choose_setting(rows)
+    setting = {k: best[k] for k in FIXED_PARAMS}
+    return setting, best["trees"], best["fold_trees"], rows
+
+
+def setting_text(params: dict) -> str:
+    """A setting as one short token: leaves/learning rate/smallest leaf."""
+    return (f"{params['num_leaves']}/{params['learning_rate']:g}/"
+            f"{params['min_child_samples']}")
+
+
 def fit_fixed(train: pd.DataFrame, feats: list[str], label: str,
               n_trees: int, objective: str = "lambdarank",
-              relevance: str = "binary"):
+              relevance: str = "binary", params: dict | None = None):
     """Refit on ALL of train with the tree count already decided.
 
     No early stopping and no validation set, deliberately: the number was
     chosen by cv_tree_count() and re-deciding it here on a slice would put
-    the §5.6 problem straight back.
+    the §5.6 problem straight back. `params` replaces FIXED_PARAMS with
+    the setting cv_tune chose; left out, the model is the shipped one.
     """
     _check(train, label, objective, relevance)
-    common = dict(n_estimators=n_trees, learning_rate=0.05, num_leaves=31,
-                  min_child_samples=30, subsample=0.9, subsample_freq=1,
-                  colsample_bytree=0.9, random_state=0, verbose=-1)
+    common = dict(n_estimators=n_trees, **FIXED_PARAMS, subsample=0.9,
+                  subsample_freq=1, colsample_bytree=0.9, random_state=0,
+                  verbose=-1)
+    if params:
+        common.update(params)
     if objective == "lambdarank":
         model = lgb.LGBMRanker(
             objective="lambdarank",
@@ -337,8 +483,27 @@ def fit_fixed(train: pd.DataFrame, feats: list[str], label: str,
 
 
 def fit_cv(full_train: pd.DataFrame, feats: list[str], label: str,
-           objective: str = "lambdarank", relevance: str = "binary"):
-    """cv_tree_count + fit_fixed. Returns (model, n_trees, fold_iters)."""
+           objective: str = "lambdarank", relevance: str = "binary",
+           tuning: str = "fixed"):
+    """Choose the tree count (and with tuning="cv" the setting) on the
+    folds, then refit on all of train. Returns (model, n_trees,
+    fold_iters). A tuned model also carries `tuned_`: the setting chosen
+    and the table of every setting tried.
+
+    tuning defaults to "fixed" here, like relevance, so the scripts that
+    re-measure the shipped model keep doing so whatever SHIPPED_TUNING
+    says; train.py, stability.py and final_eval.py pass it explicitly."""
+    problem = tuning_problem(tuning, relevance)
+    if problem:
+        raise ValueError(problem)
+    if tuning == "cv":
+        _check(full_train, label, objective, relevance)
+        params, n_trees, iters, table = cv_tune(full_train, feats, label,
+                                                objective)
+        model = fit_fixed(full_train.sort_values(GROUP), feats, label,
+                          n_trees, objective, relevance, params=params)
+        model.tuned_ = {"params": params, "table": table}
+        return model, n_trees, iters
     n_trees, iters = cv_tree_count(full_train, feats, label, objective,
                                    relevance=relevance)
     model = fit_fixed(full_train.sort_values(GROUP), feats, label,
@@ -364,13 +529,21 @@ def main() -> None:
                     help="binary: every positive counts the same. graded: "
                          "a positive counts more the more packages use it "
                          "(F2, NOTES §25).")
+    ap.add_argument("--tuning", default=SHIPPED_TUNING, choices=TUNING,
+                    help="fixed: one setting, its tree count from folds "
+                         "stopping on nDCG@10, clamped at 20. cv: the "
+                         "setting and tree count chosen on the folds, each "
+                         "stopping on PR-AUC, no clamp (F7, NOTES §30).")
     args = ap.parse_args()
     label = args.label
     graded = args.relevance == "graded"
-    # A graded model is a different model, so it gets its own model_run
-    # row. The binary name is unchanged, so earlier runs keep theirs.
+    tuned = args.tuning == "cv"
+    # A graded or tuned model is a different model, so it gets its own
+    # model_run row. The shipped name is unchanged, so earlier runs keep
+    # theirs.
     version = args.version or (f"{args.objective}-{label}"
-                               + ("-graded" if graded else ""))
+                               + ("-graded" if graded else "")
+                               + ("-tuned" if tuned else ""))
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
@@ -379,7 +552,8 @@ def main() -> None:
     # (ml/holdout.py) is not in features.csv, and a stale file that still
     # holds it stops here rather than being scored.
     assert_no_holdout(df, "train.py")
-    problem = relevance_problem(df, label, args.objective, args.relevance)
+    problem = (relevance_problem(df, label, args.objective, args.relevance)
+               or tuning_problem(args.tuning, args.relevance, args.stopping))
     if problem:
         sys.exit(f"train.py: {problem}")
     feats = NUMERIC + BOOLEAN + CATEGORICAL
@@ -390,7 +564,8 @@ def main() -> None:
     train, valid = train.sort_values(GROUP), valid.sort_values(GROUP)
 
     print(f"\nlabel {label}   objective {args.objective}   "
-          f"relevance {args.relevance}   stopping {args.stopping}")
+          f"relevance {args.relevance}   stopping {args.stopping}   "
+          f"tuning {args.tuning}")
     print(f"train {len(train):,} ({train[label].mean():.2%} pos)   "
           f"valid {len(valid):,} ({valid[label].mean():.2%} pos)   "
           f"test {len(test):,} ({test[label].mean():.2%} pos)")
@@ -416,10 +591,24 @@ def main() -> None:
 
     if args.stopping == "cv":
         model, best, folds = fit_cv(full_train, feats, label, args.objective,
-                                    relevance=args.relevance)
+                                    relevance=args.relevance,
+                                    tuning=args.tuning)
         fit_on = full_train
-        print(f"\nCV folds chose {folds} trees -> median {best}, "
-              f"refitted on all {len(full_train):,} training rows")
+        if tuned:
+            table = model.tuned_["table"]
+            print(f"\ntuned on the same folds: {len(table)} settings "
+                  "(leaves/learning rate/smallest leaf), each fold stopping "
+                  "on PR-AUC.\nbest by median PR-AUC over each fold's "
+                  "floor:")
+            for r in sorted(table, key=lambda r: -r["score"])[:5]:
+                print(f"  {setting_text(r):<12}{r['score']:>7.3f}x floor"
+                      f"   folds stopped at {r['fold_trees']}")
+            print(f"chosen {setting_text(model.tuned_['params'])}: its folds "
+                  f"stopped at {folds} -> median {best}, no clamp, "
+                  f"refitted on all {len(full_train):,} training rows")
+        else:
+            print(f"\nCV folds chose {folds} trees -> median {best}, "
+                  f"refitted on all {len(full_train):,} training rows")
         if len(set(folds)) > 1 and max(folds) > 5 * max(min(folds), 1):
             print(f"** the folds disagree by {max(folds) / max(min(folds), 1):.0f}x. "
                   "The median is doing real work here;\n** any single slice "
@@ -567,7 +756,9 @@ def main() -> None:
     # Record the floor beside the score.
     floor = float(test[label].mean())
     notes = (f"label={label} objective={args.objective} "
-             f"relevance={args.relevance} "
+             f"relevance={args.relevance} tuning={args.tuning} "
+             + (f"setting={setting_text(model.tuned_['params'])} "
+                if tuned else "") +
              f"stopping={args.stopping} trees={best} test_rows={len(test)} "
              f"positive_rate={floor:.4f} "
              f"best_baseline={best_base}:{bb:.4f} "
@@ -589,12 +780,13 @@ def main() -> None:
     # free text and reaches the API unchanged, so the range rides along
     # with the number instead of living only in a notebook.
     stab = DATA / stability_name(label, args.stopping, args.objective,
-                                 args.relevance)
+                                 args.relevance, tuning=args.tuning)
     rerun = (f"ml/model/stability.py --label {label} --stopping "
              f"{args.stopping}"
              + (f" --objective {args.objective}"
                 if args.objective != "lambdarank" else "")
-             + (" --relevance graded" if graded else ""))
+             + (" --relevance graded" if graded else "")
+             + (" --tuning cv" if tuned else ""))
     # A stability file written BEFORE the holdout froze scored every cut on
     # test halves that ran to the end of the data, holdout rows included.
     # Quoting it here would carry pre-freeze numbers into model_run and on
@@ -627,6 +819,16 @@ def main() -> None:
                   f"{', '.join(sorted(set(taught)))} relevance, and this one "
                   f"is {args.relevance}.\nNot quoted. Re-run {rerun}, then "
                   "this script.")
+        # And how its trees were sized (F7). A file from before item 7 has
+        # no stamp and was fixed.
+        sized = (st["tuning"].astype(str) if "tuning" in st
+                 else pd.Series("fixed", index=st.index))
+        if fresh and not sized.eq(args.tuning).all():
+            fresh = False
+            kinds = ", ".join(sorted(set(sized)))
+            print(f"note: {stab} was measured on {kinds}-tuned models, and "
+                  f"this one is {args.tuning}.\nNot quoted. Re-run {rerun}, "
+                  "then this script.")
     if fresh:
         st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
         if not st.empty:
