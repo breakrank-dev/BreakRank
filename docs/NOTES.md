@@ -2463,7 +2463,9 @@ as the inherited-member repeats in §10.2 and `pandas.tests` in §4).
 
 That U-shape is exactly what a tree model can exploit and a linear one
 cannot, and it is a real property of how libraries evolve, not of how
-the label is built.
+the label is built. *[Withdrawn 2 Oct (§29.2). Measured: a logistic
+regression on the same features gets 90% of the ranker's median lift,
+and the trees' edge over it fell short of the bar fixed in advance.]*
 
 ### 19.3 What the model is actually made of
 
@@ -2701,9 +2703,10 @@ ensemble size is tuned.
 clamp; re-run ablation and expect the noise floor to drop.
 
 **F8. "Trees exploit the U-shape a linear model can't" is asserted, not tested.**
-*[Rule fixed 2 Oct, §29.1: the line is in `baselines.py` and every sweep
-row; a classifier on the same features is judged against it at the seven
-dates, 6 of 7 and a 1.25x median to keep the claim. Result: §29.2.]*
+*[Done 2 Oct (§29.2). Trees on the same features were ahead of the line
+at 6 of 7 dates by a median 1.2499x, under the 1.25x fixed before the
+run, so the claim is withdrawn. The line alone beats popularity at
+every date, median 3.68x against the ranker's 4.08x.]*
 *Fix:* add a logistic-regression baseline in `baselines.py` on the same
 18 features. If it matches LightGBM, the claim goes; if not, it is now
 evidence.
@@ -2859,7 +2862,9 @@ wins on nDCG@20. *[Found 2 Oct: it could not have been made. The binary
 objective was scored by its 0/1 class labels, not its probabilities, so
 every classifier number since 5 Sep was wrong; fixed in
 `train.score_with` (§29.1). Item 7's sweep prints the classifier beside
-the ranker at seven dates; the shipping decision stays item 15's.]*
+the ranker at seven dates; the shipping decision stays item 15's.
+Measured 2 Oct (§29.2), for the record: classifier median lift over
+popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
 
 **F26. "One story of a real release it got right" — 30 Oct DoD.**
 Not produced. One hour with `features.csv` + the model's scores.
@@ -2944,8 +2949,9 @@ Each of the first four both fixes a defect AND raises the headline.
    **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
    ships: worst-case lift 2.30x against `label`'s 1.91x.
 7. F7 + F8 — tune the ensemble; add the linear baseline.
-   **F8 first, rule fixed 2 Oct (§29.1); the result is §29.2. F7
-   follows with its own rule.**
+   **F8 done 2 Oct (§29.2): the trees missed the margin fixed in
+   advance by 0.0001, and the U-shape claim is withdrawn; the line is
+   now the strongest baseline. F7 next, with its own rule.**
 8. F16 + F17 — collapse echoes, flag prereleases; re-run.
 9. F19 + F18 — retry the 149; chase numpy.
 10. F20 + F21 — pin deps; test the metrics.
@@ -3528,8 +3534,12 @@ The single split at 5 Apr (train 14,673 rows, 3.11% positive; test 1,955,
 | semver (kill-date gate) | 0.090 | 0.176 | 0.255 |
 | floor (positive rate) | 0.079 | | |
 
-1.9x the best baseline, 2.1x popularity, 2.9x the floor. The single
-split's 2.08x over popularity is **below every cut of the sweep** (the
+1.9x the best baseline, 2.1x popularity, 2.9x the floor.
+*[2 Oct: the best baseline is now the line, a logistic regression on
+the same features, at PR-AUC 0.191, and the model is 1.22x it (95%
+interval 0.96–1.55). "1.9x the best baseline" is withdrawn; §29.2.]*
+The single split's 2.08x over popularity is **below every cut of the
+sweep** (the
 lowest is 2.30x): one more window, and the reason the sweep's range, not
 a single split, is what gets quoted.
 
@@ -4035,8 +4045,10 @@ For a slide:
 
 The strongest baseline on this split, kind_prior (PR-AUC 0.122), has no
 interval of its own yet; the report quotes the lift over popularity,
-the comparison every cut uses. *[From 2 Oct train.py prints the paired
-interval of the lift over whichever baseline wins the split; §29.1.]*
+the comparison every cut uses. *[2 Oct: the strongest baseline is now
+the line, a logistic regression on the same features (PR-AUC 0.191),
+and train.py prints its paired interval: 1.22x (0.96–1.55). The report
+quotes it beside popularity; §29.3.]*
 
 ## 28. The site's scores: one model's, loaded 1 Oct (1–2 Oct)
 
@@ -4283,3 +4295,121 @@ purpose and each turned a check to FAIL.
 into §29.2, the report's F8 sentence follows the rule above, and F7 (the
 tuning) comes next with its own rule. If the line wins, item 15 moves up,
 as item 6 did.
+
+### 29.2 The result: no difference the rule can see, by 0.0001
+
+`scripts/item7_linear.py`, run 2 Oct after the rule was pushed (5205ce2,
+11:29). Both self-checks passed: the ranker reproduced §24.2 lift for
+lift, and the line fitted in each sweep agreed at every date. `git
+status` was clean afterwards, so ranker.txt is byte for byte the same.
+
+PR-AUC at each date, every model fitted on the same rows:
+
+| cut | floor | line | classifier | ranker | classifier / line | ranker / line |
+|---|---|---|---|---|---|---|
+| 2025-08-07 | 0.0281 | 0.1983 | 0.1946 | 0.2109 | 0.981 | 1.064 |
+| 2025-10-06 | 0.0289 | 0.1988 | 0.2104 | 0.2344 | 1.058 | 1.179 |
+| 2025-12-03 | 0.0288 | 0.2069 | 0.2586 | 0.2680 | **1.2499** | 1.295 |
+| 2026-01-18 | 0.0324 | 0.1823 | 0.2374 | 0.1990 | 1.302 | 1.092 |
+| 2026-03-02 | 0.0360 | 0.1853 | 0.2161 | 0.1704 | 1.166 | 0.920 |
+| 2026-04-02 | 0.0362 | 0.1920 | 0.2596 | 0.2554 | 1.352 | 1.330 |
+| 2026-05-04 | 0.0857 | 0.1941 | 0.2494 | 0.2828 | 1.285 | 1.457 |
+| **median** | | 0.1941 | 0.2374 | 0.2344 | **1.2499** | 1.179 |
+
+**Verdict: no difference the rule can see.** The classifier was ahead
+of the line at 6 of 7 dates, which meets the first half of the bar. Its
+median ratio is 1.2499 (2025-12-03, 0.2586 / 0.2069), and the second
+half needs 1.25: it misses by 0.0001. The script printed the median as
+"1.25x", to two places, above the verdict; it prints four places from
+2 Oct. The rule read the value.
+
+That is the closest any rule here has come to its edge, and it is read
+as written, as §25.5 was when graded relevance landed exactly on its
+margin. A bar set in advance has to be allowed to fall on the wrong
+side of a hair; deciding again after seeing which side would undo the
+reason it was set. Nor is the hair hiding a clear result. On the
+single split, the paired 95% interval of the ranker's lift over the
+line is 0.96–1.55x (train.py, below): it includes 1.
+
+What the line shows:
+
+- **It gets most of the result.** It beats popularity at every date,
+  median lift 3.68x (1.58–4.39x), against the ranker's 4.08x
+  (2.30–5.70x): a straight line through the same 17 features carries
+  90% of the ranker's median lift. Its PR-AUC is 5.6x its floor at the
+  median, the ranker's 7.1x.
+- **It ranks inside an upgrade as well as the ranker does.** nDCG@20:
+  the ranker is ahead at 3 of 7 dates, medians 0.565 (line) and 0.559
+  (ranker). On the single split the line's precision@10 is 0.259
+  against 0.253 and its nDCG@20 0.573 against 0.550. Those rest on 17
+  and 11 upgrades (§27.2), so they say "no better", not "worse".
+- **Where the trees are ahead is pooled PR-AUC**, the comparison across
+  upgrades, which the classifier is fitted for and the ranker is not
+  (F14, F25).
+- **A likely reason, not measured.** Of §26's two shapes in
+  `prior_breaks_in_module`, the collapse at 21+ is a fall at one end,
+  which a line through log1p(breaks) can draw; only the small rise at
+  1–5 needs a bend. The line doing nearly as well suggests the bend
+  carries little.
+
+**The single split** (train.py, 2 Oct): the line is now the strongest
+baseline, PR-AUC 0.191 (kind_prior 0.122). The ranker's 0.232 is 1.22x
+it, 95% interval 0.96–1.55x. §24.3's "1.9x the best baseline" is
+withdrawn. Every other number train.py printed is §27.2's, unchanged.
+
+**Classifier against ranker, for the record** (not a decision: F25 is
+item 15's, with its own rule). With the classifier scored by its
+probabilities (§29.1), its median lift over popularity is 4.14x and its
+worst 2.03x, against the ranker's 4.08x and 2.30x; it is ahead of the
+ranker on PR-AUC at 3 of 7 dates. CV chose it 35–144 trees, and the
+ranker 20–36, a range that starts at the 20-tree clamp (F7).
+
+**What changes**, by §29.1:
+
+- "Trees exploit a U-shape a linear model can't" leaves the report and
+  the deck (§19.2 marked). The shapes themselves (§26) are still
+  measured facts about the data; what is withdrawn is that the model's
+  edge comes from them.
+- The best baseline in the report becomes the line (§29.3).
+- Item 15 does not move up: the line did not win. Its question is
+  sharper, though: on the within-upgrade measures the ranker is fitted
+  for, it shows no advantage over the line.
+- F7, the tuning, is next, and its rule should judge a tuned model
+  against the line as well as popularity, since the line is now the
+  baseline to beat.
+- model_run in the database still carries 1 Oct's notes
+  (best_baseline=kind_prior). metrics.json now says linear; the next
+  `--scores` load writes it. Nothing on the site reads that field.
+
+### 29.3 For the report and deck
+
+> To test whether the trees matter, we fitted a logistic regression on
+> the same 17 features, on the same rows. It beats the popularity
+> baseline at all seven cut dates as well, by a median of 3.7x against
+> the ranker's 4.1x, and on the within-upgrade measures (precision@10,
+> nDCG@20) it does as well as the ranker. Gradient-boosted trees were
+> ahead of it on PR-AUC at 6 of 7 dates, by a median factor of 1.2499,
+> just under the 1.25 we fixed before running the comparison, so we do
+> not claim the trees capture structure a linear model cannot: most of
+> the result comes from the features. On the held-back test window the
+> ranker's PR-AUC is 1.22 times the logistic regression's (95% interval
+> 0.96–1.55).
+
+For a slide:
+
+- A logistic regression on the same 17 features: 3.7x popularity
+  (median, 7 dates). The ranker: 4.1x.
+- Trees ahead of it at 6/7 dates, median 1.2499x, under the 1.25x bar
+  set in advance. "Trees exploit a U-shape": withdrawn.
+- Strongest baseline is now the line: the ranker is 1.22x it (95% CI
+  0.96–1.55).
+
+Replaces, wherever it appears: "1.9x the best baseline", and any
+sentence crediting the trees with the U-shape.
+
+### 29.4 Still open from item 7
+
+- **F7, the tuning.** A rule first, judged against the line and
+  popularity at the seven dates, then the run. The CV tree counts above
+  are its starting point: the ranker's 20–36 starts at the clamp, the
+  classifier chose 35–144.

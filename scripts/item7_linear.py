@@ -201,7 +201,11 @@ def main() -> None:
                     rk["linear"].astype(float).tolist())
         print(f"  like for like, the classifier against the line, PR-AUC:")
         print(f"     classifier ahead at {v['wins']}/{v['n']} dates, behind "
-              f"at {v['losses']}/{v['n']}; median ratio {v['median']:.2f}x")
+              f"at {v['losses']}/{v['n']}; median ratio {v['median']:.4f}x")
+        # Four places, not two. On 2 Oct the median was 1.2499 and this
+        # line printed "1.25x" above a verdict that it fell short of
+        # 1.25, which reads as a bug. The rule reads the value, not the
+        # print (NOTES §29.2).
         print(f"     trees win: ahead at {NEED}+ and median >= {MARGIN:.2f}x"
               f"     line wins: behind at {NEED}+ and median <= "
               f"{1 / MARGIN:.2f}x")
