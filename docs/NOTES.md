@@ -2489,6 +2489,9 @@ null result.
 
 ### 19.4 The ablation is unreadable below 12.2%, and it says so
 
+*[5 Oct: with the tuned model the floor is 9.7%, and one group clears
+it; §30.3.]*
+
 `ablate.py` reports a **noise floor of 12.2%**: removing `inherited_by`,
 a feature the model never split on, moved PR-AUC by 12.2%. Every
 per-group effect except two sits under that line, and the two that
@@ -2584,6 +2587,9 @@ is_dunder 2.6, then the tail under 1%. module_depth and name_length
 swapped places vs §19; nothing else moved order.
 
 ### 20.3 The ablation is still unreadable, and is not quoted
+
+*[5 Oct: with the tuned model the floor is 9.7%, and one group clears
+it; §30.3.]*
 
 Noise floor at the primary cut rose to **16.8%** (control: dropping
 `bump`, zero-gain, moved PR-AUC +16.8%). "path shape only" reports 116%
@@ -2778,6 +2784,10 @@ holdout; never evaluate on it until the final report; report it once.
 ### 21.4 Metric reliability and the product
 
 **F14. The product-facing metrics stand on 96 of 2,036 upgrades (4.7%).**
+*[5 Oct, measured (§30.3): three package-level features, constant inside
+an upgrade, reach 78% of the tuned model's PR-AUC while ranking nothing
+inside one. Pooled PR-AUC is largely "which upgrades are risky". Item 11
+should lead with precision@10 and nDCG@20 beside it.]*
 precision@10 / nDCG@20 are (correctly) restricted to pairs with ≥ 1
 positive and > 10 rows. Per cut that is 12–38 groups; the latest cut's
 precision@10 is a mean over 12 upgrades. PR-AUC (the headline) is global
@@ -4602,3 +4612,161 @@ What it says:
 - Then the database: a `--scores` load under the new name, served after
   the API's next start (§28.5), and Varad told, with §30.3's page copy.
 - §24.3, §27 and §29 stay as the record of the fixed model.
+
+### 30.3 The tuned model's numbers, and what the report says now
+
+Run 5 Oct on the code of 2cb354b: `stability.py`, `train.py` and
+`ablate.py`, all tuned by default. The sweep reproduced §30.2's tuned
+column lift for lift (5.80, 5.43, 6.04, 5.20, 3.07, 4.39, 2.20x).
+`git status` showed only `artifacts/ranker.txt`, the new model.
+
+**The sweep**, `label_alias`, tuned, each cut's lift with its own 95%
+interval:
+
+| cut | lift over popularity | 95% interval | PR-AUC | the line | trees | setting |
+|---|---|---|---|---|---|---|
+| 2025-08-07 | 5.80x | 2.15–9.55 | 0.2772 | 0.1983 | 80 | 15/0.02/10 |
+| 2025-10-06 | 5.43x | 2.31–9.21 | 0.2620 | 0.1988 | 18 | 31/0.05/100 |
+| 2025-12-03 | 6.04x | 2.39–9.64 | 0.2842 | 0.2069 | 22 | 31/0.05/100 |
+| 2026-01-18 | 5.20x | 1.77–9.54 | 0.2576 | 0.1823 | 87 | 31/0.05/100 |
+| 2026-03-02 | 3.07x | 1.20–6.20 | 0.1734 | 0.1853 | 78 | 7/0.05/10 |
+| 2026-04-02 | 4.39x | 1.78–7.93 | 0.2750 | 0.1920 | 17 | 7/0.05/10 |
+| 2026-05-04 | 2.20x | 1.33–5.04 | 0.2697 | 0.1941 | 93 | 7/0.05/30 |
+
+Beats popularity at 7/7, and by more than its interval at 7/7 (lowest
+lower end 1.20x); beats semver 7/7; beats the line 6/7, median ratio
+1.39x. Median lift 5.20x (2.20–6.04x). Each date's interval spans a
+factor of 4 to 5.
+
+**The single split** (5 Apr; test 1,955 rows, 1,511 changes, 191
+upgrades). CV chose 7/0.05/10, its folds stopping at [6, 28, 35]: 28
+trees.
+
+| | tuned | 95% interval | fixed (§27.2) |
+|---|---|---|---|
+| PR-AUC (floor 0.079) | **0.283** | 0.223–0.399 | 0.232 |
+| lift over popularity | **2.53x** | 1.65–5.10x | 2.08x |
+| lift over the line (0.191) | **1.48x** | 1.14–1.86x | 1.22x (0.96–1.55) |
+| precision@10, 17 upgrades | 0.271 | 0.186–0.367 | 0.253 |
+| nDCG@20, 11 upgrades | 0.575 | 0.391–0.735 | 0.550 |
+
+3.6x the floor. Gain shares: public_depth 32.0%, kind 19.9%,
+name_length 15.5%, module_depth 8.2%, release_size 8.0%, the rest under
+5%; six features at zero (has_export_path, was_deprecated_before,
+is_private, is_top_level, inherited_by, bump).
+
+**The ablation, tuned** (one setting and 28 trees for every run, as
+§30.1 required):
+
+- **Noise floor 9.7%** (dropping is_top_level, zero gain, moved PR-AUC
+  by 9.7%). The last ablation, at a fixed 20 trees on the 21 Sep data,
+  read 16.8% (§20.3); a fixed run on today's data is the fair comparison
+  and is the next run (`ablate.py --tuning fixed`).
+- **One group clears it: reachability** (public_depth,
+  has_export_path). Removing it costs 28.3% of PR-AUC (2.9x the floor),
+  path shape and reachability together 30.8%. Path shape, blast radius,
+  history and popularity each move less than the floor.
+- **Reachability alone scores as well as all 17 features**: 0.288
+  against 0.283 (102%), with the same precision@10 (0.271) and nDCG@20
+  0.540 against 0.575. On this split the model is largely "how short is
+  this symbol's public name". That carries the circularity ablate.py
+  names: downstream code imports by short public names, and label_alias
+  matches export paths, so a short-named symbol also has more ways to
+  be counted as used.
+- **Pooled PR-AUC is largely "which upgrades are risky"** (F14). The
+  three popularity features are constant inside an upgrade, so they rank
+  nothing inside one (precision@10 and nDCG@20 equal the popularity
+  baseline's, 0.176 and 0.255), yet a model on them alone reaches 78% of
+  the full PR-AUC, 1.97x the popularity baseline's. History alone reaches
+  83%, again with almost no within-upgrade ranking (nDCG@20 0.338). What
+  separates the model from those is the within-upgrade numbers.
+
+What this changes:
+
+- **The report quotes the tuned model.** The paragraph and slide below
+  replace §27.3's numbers and §29.3's model figures. §27.2, §29.2 and the
+  fixed rows above stay as the record.
+- **The report states the reachability result and its circularity** as
+  a limitation, beside the label's blindness to methods (§11.6: the
+  usage index sees imports, not attribute access). It is one split, and
+  102% against 100% is inside the floor: "as well as", not "better
+  than".
+- **Item 11 (F6 + F14) gets sharper**: lead with precision@10 and
+  nDCG@20 beside PR-AUC, because PR-AUC alone credits a model for
+  telling risky upgrades from quiet ones, which package-level features
+  do without ranking any change.
+
+**For the report**, replacing §27.3:
+
+> On the held-back test window (1,955 rows: 1,511 distinct changes in
+> 191 upgrades), the ranker reaches PR-AUC 0.283 (95% interval
+> 0.223–0.399) against a floor of 0.079: 2.5 times the popularity
+> baseline (1.65–5.10) and 1.5 times the strongest baseline, a logistic
+> regression on the same features (1.14–1.86). Across seven cut dates
+> its lift over popularity has a median of 5.2x (2.2x to 6.0x across the
+> dates), and at every date the lower end of its own 95% interval stays
+> above 1.0x; the lowest is 1.20x. Each date's interval spans a factor of
+> four to five, so the size of the lift is much less certain than the
+> fact of it. Inside an upgrade, precision@10 is 0.271 (0.186–0.367)
+> over 17 upgrades and nDCG@20 0.575 (0.391–0.735) over 11. The model's
+> size and settings are chosen by time-ordered cross-validation inside
+> each training window; intervals come from 2,000 resamples of whole
+> upgrades, the model held fixed.
+
+And replacing §29.3's model figures (the withdrawn claim stays
+withdrawn):
+
+> A logistic regression on the same 17 features also beats popularity
+> at every cut date, by a median of 3.7x against the ranker's 5.2x. We
+> tested in advance whether boosted trees capture structure a linear
+> model cannot: a tree classifier was ahead of the regression at 6 of 7
+> dates by a median factor of 1.2499, just under the 1.25 we had fixed,
+> so we make no such claim. The shipped ranker, tuned afterwards, scores
+> 1.48 times the regression on the held-back window (1.14–1.86).
+
+And the ablation, which the report can now quote in part:
+
+> With the model's size chosen by cross-validation, removing a feature
+> the model never uses moves PR-AUC by up to 9.7%, so smaller effects
+> are not interpreted. One group clears that floor: the two reachability
+> features, how short a symbol's public import path is and whether it is
+> re-exported under a shorter name. Removing them costs 28% of PR-AUC,
+> and on their own they score as well as all 17 features. We state the
+> circularity this carries: code imports symbols by their shortest
+> public names, so a symbol with a short public path also has more ways
+> to be matched by the usage label.
+
+For a slide:
+
+- PR-AUC 0.283 (95% CI 0.223–0.399); floor 0.079.
+- 2.5x popularity (1.65–5.10x); 1.5x a logistic regression on the same
+  features (1.14–1.86x).
+- Median 5.2x popularity across 7 cut dates; every date's interval
+  above 1.0x (lowest 1.20x).
+- precision@10 0.271 (17 upgrades); nDCG@20 0.575 (11 upgrades).
+- What it rests on: reachability (how short the public import path is).
+
+**For the site** (the page copy Varad has is 16 Sep's):
+
+> Beats a popularity baseline at all 7 evaluation cut dates, by a median
+> of 5.2x (2.2x to 6.0x), and at every date the lower end of its 95%
+> interval stays above 1x. Measured on releases published before 28 July
+> 2026; later releases are held back, unseen, for the final evaluation.
+
+model_run's notes for `lambdarank-label_alias-tuned` carry the same
+range ("across 7 cut dates: beats popularity 7/7, lift vs popularity
+median 5.20x min 2.20x max 6.04x, lift's 95% interval above 1.0x at
+7/7").
+
+### 30.4 Still open from item 7
+
+- **Commit ranker.txt and load it.** `artifacts/ranker.txt` is the tuned
+  model. A `--scores` load writes `lambdarank-label_alias-tuned`, the
+  newest model_run row, and the API serves it from its next start
+  (§28.5). `lambdarank-label_alias` stays in the table, so
+  `MODEL_VERSION=lambdarank-label_alias` rolls back in one setting.
+- **`ablate.py --tuning fixed` on today's data**, for the fair
+  comparison of the noise floor.
+- Item 7 is otherwise done. Next on the list: item 8 (F16, F17), item 11
+  (F6, F14) with the measurement above, and F26's real-release story for
+  the 30 Oct demo.
