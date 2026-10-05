@@ -303,12 +303,16 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
     data = tmp / "data"
     dates = "2026-04-01,2026-05-15,2026-07-20"
 
+    # Pinned to --tuning fixed: what this case tests is the same either
+    # way, and its fixtures are named for the fixed sweep. Tuning has its
+    # own tests (test_tuning.py).
     code, out = run("ml/model/stability.py", tmp, "--at", dates,
-                    "--relevance", "graded")
+                    "--relevance", "graded", "--tuning", "fixed")
     graded = data / "stability_label_alias_cv_graded_at.csv"
     check("stability.py --relevance graded writes the _graded file",
           (code, graded.exists()), (0, True))
-    code, out = run("ml/model/stability.py", tmp, "--at", dates)
+    code, out = run("ml/model/stability.py", tmp, "--at", dates,
+                    "--tuning", "fixed")
     binary = data / "stability_label_alias_cv_at.csv"
     if not (graded.exists() and binary.exists()):
         print(out[-1500:])
@@ -342,7 +346,8 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
         data / "stability_label_alias_cv.csv", index=False)
     metrics = tmp / "artifacts" / "metrics.json"
 
-    code, out = run("ml/model/train.py", tmp, "--relevance", "graded")
+    code, out = run("ml/model/train.py", tmp, "--relevance", "graded",
+                    "--tuning", "fixed")
     run_row = pd.read_json(metrics, typ="series") if metrics.exists() else {}
     check("train.py --relevance graded runs and names its model apart",
           (code, run_row.get("version")),
@@ -354,7 +359,7 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
           ("training positives by grade" in out,
            "nDCG@20 with graded gains" in out), (True, True))
 
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     run_row = pd.read_json(metrics, typ="series")
     check("binary train.py keeps its old name and quotes the binary sweep",
           (code, run_row["version"], "across 2 cut dates" in run_row["notes"]),
@@ -363,7 +368,7 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
     # The stamp, not the name: a graded sweep saved under the binary name.
     sweep.head(2).assign(relevance="graded").to_csv(
         data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     run_row = pd.read_json(metrics, typ="series")
     check("a sweep stamped graded is not quoted for a binary model, "
           "whatever its file is called",
@@ -371,7 +376,7 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
           (0, False, True))
     # A sweep from before item 3 has no stamp, and was binary.
     sweep.head(2).to_csv(data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     run_row = pd.read_json(metrics, typ="series")
     check("an unstamped sweep from before item 3 is quoted as binary",
           (code, "across 2 cut dates" in run_row["notes"]), (0, True))
@@ -395,14 +400,14 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
     features.write_text(good)
 
     code, out = run("ml/model/ablate.py", tmp, "--relevance", "graded",
-                    "--trees", "5")
+                    "--trees", "5", "--tuning", "fixed")
     check("ablate.py --relevance graded runs and writes its own file",
           (code, "relevance graded" in out,
            (data / "ablation_label_alias_graded.csv").exists()),
           (0, True, True))
 
     code, out = run("ml/model/final_eval.py", tmp, "--unseal",
-                    "--relevance", "graded")
+                    "--relevance", "graded", "--tuning", "fixed")
     ledger = data / "holdout_ledger.csv"
     row = pd.read_csv(ledger).iloc[-1] if ledger.exists() else {}
     check("final_eval.py --relevance graded runs and records it",
@@ -486,8 +491,10 @@ def case_every_fit(tmp: pathlib.Path) -> None:
             ("final_eval.py", "ml/model/final_eval.py", "--unseal",
              "--again", "test_relevance: every fit graded")]
     for name, script, *args in runs:
+        # --tuning fixed: graded is binary-tuning-only (test_tuning.py).
         seen, code, out = spied_script(script, tmp, *args,
-                                       "--relevance", "graded")
+                                       "--relevance", "graded",
+                                       "--tuning", "fixed")
         ok = (code == 0 and len(seen) > 0
               and all(s["gain"] == T.GRADE_GAIN and s["y"].max() > 1
                       and (s["eval_y"] is None or s["eval_y"].max() > 1)

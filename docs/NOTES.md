@@ -2694,9 +2694,11 @@ cross-package ordering.
 package); say so.
 
 **F7. Model complexity is set by a constant, not the data.**
-*[Rule fixed 2 Oct, §30.1: `--tuning cv` chooses the setting and the
-tree count on the CV folds, each stopping on PR-AUC, no clamp; it ships
-if it costs nothing the sweep can see. Result: §30.2.]*
+*[Done 2 Oct (§30.2), by a rule fixed before the run (§30.1): the
+setting and tree count are now chosen on the CV folds, each stopping on
+PR-AUC, no clamp. At the seven dates, median lift 5.20x against 4.08x,
+worst 2.20x against 2.30x; the shipped model sat on the clamp at 4 of
+7.]*
 CV folds chose [3, 10, 54, 6] trees; median 8; clamped to
 `MIN_TREES = 20`. This is why the ablation noise floor is 17% and why
 "path shape only" scores 116% of the full model. Nothing about the
@@ -2954,8 +2956,9 @@ Each of the first four both fixes a defect AND raises the headline.
 7. F7 + F8 — tune the ensemble; add the linear baseline.
    **F8 done 2 Oct (§29.2): the trees missed the margin fixed in
    advance by 0.0001, and the U-shape claim is withdrawn; the line is
-   now the strongest baseline. F7's rule fixed 2 Oct (§30.1); the
-   result is §30.2.**
+   now the strongest baseline. F7 done 2 Oct (§30.2): tuned ships,
+   median lift 5.20x against 4.08x; its single split, sweep and
+   ablation are §30.3.**
 8. F16 + F17 — collapse echoes, flag prereleases; re-run.
 9. F19 + F18 — retry the 149; chase numpy.
 10. F20 + F21 — pin deps; test the metrics.
@@ -4027,6 +4030,9 @@ What this says:
 
 ### 27.3 For the report and deck
 
+*[2 Oct: these are the fixed model's numbers. The tuned model ships
+(§30.2), and §30.3 replaces them for the report.]*
+
 > On the held-back test window (1,955 rows: 1,511 distinct changes in
 > 191 upgrades), the ranker reaches PR-AUC 0.232 (95% interval
 > 0.186–0.331) against a floor of 0.079, 2.1 times the popularity
@@ -4387,6 +4393,9 @@ ranker 20–36, a range that starts at the 20-tree clamp (F7).
 
 ### 29.3 For the report and deck
 
+*[2 Oct: the withdrawn claim stands, but the ranker's numbers below are
+the fixed model's; §30.3 gives the tuned model's.]*
+
 > To test whether the trees matter, we fitted a logistic regression on
 > the same 17 features, on the same rows. It beats the popularity
 > baseline at all seven cut dates as well, by a median of 3.7x against
@@ -4525,3 +4534,71 @@ gains a case 7.
   ablation notes stand.
 
 Either way the table and the verdict go into §30.2.
+
+### 30.2 The result: tuned ships
+
+`scripts/item7_tuning.py`, run 2 Oct after the rule was pushed (0ecbfcb).
+The self-check passed: fixed reproduced §24.2 lift for lift. `git status`
+was clean afterwards. The fixed sweep took 0.8 minutes, the tuned one 4.2.
+
+**The diagnosis, measured.** In the four CV folds of all dev rows, 76% to
+88% of validation upgrades have no positive (45 of 58, 30 of 34, 48 of
+59, 145 of 191). Each of those scored nDCG 1.0 in the number the shipped
+model's folds stopped on.
+
+| cut | lift, fixed | lift, tuned | trees, fixed | trees, tuned | tuned setting | nDCG@20, fixed | nDCG@20, tuned | tuned / line |
+|---|---|---|---|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 5.80x | 20 | 80 | 15/0.02/10 | 0.6039 | 0.5798 | 1.40x |
+| 2025-10-06 | 4.86x | 5.43x | 20 | 18 | 31/0.05/100 | 0.5592 | 0.6089 | 1.32x |
+| 2025-12-03 | 5.70x | 6.04x | 28 | 22 | 31/0.05/100 | 0.5449 | 0.5535 | 1.37x |
+| 2026-01-18 | 4.02x | 5.20x | 20 | 87 | 31/0.05/100 | 0.5248 | 0.5869 | 1.41x |
+| 2026-03-02 | 3.01x | 3.07x | 23 | 78 | 7/0.05/10 | 0.5119 | 0.5279 | 0.94x |
+| 2026-04-02 | 4.08x | 4.39x | 36 | 17 | 7/0.05/10 | 0.6093 | 0.6118 | 1.43x |
+| 2026-05-04 | 2.30x | 2.20x | 20 | 93 | 7/0.05/30 | 0.5963 | 0.5893 | 1.39x |
+| **worst** | 2.30x | 2.20x | | | | | | |
+| **median** | 4.08x | **5.20x** | | | | 0.5592 | 0.5869 | 1.39x |
+
+Settings are leaves/learning rate/smallest leaf. Medians of the other
+numbers: PR-AUC 0.2344 (fixed) and 0.2697 (tuned), precision@10 0.2800
+and 0.2853.
+
+**Verdict: tuned ships.** All three parts of §30.1 hold: it beats
+popularity at 7 of 7 dates; its worst lift, 2.20x, is above the 2.05x
+floor; its median, 5.20x, is above 3.58x.
+
+What it says:
+
+- **The shipped model's size was the clamp's, not the data's.** It sat
+  at exactly 20 trees at 4 of the 7 dates. Tuned, the counts run from
+  17 to 93.
+- **Tuned is ahead at 6 of the 7 dates** on lift over popularity, and
+  its median is 1.12x higher (4.08x to 5.20x). It is behind at the last
+  date, 2.20x against 2.30x, inside the 0.25x the sweep cannot resolve.
+  nDCG@20 is higher at 5 of 7.
+- **No single setting won.** 31/0.05/100 at three dates, 7/0.05/10 at
+  two, 15/0.02/10 and 7/0.05/30 once each, and neither corner of the grid
+  at any. The choice moves with the training window, so no one setting
+  is "the" answer; what tuning changes is that each date's size and
+  setting are the data's choice.
+- **Against the line, for the record.** The tuned ranker's PR-AUC is a
+  median 1.39x the line's, ahead at 6 of 7 dates (behind at 2026-03-02,
+  0.94x). By §30.1 this is recorded and not ruled on. F8's test was the
+  pointwise classifier against the line, fixed before its run, and its
+  verdict (§29.2) stands: the report does not claim the trees capture
+  structure a line cannot. §30.3 says how to give the number without
+  that claim.
+
+**What follows**, by §30.1:
+
+- `SHIPPED_TUNING` is `"cv"` from the next commit, and train.py,
+  stability.py, final_eval.py and ablate.py default to it. `--tuning
+  fixed` keeps the 5 Sep model; the tests of other things are pinned to
+  it, so their fixtures still mean what they did. `--relevance graded`
+  now needs `--tuning fixed`.
+- Then three runs: `stability.py` for the tuned range train.py quotes,
+  `train.py` for the tuned ranker.txt (`lambdarank-label_alias-tuned`),
+  and `ablate.py`, F7's other half. Their numbers go into §30.3, which
+  replaces §27.3's and §29.3's model numbers for the report.
+- Then the database: a `--scores` load under the new name, served after
+  the API's next start (§28.5), and Varad told, with §30.3's page copy.
+- §24.3, §27 and §29 stay as the record of the fixed model.

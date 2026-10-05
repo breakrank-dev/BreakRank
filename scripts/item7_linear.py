@@ -17,7 +17,11 @@ what follows:
               on the same rows (baselines.linear_scores). Nothing tuned.
   classifier  LightGBM with the binary objective, on the same features,
               its tree count chosen by the same CV. Trees, pointwise.
-  ranker      LightGBM lambdarank, the model that ships (§24).
+  ranker      LightGBM lambdarank as it shipped when this ran (§24),
+              its trees sized the fixed way. The tuning of §30
+              came after this verdict, so run_label is left at
+              its fixed default here, and this script still
+              reproduces §29.2.
 
 The report's claim (F8) is that the trees find a U-shape a line cannot.
 The like-for-like test of that is the classifier against the line: both

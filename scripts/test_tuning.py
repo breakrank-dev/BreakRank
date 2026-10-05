@@ -36,6 +36,8 @@ Seven cases:
      row stamped and each fitted cut naming a setting from the grid;
      train.py names a tuned model apart and quotes a sweep only if its
      trees were sized the same way, by the stamp and not the file name;
+     with no option it is now the tuned model (§30.2); ablate.py holds
+     one tuned setting and count for every run, in its own file;
      final_eval.py records a tuned opening and its setting.
   7. The rule in scripts/item7_tuning.py at every edge, and the count
      of validation upgrades with no positive that F7's diagnosis rests
@@ -147,6 +149,8 @@ def case_grid() -> None:
           T.choose_setting(rows)["order"], 1)
     check("a setting written as leaves/learning rate/smallest leaf",
           T.setting_text(T.FIXED_PARAMS), "31/0.05/30")
+    check("tuned ships, by §30.1's rule (§30.2): the default is cv",
+          T.SHIPPED_TUNING, "cv")
 
 
 def case_shipped(train: pd.DataFrame) -> None:
@@ -303,7 +307,8 @@ def case_scripts(tmp: pathlib.Path) -> None:
     tuned = data / "stability_label_alias_cv_tuned_at.csv"
     check("stability.py --tuning cv writes the _tuned file",
           (code, tuned.exists()), (0, True))
-    code, out2 = run("ml/model/stability.py", tmp, "--at", dates)
+    code, out2 = run("ml/model/stability.py", tmp, "--at", dates,
+                     "--tuning", "fixed")
     fixed = data / "stability_label_alias_cv_at.csv"
     if not (tuned.exists() and fixed.exists()):
         print((out + out2)[-1500:])
@@ -345,7 +350,7 @@ def case_scripts(tmp: pathlib.Path) -> None:
     check("it prints the settings it tried and the one it chose",
           ("tuned on the same folds" in out, "chosen" in out), (True, True))
 
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     row = pd.read_json(metrics, typ="series")
     check("fixed train.py keeps its old name and quotes the fixed sweep",
           (code, row["version"], "tuning=fixed" in row["notes"],
@@ -354,7 +359,7 @@ def case_scripts(tmp: pathlib.Path) -> None:
 
     sweep.head(2).assign(tuning="cv").to_csv(
         data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     row = pd.read_json(metrics, typ="series")
     check("a sweep stamped cv is not quoted for a fixed model, whatever "
           "its file is called",
@@ -362,10 +367,30 @@ def case_scripts(tmp: pathlib.Path) -> None:
           (0, False, True))
     sweep.head(2).drop(columns="relevance").to_csv(
         data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     row = pd.read_json(metrics, typ="series")
     check("an unstamped sweep from before item 7 is quoted as fixed",
           (code, "across 2 cut dates" in row["notes"]), (0, True))
+
+    code, out = run("ml/model/train.py", tmp)
+    row = pd.read_json(metrics, typ="series") if metrics.exists() else {}
+    check("with no option, train.py is the tuned model now, and quotes the "
+          "tuned sweep",
+          (code, row.get("version"), "tuning=cv" in row.get("notes", ""),
+           "across 3 cut dates" in row.get("notes", "")),
+          (0, "lambdarank-label_alias-tuned", True, True))
+
+    code, out = run("ml/model/ablate.py", tmp)
+    check("ablate.py, by default, holds one tuned setting and count for "
+          "every run, in its own file",
+          (code, "chosen once on all features" in out, "tuning cv" in out,
+           (data / "ablation_label_alias_tuned.csv").exists()),
+          (0, True, True, True))
+    code, out = run("ml/model/ablate.py", tmp, "--tuning", "fixed")
+    check("and --tuning fixed is the ablation as before, in the old file",
+          (code, "chosen once" in out, "tuning fixed" in out,
+           (data / "ablation_label_alias.csv").exists()),
+          (0, False, True, True))
 
     # This fixture has no count column, so graded is refused for that
     # first; either reason is a refusal that says why.

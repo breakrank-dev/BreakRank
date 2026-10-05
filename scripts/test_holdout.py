@@ -431,13 +431,16 @@ def case_final_eval(tmp: pathlib.Path) -> None:
 
     # The number itself, recomputed here from dev rows ALONE. A final_eval
     # that quietly fitted on dev + holdout would record the same row counts
-    # and a better PR-AUC; this is what catches it.
+    # and a better PR-AUC; this is what catches it. Fitted the way the
+    # shipped model is (SHIPPED_TUNING, cv since 2 Oct), as final_eval's
+    # default is.
     got = probe(tmp, (
         "import pandas as pd\n"
         "from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC\n"
         "from ml.holdout import GROUP\n"
         "from ml.model.metrics import evaluate\n"
-        "from ml.model.train import fit_cv, prepare, score_with\n"
+        "from ml.model.train import (SHIPPED_TUNING, fit_cv, prepare,\n"
+        "                            score_with)\n"
         "t = {c: str for c in GROUP}\n"
         "d = pd.read_csv('data/features.csv', dtype=t).assign(_p=0)\n"
         "h = pd.read_csv('data/holdout.csv', dtype=t).assign(_p=1)\n"
@@ -445,7 +448,8 @@ def case_final_eval(tmp: pathlib.Path) -> None:
         "d = b[b._p == 0].drop(columns='_p').sort_values(GROUP)\n"
         "h = b[b._p == 1].drop(columns='_p').sort_values(GROUP).copy()\n"
         "f = NUMERIC + BOOLEAN + CATEGORICAL\n"
-        "m, _, _ = fit_cv(d, f, 'label_alias', 'lambdarank')\n"
+        "m, _, _ = fit_cv(d, f, 'label_alias', 'lambdarank',\n"
+        "                 tuning=SHIPPED_TUNING)\n"
         "h['s'] = score_with(m, h, f)\n"
         "print('EXPECTED', evaluate(h, 's', 'label_alias')['pr_auc'])\n"))
     exp = re.search(r"EXPECTED ([0-9.]+)", got)
@@ -488,14 +492,16 @@ def case_serving(tmp: pathlib.Path) -> None:
     # A stability file from before the freeze: no holdout_from stamp. Its
     # late cuts scored holdout rows, so its range must not reach model_run.
     # The file is `label`'s, so train.py is told the label rather than
-    # left to its default (label_alias since 30 Sep).
+    # left to its default (label_alias since 30 Sep), and the file is the
+    # fixed sweep's, so it is told --tuning fixed (cv since 2 Oct).
     stab = tmp / "data" / "stability_label_cv.csv"
     sweep = pd.DataFrame({"cut": ["2026-05-01", "2026-06-01"],
                           "skipped": [False, False],
                           "lift_vs_pop": [1.5, 1.7],
                           "beats_pop": [True, True]})
     sweep.to_csv(stab, index=False)
-    code, out = run("ml/model/train.py", tmp, "--label", "label")
+    code, out = run("ml/model/train.py", tmp, "--label", "label",
+                    "--tuning", "fixed")
     check("train.py runs on the frozen features.csv", code, 0)
     if code:
         print(out[-2000:])
@@ -509,7 +515,8 @@ def case_serving(tmp: pathlib.Path) -> None:
     # fails if train.py simply stopped quoting stability files at all.
     sweep.assign(holdout_from=str(HOLDOUT_START.date())).to_csv(
         stab, index=False)
-    code, out = run("ml/model/train.py", tmp, "--label", "label")
+    code, out = run("ml/model/train.py", tmp, "--label", "label",
+                    "--tuning", "fixed")
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",
                          typ="series")["notes"]
     check("a stamped stability file is quoted as before",

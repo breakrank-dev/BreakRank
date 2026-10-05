@@ -207,8 +207,11 @@ def case_scripts(tmp: pathlib.Path) -> None:
         return
     data = tmp / "data"
 
+    # Pinned to --tuning fixed: what this case tests is the same either
+    # way, and its fixtures are named for the fixed sweep. Tuning has its
+    # own tests (test_tuning.py).
     code, out = run("ml/model/stability.py", tmp, "--at",
-                    "2026-04-01,2026-05-15")
+                    "2026-04-01,2026-05-15", "--tuning", "fixed")
     t = pd.read_csv(data / "stability_label_alias_cv_at.csv")
     check("stability.py writes each cut's lift interval, around its lift, "
           "and its changes and upgrades",
@@ -226,7 +229,7 @@ def case_scripts(tmp: pathlib.Path) -> None:
                           "beats_pop": True, "holdout_from": stamp})
     sweep.assign(lift_lo=[1.4, 0.9], lift_hi=[2.3, 1.8]).to_csv(
         data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",
                          typ="series")["notes"]
     check("train.py prints the intervals, with the test half's changes "
@@ -240,7 +243,7 @@ def case_scripts(tmp: pathlib.Path) -> None:
     check("and quote the sweep's count by its lower bounds: 1 of 2, not 2",
           "lift's 95% interval above 1.0x at 1/2" in notes, True)
     sweep.to_csv(data / "stability_label_alias_cv.csv", index=False)
-    code, out = run("ml/model/train.py", tmp)
+    code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",
                          typ="series")["notes"]
     check("a sweep from before item 5 is quoted, and nothing is said of "
@@ -248,7 +251,8 @@ def case_scripts(tmp: pathlib.Path) -> None:
           (code, "across 2 cut dates" in notes,
            "interval above 1.0x" in notes), (0, True, False))
 
-    code, out = run("ml/model/final_eval.py", tmp, "--unseal")
+    code, out = run("ml/model/final_eval.py", tmp, "--unseal",
+                    "--tuning", "fixed")
     found = re.search(r"model\s+PR-AUC\s+([0-9.]+)\s+95% interval "
                       r"([0-9.]+) to ([0-9.]+)", out)
     lift = re.search(r"lift over popularity\s+([0-9.]+)x\s+95% interval "

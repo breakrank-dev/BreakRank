@@ -4,6 +4,7 @@ Is the result real, or is it one feature wearing a hat?
     python ml/model/ablate.py
     python ml/model/ablate.py --label label_scoped
     python ml/model/ablate.py --relevance graded
+    python ml/model/ablate.py --tuning fixed
 
 The first ranker scored 1.85x popularity, and its top two features were
 module_depth and name_length — not `kind`, not `package_rank`. Before
@@ -51,8 +52,9 @@ from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.metrics import evaluate  # noqa: E402
 from ml.model.train import (RELEVANCE, SHIPPED_RELEVANCE,  # noqa: E402
-                            cv_tree_count, fit_fixed, prepare,
-                            relevance_problem, score_with, GROUP)
+                            SHIPPED_TUNING, TUNING, cv_tree_count, cv_tune,
+                            fit_fixed, prepare, relevance_problem,
+                            score_with, setting_text, tuning_problem, GROUP)
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -123,15 +125,23 @@ def main() -> None:
                     choices=RELEVANCE,
                     help="what every run is taught; the default is what "
                          "train.py ships")
+    ap.add_argument("--tuning", default=SHIPPED_TUNING, choices=TUNING,
+                    help="cv: the setting and tree count are chosen once, "
+                         "on the full feature set's CV folds, and held for "
+                         "every run. fixed: the 5 Sep setting, its count "
+                         "clamped at 20. The default is what train.py "
+                         "ships (F7, NOTES §30).")
     args = ap.parse_args()
     label = args.label
     rel = args.relevance
+    tuned = args.tuning == "cv"
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = prepare(pd.read_csv(FEATURES))
     assert_no_holdout(df, "ablate.py")
-    problem = relevance_problem(df, label, args.objective, rel)
+    problem = (relevance_problem(df, label, args.objective, rel)
+               or tuning_problem(args.tuning, rel))
     if problem:
         sys.exit(f"ablate.py: {problem}")
     everything = NUMERIC + BOOLEAN + CATEGORICAL
@@ -172,16 +182,27 @@ def main() -> None:
     # cv_tree_count returns (median, per-fold counts) — the folds are worth
     # printing, not discarding, because their spread is the reason this
     # whole fixed-count change exists.
-    if args.trees:
-        n_trees, folds = args.trees, []
+    #
+    # TUNED (F7), THE SAME RULE: the setting and the count are chosen ONCE,
+    # on the full feature set's folds, and every run is held to both. Each
+    # subset choosing its own setting would bring the fifteen-fold range
+    # back in another form.
+    params = None
+    if tuned:
+        params, n_trees, folds, _ = cv_tune(full_train, everything, label,
+                                            args.objective)
     else:
         n_trees, folds = cv_tree_count(full_train, everything, label,
                                        args.objective, relevance=rel)
+    if args.trees:
+        n_trees, folds = args.trees, []
 
-    print(f"\nlabel {label}   relevance {rel}   test {len(test):,} rows "
-          f"({test[label].mean():.2%} positive)")
+    print(f"\nlabel {label}   relevance {rel}   tuning {args.tuning}   test "
+          f"{len(test):,} rows ({test[label].mean():.2%} positive)")
     print(f"every run fixed at {n_trees} trees"
-          + (f" (CV median of {folds})" if folds else " (set by --trees)"))
+          + (f" (CV median of {folds})" if folds else " (set by --trees)")
+          + (f", setting {setting_text(params)} chosen once on all "
+             "features" if tuned else ""))
     print("Fixed on purpose: letting each subset pick its own size makes "
           "the\ncolumns incomparable. See the note in the source.\n")
 
@@ -204,7 +225,7 @@ def main() -> None:
     # Discovered, not hardcoded — which features go unused changes with
     # the label and the data, and a stale list would be worse than none.
     full_model = fit_fixed(full_train, everything, label, n_trees,
-                           args.objective, rel)
+                           args.objective, rel, params=params)
     gains = dict(zip(everything,
                      full_model.booster_.feature_importance("gain")))
     unused = [f for f in everything if gains.get(f, 0) <= 0]
@@ -221,7 +242,7 @@ def main() -> None:
     out = {}
     for name, feats in runs.items():
         model = fit_fixed(full_train, feats, label, n_trees, args.objective,
-                          rel)
+                          rel, params=params)
         scored = test.copy()
         scored["s"] = score_with(model, test, feats)
         m = evaluate(scored, "s", label)
@@ -303,7 +324,8 @@ def main() -> None:
               "dressed-up feature.")
 
     out_path = DATA / (f"ablation_{label}"
-                       + ("_graded" if rel == "graded" else "") + ".csv")
+                       + ("_graded" if rel == "graded" else "")
+                       + ("_tuned" if tuned else "") + ".csv")
     t.to_csv(out_path)
     print(f"\nsaved -> {out_path}")
 

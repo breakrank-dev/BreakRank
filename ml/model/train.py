@@ -5,7 +5,7 @@ The ranker. Everything before this was making the data honest.
     python ml/model/train.py --label label
     python ml/model/train.py --objective binary
     python ml/model/train.py --relevance graded
-    python ml/model/train.py --tuning cv
+    python ml/model/train.py --tuning fixed
 
 The default label is label_alias, chosen 30 Sep by the rule in NOTES §24.
 The default relevance is SHIPPED_RELEVANCE below; NOTES §25 says how
@@ -126,14 +126,19 @@ def target(df: pd.DataFrame, label: str, relevance: str) -> pd.Series:
 
 TUNING = ["fixed", "cv"]
 
-# What train.py, stability.py and final_eval.py use when --tuning is not
-# given: the shipped model's. NOTES §30 decides whether it changes.
+# What train.py, stability.py, final_eval.py and ablate.py use when
+# --tuning is not given: the shipped model's.
 #
 #   fixed  one setting (FIXED_PARAMS). Its tree count is the median of
 #          CV folds that stop on LightGBM's nDCG@10, clamped at 20 trees.
+#          What shipped from 5 Sep to 2 Oct.
 #   cv     the setting AND the tree count chosen on the same CV folds,
 #          each fold stopping on PR-AUC; no clamp (cv_tune below).
-SHIPPED_TUNING = "fixed"
+#
+# "cv" since 2 Oct, by the rule fixed before the run (NOTES §30.1): at the
+# seven dates it beat popularity at all 7, worst lift 2.20x against
+# fixed's 2.30x, median 5.20x against 4.08x (§30.2).
+SHIPPED_TUNING = "cv"
 
 # The setting every model has used since 5 Sep.
 FIXED_PARAMS = dict(num_leaves=31, learning_rate=0.05, min_child_samples=30)
@@ -155,7 +160,8 @@ def tuning_problem(tuning: str, relevance: str = "binary",
         return f"tuning must be one of {TUNING}, not {tuning!r}"
     if tuning == "cv" and relevance == "graded":
         return ("--tuning cv stops each fold on PR-AUC, a 0/1 measure, and "
-                "is binary relevance only.\nUse --relevance binary.")
+                "is binary relevance only.\nUse --relevance binary, or "
+                "--tuning fixed.")
     if tuning == "cv" and stopping != "cv":
         return ("--tuning cv chooses the setting on the CV folds, so it "
                 "needs --stopping cv.")
