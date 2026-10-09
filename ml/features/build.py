@@ -49,6 +49,7 @@ the product.
 """
 
 import pathlib
+import re
 import sys
 
 import pandas as pd
@@ -130,29 +131,92 @@ BOOLEAN = [
 ]
 CATEGORICAL = ["kind", "bump"]
 
-VERSION_LEAVES = {"__version__", "__VERSION__", "version",
-                  "version_tuple", "__version_tuple__", "VERSION"}
+# F1, narrowed on 10 Oct at Varad's request (NOTES §33.1) to work the way
+# F39 does. Until then it took any change to these six names, judged by
+# the last part of the symbol alone.
+VERSION_DUNDERS = {"__version__", "__VERSION__", "__version_tuple__"}
+# The same constants without the underscores: setuptools-scm's _version.py
+# writes `version` and `version_tuple` beside the dunders, and VERSION is
+# the older spelling. As bare names they are also a submodule
+# (packaging.version), a method, or a class's own attribute, so they count
+# only where they sit directly in a module.
+VERSION_BARE = {"version", "VERSION", "version_tuple"}
+VERSION_LEAVES = VERSION_DUNDERS | VERSION_BARE
+# Only a changed VALUE. A removed __version__ breaks every line that reads
+# pkg.__version__ (Flask and Werkzeug have both deprecated theirs), so a
+# removal, or any other kind of change to these names, stays a change.
+VERSION_KIND = "ATTRIBUTE_CHANGED_VALUE"
+# Nor a value that is gone. griffe reports `__version__ = "1.0"` turned
+# into the bare annotation `__version__: str` as a changed value, '1.0' ->
+# unset, and code that reads it then fails as it would after a removal.
+UNSET = " -> unset"
+
+# Where an attribute sits, in griffe's own words. Its explanation names the
+# object by its path INSIDE its module, just before the sentence for the
+# kind; ml/db.py usually strips the file and line in front before the
+# database stores it as griffe_message, and this reads both forms:
+#   .../pkg/_version.py:5: version: Attribute value was changed: ...
+#   .../requests/adapters.py:193: HTTPAdapter.max_retries: Attribute ...
+# A path inside a module has no space or colon in it, so the first such
+# run before the sentence is the title, whatever letters it is spelled in.
+GRIFFE_TITLE = re.compile(r"(?:^|:\s)([^\s:]+): Attribute value was changed")
+
+
+def leaves(df: pd.DataFrame) -> pd.Series:
+    """The last part of each symbol: packaging.version.Version -> Version."""
+    return df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
+
+
+def value_changed(df: pd.DataFrame) -> pd.Series:
+    """True where griffe reports ATTRIBUTE_CHANGED_VALUE and the attribute
+    still has a value: not '1.0' -> unset, which is a removal in effect
+    (NOTES §33.1). Without an explanation the kind alone decides."""
+    changed = df["kind"].astype(str).eq(VERSION_KIND)
+    if "explanation" not in df:
+        return changed
+    gone = (df["explanation"].fillna("").astype(str).str.rstrip()
+            .str.endswith(UNSET))
+    return (changed & ~gone).astype(bool)
+
+
+def in_module(df: pd.DataFrame) -> pd.Series:
+    """True where griffe's explanation names the attribute by its bare
+    name, which it does only for one that sits directly in a module
+    (pkg._version.version reads "version: Attribute value was changed").
+    A class's attribute reads "Config.VERSION: ...". No explanation, or
+    one this cannot read, is False: when in doubt the row stays."""
+    if "explanation" not in df:
+        return pd.Series(False, index=df.index)
+    title = (df["explanation"].fillna("").astype(str)
+             .str.extract(GRIFFE_TITLE, expand=False).fillna("")
+             .astype(str))
+    return title.eq(leaves(df)).astype(bool)
 
 
 def version_strings(df: pd.DataFrame) -> pd.Series:
-    """True for rows whose symbol is a version constant (pkg.__version__,
-    pkg.VERSION and the like), judged by the last part of its name."""
-    leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
-    return leaf.isin(VERSION_LEAVES)
+    """True for rows where a version constant changed value: griffe
+    reports ATTRIBUTE_CHANGED_VALUE to a value that is not `unset`, and
+    the symbol ends in one of VERSION_DUNDERS (pkg.__version__), or in one
+    of VERSION_BARE where it sits directly in a module
+    (pkg._version.version, not a class's Config.VERSION)."""
+    leaf = leaves(df)
+    bare = leaf.isin(VERSION_BARE) & in_module(df)
+    return value_changed(df) & (leaf.isin(VERSION_DUNDERS) | bare)
 
 
 def drop_version_strings(df: pd.DataFrame) -> pd.DataFrame:
-    """F1 (item 2 of the fix list): the rows that are a version constant
-    changing value, removed before any feature is computed.
+    """F1 (item 2 of the fix list): the rows where a version constant
+    changed value, removed before any feature is computed.
 
-    1,760 of the 1,769 such rows are ATTRIBUTE_CHANGED_VALUE on
-    pkg.__version__ or VERSION. Downstream code reads the constant, so the
-    label calls it used, and version strings were 45% of the positives
-    while breaking nobody: they change on every release by design. The
-    model's top feature was detecting them. Dropping them HERE, before
-    add_features, is what keeps release_size and package_churn from
-    counting them. labelled.csv keeps them, for the label reports that
-    describe them.
+    Downstream code reads the constant, so the label calls it used, and
+    version strings were 45% of the positives while breaking nobody: they
+    change on every release by design. The model's top feature was
+    detecting them. Dropping them HERE, before add_features, is what keeps
+    release_size and package_churn from counting them. labelled.csv keeps
+    them, for the label reports that describe them.
+
+    1,769 rows went under the first rule (§23.1); scripts/version_count.py
+    counts what the narrowed one takes (§33).
     """
     return df[~version_strings(df)]
 
@@ -178,21 +242,22 @@ METADATA_LEAVES = {
     "__version_info__", "__version_time__",
 }
 # Only a changed VALUE: a changed string breaks nobody. A removed name can
-# (code that reads pkg.__author__ would fail), so a removal stays a change.
+# (code that reads pkg.__author__ would fail), so a removal stays a change,
+# and so, from 10 Oct, does a value changed to `unset`, a removal in effect
+# (§33.1), as for F1.
 METADATA_KIND = "ATTRIBUTE_CHANGED_VALUE"
 
 
 def metadata_strings(df: pd.DataFrame) -> pd.Series:
     """True for rows where a package-metadata string changed value
     (pkg.__copyright__, pkg.__author__ and the like): the last part of the
-    symbol is in METADATA_LEAVES and griffe reports a changed value.
+    symbol is in METADATA_LEAVES and griffe reports a changed value, not
+    one changed to `unset` (value_changed).
 
     scripts/metadata_count.py counted them first (§32.2); main() drops
     them with the version strings (F39 step 2, §32.3).
     """
-    leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
-    changed = df["kind"].astype(str).eq(METADATA_KIND)
-    return leaf.isin(METADATA_LEAVES) & changed
+    return leaves(df).isin(METADATA_LEAVES) & value_changed(df)
 
 
 def drop_metadata(df: pd.DataFrame) -> pd.DataFrame:

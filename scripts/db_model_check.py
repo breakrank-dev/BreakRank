@@ -37,17 +37,28 @@ should all come from one load, and F1 took the version-string rows out of
 the model, so after a load the first list has one day and the count is 0.
 F39 (NOTES §32) took package-metadata rows out the same way, so they are
 counted the same way, from 9 Oct: 0 after the first load that follows.
+
+Both counts use build.py's own rules, version_strings() and
+metadata_strings(). Since 10 Oct F1 names a version constant's changed
+value only, and the bare names (version, VERSION, version_tuple) only
+directly in a module, which it reads from griffe's explanation; and
+neither F1 nor F39 takes a value changed to `unset` (NOTES §33.1). The
+database keeps that explanation as detail.griffe_message, so the same
+functions decide here.
 """
 
 import json
 import pathlib
 import sys
 
+import pandas as pd
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.db import connect  # noqa: E402
-from ml.features.build import (METADATA_KIND, METADATA_LEAVES,  # noqa: E402
-                               VERSION_LEAVES)
+from ml.features.build import (METADATA_LEAVES, VERSION_KIND,  # noqa: E402
+                               VERSION_LEAVES, metadata_strings,
+                               version_strings)
 
 METRICS = pathlib.Path("artifacts") / "metrics.json"
 # /health answers {"ok": true, "model_version": ...}, the model the API is
@@ -74,21 +85,24 @@ def main() -> None:
             SELECT date(computed_at) AS day, count(*) FROM prediction
             WHERE model_version = :v GROUP BY 1 ORDER BY 1
         """), {"v": ours}).fetchall() if ours else []
-        stale_vs = conn.execute(text(r"""
-            SELECT count(*) FROM prediction p
-            JOIN breakage b ON b.id = p.breakage_id
-            WHERE p.model_version = :v
-              AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
-        """), {"v": ours, "leaves": sorted(VERSION_LEAVES)}).scalar() \
-            if ours else 0
-        stale_meta = conn.execute(text(r"""
-            SELECT count(*) FROM prediction p
+        # The candidates by name and kind, scored by this model. build.py's
+        # own rules then read griffe's explanation: where a bare version
+        # name sits, and whether a value was changed to unset (§33.1).
+        named = conn.execute(text(r"""
+            SELECT b.symbol_path, b.kind, b.detail ->> 'griffe_message'
+            FROM prediction p
             JOIN breakage b ON b.id = p.breakage_id
             WHERE p.model_version = :v
               AND b.kind = :kind
               AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
-        """), {"v": ours, "kind": METADATA_KIND,
-               "leaves": sorted(METADATA_LEAVES)}).scalar() if ours else 0
+        """), {"v": ours, "kind": VERSION_KIND,
+               "leaves": sorted(VERSION_LEAVES | METADATA_LEAVES)}
+        ).fetchall() if ours else []
+
+    scored = pd.DataFrame([tuple(r) for r in named],
+                          columns=["symbol", "kind", "explanation"])
+    stale_vs = int(version_strings(scored).sum())
+    stale_meta = int(metadata_strings(scored).sum())
 
     print(f"\nmodel_run rows, newest first ({breakages:,} breakage rows in "
           "the table):\n")

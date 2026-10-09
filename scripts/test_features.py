@@ -6,7 +6,9 @@ Item 2 of the fix list: version strings out (F1), package_churn past-only
 
 No network and no real data; about ten seconds. It adds version-string
 rows to the labelled fixture test_holdout.py builds, runs the real
-build.py on it in a temp directory, and checks what came out.
+build.py on it in a temp directory, and checks what came out. Which rows
+count as version strings since F1 was narrowed (§33.1) is tested in
+scripts/test_version_count.py.
 
 WHY THIS FILE EXISTS. Both fixes change what every model trains on, and
 both can look done while being half-done:
@@ -74,6 +76,14 @@ def base_fixture() -> pd.DataFrame:
     return mod.make_labelled()
 
 
+def griffe_said(name: str) -> str:
+    """griffe's explanation for a module-level constant whose value
+    changed, as changes.csv stores it. Since §33.1 the bare names (VERSION
+    here) count only where it names them bare, as it does in a module."""
+    return (f"data/sdists/x/1.0/pkg/__init__.py:3: {name}: Attribute value "
+            "was changed: '1.0' -> '1.1'")
+
+
 def with_version_strings(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
     """Every upgrade gains a positive pkg.__version__ row, and three new
     upgrades are nothing but a version bump (one in dev, two in the
@@ -81,6 +91,7 @@ def with_version_strings(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
     pairs = base.drop_duplicates(GROUP)
     bumps = pairs.assign(symbol=pairs["package"] + ".__version__",
                          kind="ATTRIBUTE_CHANGED_VALUE", sub_target="",
+                         explanation=griffe_said("__version__"),
                          label=1, label_scoped=1, label_alias=1,
                          user_count=5)
     only = pairs.drop_duplicates("package").head(3).copy()
@@ -90,6 +101,7 @@ def with_version_strings(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
                            for d in (-30, 3, 9)]
     only = only.assign(symbol=only["package"] + ".VERSION",
                        kind="ATTRIBUTE_CHANGED_VALUE", sub_target="",
+                       explanation=griffe_said("VERSION"),
                        label=1, label_scoped=1, label_alias=1, user_count=5)
     keys = set(only[GROUP].astype(str).itertuples(index=False, name=None))
     df = pd.concat([base, bumps, only], ignore_index=True)

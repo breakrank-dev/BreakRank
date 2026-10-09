@@ -2626,6 +2626,8 @@ marked **[better]** were tested and IMPROVE the result when fixed.
 *[Done 26 Sep, 0f7330f. The [better] did not replicate: measured alone
 on the frozen dev set it LOWERS the lift over popularity, median 3.22x →
 2.29x (§23.4).]*
+*[Narrowed 10 Oct at Varad's request: a changed value only, and the bare
+names only directly in a module (§33.1).]*
 1,760 of the 1,769 `is_version_string` rows are `ATTRIBUTE_CHANGED_VALUE`
 on `pkg.__version__` / `VERSION`. Downstream code references the
 constant, so usage > 0 and it is labelled positive — but a version
@@ -2802,6 +2804,9 @@ symbol in this release is imported by anyone in the top-1,500," which
 the pipeline can already assert.
 *Fix (Varad):* the live API should return an explicit `all_clear` state
 with the count of scanned downstream packages, before any ranking.
+*[Decided 9 Oct by Varad: the pipeline decides, his option (b), once F1
+is narrowed (§33.1). A release none of whose changes is imported is his,
+in the API, worded as that count and not as "all clear" (§33.1).]*
 
 ### 21.5 Data quality
 
@@ -2915,6 +2920,9 @@ Database is on Neon (correct — avoids warning #1). Owner: Varad.
 *Fix:* move the API to Hugging Face Spaces (Docker SDK, port 7860) per
 book Part 8, or at minimum add the 6-hourly GitHub Actions keep-alive
 ping. Until then: warm `/health` two minutes before any demo.
+*[9 Oct (Varad): Hugging Face's Docker Spaces are now paid, so the API
+stays on Render, with a free uptime monitor calling /health every 10
+minutes.]*
 
 **Direction summary after verifying the web half:** ML track at book
 Phase 4–5; web track at Phase 1–2 with a working but sleeping API. The
@@ -2978,6 +2986,7 @@ Each of the first four both fixes a defect AND raises the headline.
 10. F20 + F21 — pin deps; test the metrics.
 11. F6 + F14 — reporting: two regimes, group counts everywhere.
 12. F15 — hand the `all_clear` state to Varad's API. Then integrate.
+   **Decided 9 Oct: the pipeline decides, after F1 is narrowed (§33).**
 13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
@@ -3000,6 +3009,9 @@ before the 30 Oct demo: it puts a copyright notice at the top of the
 demo story's release. Its rule, fixed before the count: §32.1.
 **Done 9 Oct (§32.3).** Found on the way, the same day: F40 (§32.3), a
 cut date's lift can hinge on one release; with item 11.
+
+Added 10 Oct: F1 narrowed at Varad's request (§33.1), before item 12's
+database steps; the path-length baseline (§34) in the same retrain.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -4197,6 +4209,8 @@ which a re-load under the served name never needs.
   constant as a breaking change. Either the API reports those releases
   as all clear, or the loader stops writing version strings and
   db_prune removes the ones in the table. Varad's call, with item 12.
+  *[Varad's call, 9 Oct: the loader, once F1 is narrowed, and a deletion
+  step of its own rather than db_prune (§33.1).]*
 - **F35, the pull request** from ml/db-writer into main. Re-checked 2
   Oct: main (c02ad2a) and the branch (570b80c) still change no file in
   common, and a trial merge is clean. It brings every commit since
@@ -4964,6 +4978,8 @@ version string does.
 can: code that reads `pkg.__author__` would fail. So a removal, or any
 other kind of change to these names, stays in the model, and the count
 says how many there are. F1 went by name alone; it is left as it is.
+*[10 Oct: a value changed to `unset`, a removal in effect, stays too;
+and F1 now works this way (§33.1).]*
 
 **Where the rows go: where F1 sends version strings.** Out in build.py
 before any feature is computed, so release_size and package_churn do not
@@ -5271,3 +5287,126 @@ has no shorter name; everything the model reads says "obscure", and the
 model trusts how short a name is above everything else. §31.2's coda
 stands: the label measures use, not breakage, and the changelog's real
 break, the binary curves, is used by almost nobody.
+
+## 33. F1 narrowed, and the all-clear moves into the pipeline (10 Oct)
+
+Varad answered on 9 Oct. The all-clear (F15, item 12) is decided by the
+pipeline, his option (b), once F1 has been changed in two ways. §33.1 was
+written and pushed before `scripts/version_count.py` read the real data.
+The count goes in §33.2, and the retrain in §33.3.
+
+### 33.1 The rule, fixed before the count
+
+**What changes.** F1 (§23) took out any change to six names, judged by
+the last part of the symbol alone: `__version__`, `__VERSION__`,
+`__version_tuple__`, `version`, `VERSION` and `version_tuple`. The two
+changes are to WHERE those names count, not WHICH names:
+
+1. **Only a changed value**, as F39 does (§32.1). A removed `__version__`
+   breaks every line that reads `pkg.__version__`. Flask and Werkzeug
+   have both deprecated theirs, and it is one of the most imported names
+   there is, so it is the last change the site should hide. A removal,
+   or any other kind of change to these names, stays in the model. So
+   does one more case, found in review before the count: griffe reports
+   `__version__ = "1.0"` turned into the bare annotation
+   `__version__: str` as a changed value, `'1.0' -> unset`. The value is
+   gone and code that reads it fails, as after a removal, so a value
+   changed to `unset` stays. For F39's own reason (§32.1, a removal stays
+   a change) the same holds for its names from today.
+2. **The bare names only directly in a module.** `version`, `VERSION`
+   and `version_tuple` are also a submodule (`packaging.version`), a
+   method, or a class's own attribute. setuptools-scm writes `version` and
+   `version_tuple` beside the dunders in a package's `_version.py`, and
+   there they are the package's version, so they go; anywhere else they
+   stay. The dunders go wherever they sit. Varad named `version` and
+   `VERSION`; `version_tuple` is the same case and follows them.
+
+**How "directly in a module" is judged: by griffe's own words.** griffe
+names the changed object by its path inside its module, just before its
+sentence for the kind:
+
+    .../pkg/_version.py:5: version: Attribute value was changed: ...
+    .../requests/adapters.py:193: HTTPAdapter.max_retries: Attribute ...
+
+A bare name there is an attribute of the module itself. That is griffe's
+statement, not a guess from the spelling: a rule that took CapWords for a
+class would call `PIL.Image` one, and it is a module. griffe resolves an
+alias to its target before it reports a changed value, so the symbol is
+always the module's path and that name. An explanation that is empty or
+cannot be read leaves the row in the model. When in doubt the row stays,
+because hiding a real change is the worse mistake for a tool whose job is
+to warn. The database keeps the same text as `detail.griffe_message`,
+usually with the file and line taken off (ml/db.py), and the rule reads
+either form. build.py and `db_model_check.py` decide with one function,
+`version_strings()` in build.py, and the loader and the deletion step
+will use it too (step 3 below).
+
+**What the count reports** (`scripts/version_count.py`, read only, from
+labelled.csv):
+
+- F1's and F39's rules until 10 Oct and from it, side by side: rows in
+  dev and in the holdout, the used ones (dev only), and the upgrades
+  each leaves with nothing in it;
+- what comes back into the model, by name and by why, with an example;
+- what still goes, by name, and every symbol behind the bare names (up
+  to 40, most downloaded first), so anyone can check that each is the
+  package's own version;
+- the all-clear before and after: releases with nothing left once F1 and
+  F39 have run, the ones that leave it, and the most downloaded
+  packages' all-clear releases, for the site's analysed_clean preset
+  (Varad asked for one);
+- what the loader will stop writing;
+- the holdout, counts only: the rows and pairs that come back, its
+  fingerprint before and after, how it stands against the frozen list,
+  and whether each label still clears the gates.
+
+**What follows, whatever the count says.** The narrowing ships: it
+corrects what counts as a change, and the all-clear is the API owner's
+call (item 12). It is not a model choice. No name is added or removed
+after the count. If a module-level `version` turns out to be something
+other than the package's version, a file format's say, §33.2 lists it
+for the hand audit and the rule stands. Then:
+
+1. **One retrain**, measured as F39 was (§32.3): build.py; the seven
+   reference dates (`stability.py --at`) set beside 9 Oct's by
+   `compare_sweeps.py`; the sweep at its own dates; train.py; stories.py;
+   the load under the same name. The path-length baseline Varad asked
+   about (§30.3) rides the same retrain, by its own rule fixed before it
+   runs (§34).
+2. **The holdout.** Rows coming back into it change its pair set and its
+   fingerprint. ml/holdout.py allows that, on condition that the fix is
+   named wherever the numbers are quoted; §33.2 names it.
+3. **The database**, after Varad applies migration 007 (10 Oct). The
+   loader stops writing F1 and F39 rows, and writes a release with
+   nothing else as analysed_clean with n_changes 0. A deletion step of
+   its own, not db_prune, removes the rows already there, so db_prune's
+   5% guard stands: its dry run prints the count, and it deletes only
+   when given that count as `--expect`, in one transaction, after a Neon
+   branch has been made as a restore point. db_prune then runs on what
+   is left, after its dry run and Varad's OK. Nothing writes the status
+   'unknown' before 007 is on Neon, or its CHECK rejects it.
+4. **The second all-clear**, a release none of whose changes is imported
+   by a scanned package, is Varad's, in the API, and is not called all
+   clear. It reads: "None of these N changes is imported by any of the
+   ~1,500 packages we scanned." Zero imports is not zero use: the usage
+   index is built from import statements and is close to blind to
+   methods (§11.6).
+
+Tested by `scripts/test_version_count.py`, four cases: the rule, written
+out again in the test; build.py's drop; the count, checked against counts
+made in the test, including a holdout fingerprint equal to the one
+build.py's holdout.csv has; and what the count refuses. Twenty-eight
+guards were broken on purpose, ten in build.py's rules and eighteen in
+the count, and each turned a check to FAIL. An independent review before
+the count found the `unset` case, and a title spelled in letters the
+first pattern missed; both are in the rule above and in the test.
+`test_features.py`'s version rows now carry griffe's explanation, as
+changes.csv's do. `db_model_check.py` counts version-string and
+metadata rows with a score by build.py's two functions. On a scratch
+Postgres built from migrations 001-006, with eleven scored rows, it
+counted the two version strings (a changed `__version__` and a module's
+`version`; not a removed `__version__`, one changed to `unset`, a removed
+submodule, a class's `VERSION`, or a `VERSION` with no griffe message)
+and the two metadata changes (`__copyright__` and `__version_info__`; not
+an `__author__` changed to `unset`), and read 0 for each once those
+scores were gone.
