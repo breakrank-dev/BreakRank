@@ -2882,8 +2882,9 @@ Measured 2 Oct (§29.2), for the record: classifier median lift over
 popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
 
 **F26. "One story of a real release it got right" — 30 Oct DoD.**
-*[Rules fixed 5 Oct, §31.1: a success and a failure story, chosen by
-rule from the test half. The stories: §31.2.]*
+*[Done 9 Oct (§31.2): cryptography 46.0.7 -> 47.0.0, the model's top 10
+holding 5 of its 7 used changes against 2.3 by chance. Its #1 is a
+copyright notice: F39.]*
 Not produced. One hour with `features.csv` + the model's scores.
 
 **F27. Provenance error, corrected Day 15:** the deck/report/study
@@ -2993,6 +2994,10 @@ Added 26 Sep: F38 (§22.5) before item 2, so that item 2 is judged on a
 sweep whose cut points are distinct measurements. **Done 26 Sep,
 deba775; §22.6.**
 
+Added 9 Oct: F39 (§31.2), module metadata ranked as breaking changes,
+before the 30 Oct demo: it puts a copyright notice at the top of the
+demo story's release.
+
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
 A code review of `main` on 25 Sep, checked line by line against
@@ -3082,7 +3087,8 @@ lacks Varad's API, migrations 005–006, tests and CI. The two branches
 touch no file in common, and a trial merge on 25 Sep was clean. Anyone
 reading main, a reviewer included, reads 6 Sep ML code. Fix: a pull
 request from ml/db-writer into main. *[Re-checked 2 Oct: still a clean
-merge; §28.6.]*
+merge; §28.6. Again 9 Oct, at 941ae8c: 52 commits and 47 files, none
+under api/, web/, db/, tests/ or .github/, and still clean.]*
 
 **F36. API, CI and web gaps (owner Varad).** Checked on main, 25 Sep:
 - only 1 of the 4 contract endpoints exists; `POST /analyze`, which the
@@ -4732,8 +4738,9 @@ And the ablation, which the report can now quote in part:
 
 > With the model's size chosen by cross-validation, removing a feature
 > the model never uses moves PR-AUC by up to 9.7% (16.7% at the old
-> fixed size of 20 trees), so smaller effects are not interpreted. One group clears that floor: the two reachability
-> features, how short a symbol's public import path is and whether it is
+> fixed size of 20 trees), so smaller effects are not interpreted. One
+> group clears that floor: the two reachability features, how short a
+> symbol's public import path is and whether it is
 > re-exported under a shorter name. Removing them costs 28% of PR-AUC,
 > and on their own they score as well as all 17 features. We state the
 > circularity this carries: code imports symbols by their shortest
@@ -4833,3 +4840,88 @@ matters more. F26 makes the first part of the 30 Oct definition of done.
 
 A story shows what the numbers mean; it is not more evidence than they
 are. The report quotes the summary line beside it.
+
+### 31.2 The stories (9 Oct)
+
+`scripts/stories.py`, run 9 Oct after its rules were pushed (941ae8c),
+on the tuned model the site serves.
+
+**The summary, quoted beside any story.** 9 releases in the test half
+have a used change and 20 or more public changes. At all 9 the model's
+top 10 holds more used changes than a random order would. Across them it
+finds 29 of 85 used changes in the top 10, where a random order would
+find 13.0. (Inside one release, popularity and semver are a random
+order.)
+
+**The success story: cryptography 46.0.7 -> 47.0.0** (released 24 Apr
+2026). 31 public changes, 7 used downstream. The model's top 10 holds 5
+of the 7, against 2.3 by chance:
+
+| rank | used by | change |
+|---|---|---|
+| 1 | - | `__about__.__copyright__`, value changed |
+| 2 | 1 package | `x509.base.RevokedCertificate`, kind changed |
+| 3 | - | `utils.DeprecatedIn46`, removed |
+| 4 | 6 | `hazmat.primitives.asymmetric.types.PrivateKeyTypes`, value changed |
+| 5 | 3 | `...asymmetric.types.PublicKeyTypes`, value changed |
+| 6 | **10** | `hazmat.primitives.kdf.pbkdf2.PBKDF2HMAC`, kind changed |
+| 8 | 3 | `hazmat.primitives.kdf.concatkdf.ConcatKDFHash`, kind changed |
+| 20 | 1 | `hazmat.primitives.asymmetric.ec.SECT163R2`, removed |
+| 30 | 1 | `hazmat.primitives.kdf.kbkdf.KBKDFHMAC`, kind changed |
+
+Ranks 7, 9 and 10 are unused (`ConcatKDFHMAC`; two `EllipticCurveOID`
+binary-curve entries). The four most-used changes (10, 6, 3 and 3
+packages) are all in the top 8.
+
+**The failure story, by the rule:** `KBKDFHMAC`, used by 1 package,
+ranked 30 of 31 (public_depth 5, module_depth 5, not in `__all__`, no
+shorter export path: everything about it reads "obscure"). It is the
+same release, and it is a mild failure: across all 9 releases, every
+used change the model put in the bottom half of its list is used by a
+single package. Its misses are the long tail.
+
+**What the changelog says**, read after the run (cryptography.io,
+changelog for 47.0.0). Its backwards-incompatible list names the removal
+of binary elliptic curves (the `SECT*` classes), the end of OpenSSL
+1.1.x support, and errors that changed type. The key-derivation classes
+the model ranked high appear only as gaining `derive_into` methods. So
+their "kind changed" is most likely the classes being reimplemented,
+which griffe sees as a change of kind, rather than a break for the 10
+packages that use PBKDF2HMAC. The label says "used", not "broken"
+(F2), and this release shows the gap: the documented break, the binary
+curves, sits at ranks 9, 10 and 20, used by one package between them.
+
+**The failure a viewer sees first, outside the rule.** Rank 1 is
+`cryptography.__about__.__copyright__`: a copyright notice whose text
+changed, used by nobody. That is F1's kind of row, module metadata,
+under a name `VERSION_LEAVES` does not list. Recorded as found, not as
+the rule's pick.
+
+**F39. Module metadata is ranked as breaking changes.**
+`__copyright__`, and by the same reasoning `__author__`, `__license__`,
+`__email__`, `__title__`, `__summary__`, `__uri__`, `__url__`,
+`__maintainer__`, `__credits__` and `__status__`, are what `__version__`
+is: package metadata, not API anyone calls. F1 took version strings out
+of the model because they are not breaking changes; these are not
+either. *Fix:* count them, then treat them as F1 treats version strings
+(out of the model, sorting last, and in the all-clear of F15), decided
+on what the rows are and not on the score, then measured before and
+after at the same seven dates, as item 2 was. Before the demo: the demo
+story's list starts with one.
+
+**For the demo and the report**, once F39 is done and the list no
+longer starts with the copyright notice:
+
+> cryptography 46.0.7 -> 47.0.0 changed 31 public names. Downstream
+> code uses 7 of them. BreakRank's top 10 holds 5 of those 7, and its
+> top 8 holds the four that the most packages use; reading the list in
+> any fixed order would find 2.3 of them in the first 10. Across the 9
+> comparable releases the model never trained on, its top 10 beats that
+> random order at every one.
+
+And the honest coda, for the viva: the label measures use, not
+breakage. The changelog's real break, the binary curves, is used by
+almost nobody, and the widely used classes the model ranked high were
+probably reimplemented rather than broken. Telling those apart needs
+what griffe cannot see, which is why the book's February hand-audit of
+200 labels is the table a panel will remember.
