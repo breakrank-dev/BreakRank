@@ -2996,7 +2996,7 @@ deba775; §22.6.**
 
 Added 9 Oct: F39 (§31.2), module metadata ranked as breaking changes,
 before the 30 Oct demo: it puts a copyright notice at the top of the
-demo story's release.
+demo story's release. Its rule, fixed before the count: §32.1.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -4907,7 +4907,8 @@ either. *Fix:* count them, then treat them as F1 treats version strings
 (out of the model, sorting last, and in the all-clear of F15), decided
 on what the rows are and not on the score, then measured before and
 after at the same seven dates, as item 2 was. Before the demo: the demo
-story's list starts with one.
+story's list starts with one. *[Rule fixed 9 Oct, before the count:
+§32.1. Fifteen names, a changed value only.]*
 
 **For the demo and the report**, once F39 is done and the list no
 longer starts with the copyright notice:
@@ -4925,3 +4926,71 @@ almost nobody, and the widely used classes the model ranked high were
 probably reimplemented rather than broken. Telling those apart needs
 what griffe cannot see, which is why the book's February hand-audit of
 200 labels is the table a panel will remember.
+
+## 32. F39: package metadata out of the model (9 Oct)
+
+§32.1 was written and pushed before `scripts/metadata_count.py` read the
+real data. The count goes in §32.2, and the fix with its before and
+after in §32.3.
+
+### 32.1 The rule, fixed before the count
+
+**Which rows.** A row is package metadata when the last part of its
+symbol is one of these 15 names and griffe reports that its value
+changed (`ATTRIBUTE_CHANGED_VALUE`). The names are `METADATA_LEAVES` in
+`ml/features/build.py`, taken from the places that define them, not
+from the data:
+
+| where the names come from | names |
+|---|---|
+| pydoc, which prints a module's DATE, AUTHOR and CREDITS | `__author__`, `__credits__`, `__date__` |
+| the `__about__.py` convention (pypa's packaging 21.3; cryptography today) | `__title__`, `__summary__`, `__uri__`, `__email__`, `__license__`, `__copyright__` |
+| requests' `__version__.py`, the same idea under other names | `__description__`, `__url__`, `__build__`, `__author_email__` |
+| the module-header fields §31.2 named | `__maintainer__`, `__status__` |
+
+`__version__` is F1's and stays there. `__build__` is requests' version
+number written in hexadecimal, so it changes with every release, as a
+version string does.
+
+**Only a changed value.** A changed string breaks nobody. A removed one
+can: code that reads `pkg.__author__` would fail. So a removal, or any
+other kind of change to these names, stays in the model, and the count
+says how many there are. F1 went by name alone; it is left as it is.
+
+**Where the rows go: where F1 sends version strings.** Out in build.py
+before any feature is computed, so release_size and package_churn do not
+count them; from features.csv and holdout.csv alike; with no score, so
+they sort last on the site; and into the all-clear beside the version
+strings (F15, Varad's decision). labelled.csv keeps them, as it keeps
+version strings.
+
+**A name the count turns up** joins only if it is package metadata by the
+same test: it describes the package (who made it, its licence, its
+links, its release) and no code calls it. §32.2 marks any such name as
+added after the count. The count lists those candidates by name, row
+count and one example, with no labels, so their labels cannot steer the
+choice.
+
+**What the count reports** (read only, nothing fitted or scored): the
+rows each name loses in dev and in the holdout, and how many of the dev
+ones are used; the other changes to those names, which stay; the
+upgrades F39 empties; where the dev rows sit (the single split's test
+half, and §31.1's story candidates); their reachability features against
+every row's; and whether each label still clears the holdout's gates.
+The holdout is counted, never scored, which ml/holdout.py allows.
+
+**What follows, whatever the count says** (§32.3): the drop in build.py;
+the seven cut dates before and after (`stability.py --at`, as item 2 was
+measured, §23) and the single split; then the tuned model retrained and
+reloaded. The fix ships either way, as F1 did: it corrects what counts as
+a change, and is not a model choice. Then stories.py runs again under
+§31.1's rules. If a release other than cryptography 46.0.7 -> 47.0.0
+wins, that release is the demo story, and §31.2's demo wording follows
+it.
+
+Tested by `scripts/test_metadata.py`, three cases. Twelve guards were
+broken on purpose (the kind test, a name dropped from the list, used
+rows counted from the holdout, the emptied upgrades, section 6 filtered
+on labels, the holdout tripwire, the F1 check, private rows among the
+story candidates, the gates' "more than", the test half, the used count,
+a file written) and each turned a check to FAIL.

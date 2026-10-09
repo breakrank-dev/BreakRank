@@ -157,6 +157,40 @@ def drop_version_strings(df: pd.DataFrame) -> pd.DataFrame:
     return df[~version_strings(df)]
 
 
+# F39 (NOTES §31.2, rule §32.1): package metadata other than the version.
+# A copyright notice whose year changed was ranked first in the demo
+# story's release, used by nobody. The names were fixed on 9 Oct, before
+# any row was counted, from the places that define them:
+METADATA_LEAVES = {
+    # pydoc prints these as a module's DATE, AUTHOR and CREDITS
+    "__author__", "__credits__", "__date__",
+    # the __about__.py convention (pypa's packaging up to 21.3; cryptography)
+    "__title__", "__summary__", "__uri__", "__email__", "__license__",
+    "__copyright__",
+    # requests' __version__.py, the same idea under other names
+    "__description__", "__url__", "__build__", "__author_email__",
+    # the module-header fields §31.2 named
+    "__maintainer__", "__status__",
+}
+# Only a changed VALUE: a changed string breaks nobody. A removed name can
+# (code that reads pkg.__author__ would fail), so a removal stays a change.
+METADATA_KIND = "ATTRIBUTE_CHANGED_VALUE"
+
+
+def metadata_strings(df: pd.DataFrame) -> pd.Series:
+    """True for rows where a package-metadata string changed value
+    (pkg.__copyright__, pkg.__author__ and the like): the last part of the
+    symbol is in METADATA_LEAVES and griffe reports a changed value.
+
+    Step 1 of F39 only counts these rows (scripts/metadata_count.py).
+    Nothing drops them yet; step 2 (NOTES §32) will, where F1 drops
+    version strings.
+    """
+    leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
+    changed = df["kind"].astype(str).eq(METADATA_KIND)
+    return leaf.isin(METADATA_LEAVES) & changed
+
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
