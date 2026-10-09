@@ -2884,7 +2884,8 @@ popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
 **F26. "One story of a real release it got right" — 30 Oct DoD.**
 *[Done 9 Oct (§31.2): cryptography 46.0.7 -> 47.0.0, the model's top 10
 holding 5 of its 7 used changes against 2.3 by chance. Its #1 is a
-copyright notice: F39.]*
+copyright notice: F39. After F39 (§32.3) the rule picks it again, and
+its list starts with x509's RevokedCertificate.]*
 Not produced. One hour with `features.csv` + the model's scores.
 
 **F27. Provenance error, corrected Day 15:** the deck/report/study
@@ -2997,6 +2998,8 @@ deba775; §22.6.**
 Added 9 Oct: F39 (§31.2), module metadata ranked as breaking changes,
 before the 30 Oct demo: it puts a copyright notice at the top of the
 demo story's release. Its rule, fixed before the count: §32.1.
+**Done 9 Oct (§32.3).** Found on the way, the same day: F40 (§32.3), a
+cut date's lift can hinge on one release; with item 11.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -4707,6 +4710,7 @@ What this changes:
   do without ranking any change.
 
 **For the report**, replacing §27.3:
+*[Superseded 9 Oct: after F39 the numbers and the wording are §32.3's.]*
 
 > On the held-back test window (1,955 rows: 1,511 distinct changes in
 > 191 upgrades), the ranker reaches PR-AUC 0.283 (95% interval
@@ -4758,6 +4762,7 @@ For a slide:
 - What it rests on: reachability (how short the public import path is).
 
 **For the site** (the page copy Varad has is 16 Sep's):
+*[Superseded 9 Oct by §32.3's copy, which quotes no median (F40).]*
 
 > Beats a popularity baseline at all 7 evaluation cut dates, by a median
 > of 5.2x (2.2x to 6.0x), and at every date the lower end of its 95%
@@ -4908,10 +4913,13 @@ either. *Fix:* count them, then treat them as F1 treats version strings
 on what the rows are and not on the score, then measured before and
 after at the same seven dates, as item 2 was. Before the demo: the demo
 story's list starts with one. *[Rule fixed 9 Oct, before the count:
-§32.1. Fifteen names, a changed value only.]*
+§32.1. Fifteen names, a changed value only. Done 9 Oct (§32.3): 58 rows,
+two names added after the count.]*
 
 **For the demo and the report**, once F39 is done and the list no
 longer starts with the copyright notice:
+*[F39 is done, and the retrained model reordered the list. The wording
+is now §32.3's.]*
 
 > cryptography 46.0.7 -> 47.0.0 changed 31 public names. Downstream
 > code uses 7 of them. BreakRank's top 10 holds 5 of those 7, and its
@@ -5079,3 +5087,187 @@ was run against a scratch Postgres built from migrations 001-006: it
 counted the two metadata value changes among six rows (not a removed
 `__author__`, a version string or `__slots__`), and read 0 once their
 scores were gone.
+
+### 32.3 Step 2: the drop, before and after, and F40 (9 Oct)
+
+Run 9 Oct after §32.2 was pushed (5b164e3). ranker.txt committed in
+5eab8e9 and loaded the same evening.
+
+**What went.** build.py printed F1's 1,769 rows and 868 upgrades as
+before, then **F39: 58 rows and 29 more upgrades**, all in dev. The two
+names added after the count brought 27 of the rows, and `__version_info__`
+brought **9 used ones** (docutils among its 2 packages): code reads it as
+it reads `__version__`, and a new value breaks nobody. Dev is now 16,570
+rows in 948 upgrades, with 602 used rows. The single split's test half
+is 1,952 rows (1,508 changes, 190 upgrades), floor 0.0784. The holdout
+is untouched: 4,871 rows, 191 pairs, fingerprint 9b524ece19cf.
+metadata_count.py on the rebuilt files: "F39 finds no rows".
+
+**At the seven reference dates (§23.5), before and after**
+(`scripts/compare_sweeps.py`):
+
+| cut | lift over popularity | PR-AUC | test rows | nDCG@20 |
+|---|---|---|---|---|
+| 2025-08-07 | 5.80x -> 5.67x | 0.2772 -> 0.2730 | 11,043 -> 11,023 | 0.5798 -> 0.5876 |
+| 2025-10-06 | 5.43x -> 5.85x (up) | 0.2620 -> 0.2841 | 10,284 -> 10,268 | 0.6089 -> 0.5925 |
+| 2025-12-03 | 6.04x -> 5.19x (down) | 0.2842 -> 0.2452 | 9,677 -> 9,663 | 0.5535 -> 0.5553 |
+| 2026-01-18 | 5.20x -> 5.23x | 0.2576 -> 0.2599 | 7,963 -> 7,956 | 0.5869 -> 0.6283 |
+| 2026-03-02 | 3.07x -> 3.11x | 0.1734 -> 0.1764 | 4,915 -> 4,911 | 0.5279 -> 0.4904 |
+| 2026-04-02 | 4.39x -> 4.34x | 0.2750 -> 0.2737 | 4,254 -> 4,251 | 0.6118 -> 0.6180 |
+| 2026-05-04 | 2.20x -> 2.27x | 0.2697 -> 0.2783 | 1,622 -> 1,621 | 0.5893 -> 0.6464 |
+
+Median lift 5.20x -> 5.19x, worst 2.20x -> 2.27x. Beats popularity 7/7,
+and by more than its interval 7/7, before and after; beats the line 6/7
+-> 7/7 (median 1.44x). Two dates moved by more than 0.25x, one each way,
+and the median did not: **F39 left the sweep where it was.** At
+2025-12-03 CV chose another setting than on 5 Oct (31/0.05/10 and 83
+trees, against 31/0.05/100 and 22).
+
+**The sweep at its own dates.** The quantile dates (F38) moved 1 to 5
+days when 29 upgrades left, and there the median lift is **3.23x**
+(2.25x–5.96x): beats popularity 7/7, interval above 1.0x at 7/7, beats
+the line 6/7 (median 1.31x). train.py quotes this sweep, so model_run's
+notes now read "median 3.23x min 2.25x max 5.96x".
+
+| reference date | lift | moved date | lift | what left the test half |
+|---|---|---|---|---|
+| 2025-08-07 | 5.67x | 2025-08-08 | 5.26x | 7 rows |
+| 2025-10-06 | 5.85x | 2025-10-11 | 5.96x | 65 rows |
+| 2025-12-03 | 5.19x | 2025-12-07 | 5.28x | 4 rows |
+| 2026-01-18 | 5.23x | 2026-01-21 | 2.55x | 1,319 rows, 59 used: pandas 3.0.0 (974, 48 used), pycparser 3.0 (309, 4), pyparsing 3.3.2 (15, 6) and five small ones |
+| 2026-03-02 | 3.11x | 2026-03-06 | 3.23x | 51 rows |
+| 2026-04-02 | 4.34x | 2026-04-07 | 2.25x | 2,299 rows, none used: sglang 0.5.10 (2,296) and three one-row releases |
+| 2026-05-04 | 2.27x | 2026-05-06 | 2.34x | 120 rows |
+
+Two releases halve the lift at their dates, for opposite reasons:
+
+- **pandas 3.0.0** (21 Jan 2026; 974 changes, 48 used), which the model
+  ranks well. With it in the test half the model's PR-AUC is 0.260;
+  without it and the rest of those three days, 0.146, and the line beats
+  the model there (0.164).
+- **sglang 0.5.10** (5 Apr 2026; 2,296 changes, none used), which drags
+  the baseline down. Popularity scores every change of a release alike,
+  so it puts all 2,296 at sglang's place in its list: its PR-AUC is
+  0.063 with them in the test half and 0.112 without. The model's barely
+  moves (0.274 -> 0.252). The lift halves because the baseline recovers.
+
+And with neither involved, a one-day shift that moved 7 rows changed a
+date's lift by 0.41x under the same setting and tree count (2025-08-07 ->
+08-08). A single date's lift moves by more than §24.1's 0.25x with no
+fix at all.
+
+**F40. A cut date's lift can hinge on one release.** The median over
+seven dates is 5.19x at the reference dates and 3.23x four days later,
+on the same data, the same model and the same code. Every claim that
+held at all 14 dates: the model beats popularity, and the lower end of
+each date's 95% interval is above 1.0x (it beats the line at 13).
+*Fix:* report the lift as its range across dates with the count of
+dates that clear 1.0x, never as a median alone; name the two releases
+when the range is given; and lead with the within-upgrade numbers
+(item 11, F14), where each upgrade counts once and one release cannot
+outweigh the rest by its size. Done in the wording below; item 11
+measures the rest.
+
+**The single split** (5 Apr, both releases on the train side): PR-AUC
+**0.252** (0.192–0.397), floor 0.078; lift over popularity **2.25x**
+(1.30–4.85); over the line **1.38x** (1.08–1.83); precision@10 0.247
+(0.155–0.347) over 17 upgrades; nDCG@20 0.576 (0.425–0.726) over 11.
+Against 5 Oct's 0.283, 2.53x and 1.48x, each inside the other's interval.
+CV chose 7/0.05/30 and 20 trees (folds [8, 22, 20]), against 7/0.05/10
+and 28: most of the move is that choice, not the 55 training rows F39
+took out. Gain: public_depth 34.7%, kind 19.8%, name_length 13.8%,
+release_size 8.6%, module_depth 7.0%; the same six features at zero.
+
+**The ablation, again** (one setting and 20 trees for every run): the
+**noise floor is 21.2%** (dropping inherited_by, zero gain), against
+9.7% on 5 Oct at 28 trees. Removing reachability costs 21.9%, now at the
+floor, so **no group clears it**. Reachability alone scores 0.290, **115%
+of the full model**; on 5 Oct it scored 0.288 and 102%. The full model
+moved between the two runs (0.283 -> 0.252) and the two-feature model did
+not. So §30.3's "one group clears the floor" was one run's; "the two
+reachability features alone do as well as all 17" has held in both. On
+this split they also match it inside an upgrade: precision@10 0.282
+against 0.247, nDCG@20 0.584 against 0.576. Whether a two-feature model
+should ship is item 15's question (F25). A sweep of it across the seven
+dates would answer it; none has been run.
+
+**The stories again** (§31.1's rules, the retrained model). Still 9
+candidates; the top 10 beats a random order at 8 of them (was 9), and
+finds 25 of 85 used changes against 13.1. The rule picks **cryptography
+46.0.7 -> 47.0.0** again: 30 public changes now, 7 used, 5 of them in
+the top 10 against 2.3 by chance. The list starts with
+`x509.base.RevokedCertificate` (1 package); `PrivateKeyTypes` (6) is
+4th, `PublicKeyTypes` (3) 5th, `PBKDF2HMAC` (10) 8th, and the binary
+curves are still 9th, 10th and 20th. The failure story is sharper:
+`kdf.concatkdf.ConcatKDFHash`, used by 3 packages, is **last of 30** (it
+was 8th): public_depth 5, not in `__all__`, no shorter export path.
+
+**The load**, 9 Oct, from 5eab8e9: `lambdarank-label_alias-tuned`
+re-loaded under its own name, 21,440 scores (replacing 21,498), all
+written 2026-10-09; version-string rows with a score 0, package-metadata
+rows with a score 0. trained_at is unchanged (2026-10-05), so the API
+needed no restart, and /health named the model. model_run's pr_auc now
+reads 0.2520.
+
+**For the report**, replacing §30.3's paragraph:
+
+> On the held-back test window (1,952 rows: 1,508 distinct changes in
+> 190 upgrades), the ranker reaches PR-AUC 0.252 (95% interval
+> 0.192–0.397) against a floor of 0.078: 2.25 times the popularity
+> baseline (1.30–4.85) and 1.38 times the strongest baseline, a logistic
+> regression on the same features (1.08–1.83). Across fourteen cut
+> dates, seven fixed in advance and seven placed a few days later by the
+> same procedure, it beats popularity at every one, and at every one the
+> lower end of its own 95% interval stays above 1.0x. How large the lift
+> is depends on where a cut falls, from 2.25x to 5.96x: a date's lift
+> halves when one large release leaves its test half, whether a release
+> the model ranks well (pandas 3.0.0) or one whose 2,296 unused changes
+> pull the popularity baseline down (sglang 0.5.10). Inside an upgrade,
+> precision@10 is 0.247 (0.155–0.347) over 17 upgrades and nDCG@20 0.576
+> (0.425–0.726) over 11. The model's size and settings are chosen by
+> time-ordered cross-validation inside each training window; intervals
+> come from 2,000 resamples of whole upgrades, the model held fixed.
+
+And the ablation, replacing §30.3's:
+
+> With the model's size chosen by cross-validation, removing a feature
+> the model never uses moves PR-AUC by up to 21% (10% in an earlier run
+> that chose more trees), so no feature group's effect can be read from
+> the table. One result held in both runs: the two reachability features,
+> how short a symbol's public import path is and whether it is
+> re-exported under a shorter name, score as well as all 17 on their own
+> (102% and 115%). We state the circularity this carries: code imports
+> symbols by their shortest public names, so a symbol with a short public
+> path also has more ways to be matched by the usage label.
+
+For a slide:
+
+- PR-AUC 0.252 (95% CI 0.192–0.397); floor 0.078.
+- 2.25x popularity (1.30–4.85x); 1.38x a logistic regression on the same
+  features (1.08–1.83x).
+- Beats popularity at all 14 cut dates, every date's interval above
+  1.0x; the lift runs 2.25x–5.96x with the date.
+- precision@10 0.247 (17 upgrades); nDCG@20 0.576 (11 upgrades).
+- What it rests on: reachability. Two features alone match all 17.
+
+**For the site**, replacing §30.3's (no median, F40):
+
+> Beats a popularity baseline at every evaluation cut date, by 2.2x to
+> 6.0x depending on the date, and at every date the lower end of its 95%
+> interval stays above 1x. Measured on releases published before 28 July
+> 2026; later releases are held back, unseen, for the final evaluation.
+
+**For the demo**, replacing §31.2's:
+
+> cryptography 46.0.7 -> 47.0.0 changed 30 public names. Downstream code
+> uses 7 of them. BreakRank's top 10 holds 5 of those 7, the one ten
+> packages use among them; reading the list in any fixed order would
+> find 2.3 of them in the first 10. Across the 9 comparable releases the
+> model never trained on, its top 10 beats that random order at 8.
+
+And the failure, from the same list: `ConcatKDFHash`, used by 3
+packages, is ranked last. Its path is deep, it is not exported and it
+has no shorter name; everything the model reads says "obscure", and the
+model trusts how short a name is above everything else. §31.2's coda
+stands: the label measures use, not breakage, and the changelog's real
+break, the binary curves, is used by almost nobody.
