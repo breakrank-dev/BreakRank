@@ -1,27 +1,33 @@
 """
-F39, step 1: is the metadata rule the one NOTES §32.1 fixed, and does
+F39: is the metadata rule the one NOTES §32 fixed, does build.py drop
+those rows where F1 drops version strings, and does
 scripts/metadata_count.py count what it says it counts?
 
     python scripts/test_metadata.py
 
-No network and no real data; about ten seconds. It adds metadata rows to
-the labelled fixture test_holdout.py builds, runs the real build.py on it
-in a temp directory, then the count, and checks what the count printed
-against counts made here. Nothing in your data/ is read or touched.
+No network and no real data; about fifteen seconds. It adds metadata rows
+to the labelled fixture test_holdout.py builds, runs the real build.py on
+it in a temp directory, then the count, and checks both against counts
+made here. Nothing in your data/ is read or touched.
 
-Three cases:
+Four cases:
 
-  1. The rule: the 15 names NOTES §32.1 lists, matched on a changed value
-     only. Not the same names removed, not F1's version strings, not
-     other dunders, not a plain `copyright`, and not a metadata name in
-     the middle of a path.
-  2. The count: every total it prints matches one made here; the
-     upgrades it says F39 empties are exactly those with nothing else in
-     them; a removal is reported as staying; a dunder not on the list
-     appears in section 6, and that table is the same whatever its rows'
-     labels; and nothing in data/ changes.
-  3. What it refuses: a features.csv carrying a holdout row, and files
-     built before F1.
+  1. The rule: the 15 names §32.1 fixed and the two §32.2 added after the
+     count, matched on a changed value only. Not the same names removed,
+     not F1's version strings, not other dunders, not a plain `copyright`,
+     and not a metadata name in the middle of a path.
+  2. build.py drops them (step 2): none reaches features.csv or
+     holdout.csv, it says how many went and how many upgrades they
+     emptied, a removal and an unlisted dunder stay, and release_size and
+     package_churn count only the rows left. The count, run on what
+     build.py wrote, then finds none.
+  3. The count, on files built as they were before step 2: every total it
+     prints matches one made here; the upgrades it says F39 empties are
+     exactly those with nothing else in them; a removal is reported as
+     staying; a dunder not on the list appears in section 6, and that
+     table is the same whatever its rows' labels; nothing in data/ changes.
+  4. What the count refuses: a features.csv carrying a holdout row, and
+     files built before F1.
 """
 
 import hashlib
@@ -39,15 +45,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from ml.features.build import (METADATA_LEAVES, VERSION_LEAVES,  # noqa: E402
-                               metadata_strings)
-from ml.holdout import GROUP, HOLDOUT_START  # noqa: E402
+                               add_features, drop_version_strings,
+                               metadata_strings, temporal_split)
+from ml.holdout import GROUP, HOLDOUT_START, split_off  # noqa: E402
 
-# The names NOTES §32.1 fixed on 9 Oct, written out again here so the rule
-# cannot change through an edit to build.py alone.
+# The names NOTES §32.1 fixed on 9 Oct before the count, and the two §32.2
+# added after it, written out again here so the rule cannot change through
+# an edit to build.py alone.
 FIXED = {"__author__", "__credits__", "__date__", "__title__", "__summary__",
          "__uri__", "__email__", "__license__", "__copyright__",
          "__description__", "__url__", "__build__", "__author_email__",
          "__maintainer__", "__status__"}
+ADDED = {"__version_info__", "__version_time__"}
+NAMES = FIXED | ADDED
 VALUE = "ATTRIBUTE_CHANGED_VALUE"
 LABELS = ("label", "label_scoped", "label_alias")
 
@@ -80,21 +90,22 @@ def frame(rows: list[tuple[str, str]]) -> pd.DataFrame:
 
 
 def case_rule() -> None:
-    print("\n1. THE RULE, AS NOTES §32.1 FIXED IT")
-    check("METADATA_LEAVES is the 15 names NOTES §32.1 lists",
-          sorted(METADATA_LEAVES), sorted(FIXED))
+    print("\n1. THE RULE, AS NOTES §32 FIXED IT")
+    check("METADATA_LEAVES is §32.1's 15 names and §32.2's two",
+          sorted(METADATA_LEAVES), sorted(NAMES))
     check("none of them is one of F1's version names",
           sorted(METADATA_LEAVES & VERSION_LEAVES), [])
-    every = frame([(f"pkg.__about__.{n}", VALUE) for n in sorted(FIXED)])
-    check("each of the 15 is matched when its value changed",
-          int(metadata_strings(every).sum()), len(FIXED))
-    other = frame([(f"pkg.{n}", k) for n in sorted(FIXED)
+    every = frame([(f"pkg.__about__.{n}", VALUE) for n in sorted(NAMES)])
+    check(f"each of the {len(NAMES)} is matched when its value changed",
+          int(metadata_strings(every).sum()), len(NAMES))
+    other = frame([(f"pkg.{n}", k) for n in sorted(NAMES)
                    for k in ("OBJECT_REMOVED", "OBJECT_CHANGED_KIND")])
     check("the same names removed, or changed in kind, are not: those stay",
           int(metadata_strings(other).sum()), 0)
     near = frame([("pkg.__version__", VALUE), ("pkg.VERSION", VALUE),
                   ("pkg.__cake__", VALUE), ("pkg.core.Thing.__init__", VALUE),
-                  ("pkg.__all__", VALUE), ("pkg.copyright", VALUE),
+                  ("pkg.__all__", VALUE), ("pkg.Thing.__slots__", VALUE),
+                  ("pkg.Thing.__doc__", VALUE), ("pkg.copyright", VALUE),
                   ("pkg.author", VALUE), ("pkg.__copyright__.year", VALUE),
                   ("pkg.__about__", VALUE)])
     check("not a version string, another dunder, a plain name, or a "
@@ -124,10 +135,12 @@ def added(sel: pd.DataFrame, leaf: str, kind: str, used: int) -> pd.DataFrame:
 def with_metadata(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
     """A changed __copyright__ (unused) in every third upgrade; a used
     __author__ value change in two dev upgrades; a removed __author__ in
-    one, which must stay; a used __title__ change in one holdout upgrade,
+    one, which must stay; a changed __version_info__, one of the names
+    added after the count; a used __title__ change in one holdout upgrade,
     which must never count as used; a changed __cake__, not on the list,
-    in two; and two upgrades that are nothing but metadata, one in dev and
-    one in the holdout. Returns the frame and the keys of those two."""
+    in two; two upgrades that are nothing but metadata, one in dev and
+    one in the holdout; and one that is nothing but a version string, which
+    F1 empties first. Returns the frame and the keys of the two."""
     pairs = base.drop_duplicates(GROUP).reset_index(drop=True)
     late = pd.to_datetime(pairs["released_at"]) >= HOLDOUT_START
     dev, held = pairs[~late], pairs[late]
@@ -137,15 +150,21 @@ def with_metadata(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
         (HOLDOUT_START + pd.Timedelta(days=d)).strftime("%Y-%m-%d")
         for d in (-40, 6)]
     keys = set(only[GROUP].astype(str).itertuples(index=False, name=None))
+    bump = pairs.drop_duplicates("package").iloc[[2]].copy()
+    bump["version_from"], bump["version_to"] = "9.9.9", "9.9.10"
+    bump["released_at"] = (HOLDOUT_START
+                           - pd.Timedelta(days=20)).strftime("%Y-%m-%d")
     df = pd.concat([
         base,
         added(pairs.iloc[::3], "__copyright__", VALUE, 0),
         added(dev.iloc[[1, 4]], "__author__", VALUE, 1),
         added(dev.iloc[[7]], "__author__", "OBJECT_REMOVED", 0),
+        added(dev.iloc[[10]], "__version_info__", VALUE, 0),
         added(held.iloc[[0]], "__title__", VALUE, 1),
         added(pairs.iloc[[2, 5]], "__cake__", VALUE, 1),
         added(only, "__copyright__", VALUE, 0),
         added(only, "__license__", VALUE, 0),
+        added(bump, "__version__", VALUE, 1),
     ], ignore_index=True)
     return df, keys
 
@@ -153,7 +172,7 @@ def with_metadata(base: pd.DataFrame) -> tuple[pd.DataFrame, set]:
 def meta(df: pd.DataFrame) -> pd.Series:
     """The rule, applied here without build.py's code."""
     leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
-    return leaf.isin(FIXED) & df["kind"].astype(str).eq(VALUE)
+    return leaf.isin(NAMES) & df["kind"].astype(str).eq(VALUE)
 
 
 def gates_here(df: pd.DataFrame, label: str) -> tuple[int, int, int]:
@@ -174,9 +193,8 @@ def digest(folder: pathlib.Path) -> dict:
             for p in sorted(folder.iterdir()) if p.is_file()}
 
 
-def run_count(tmp: pathlib.Path) -> tuple[int, str]:
-    script = ROOT / "scripts" / "metadata_count.py"
-    p = subprocess.run([sys.executable, str(script)], cwd=tmp,
+def run(tmp: pathlib.Path, script: str) -> tuple[int, str]:
+    p = subprocess.run([sys.executable, str(ROOT / script)], cwd=tmp,
                        capture_output=True, text=True, timeout=600)
     return p.returncode, p.stdout + p.stderr
 
@@ -201,31 +219,86 @@ def block(out: str, name: str) -> str:
     return ""
 
 
-def case_count(tmp: pathlib.Path, df: pd.DataFrame, only: set) -> None:
-    print("\n2. THE COUNT, CHECKED AGAINST ONE MADE HERE")
-    (tmp / "data").mkdir()
-    df.to_csv(tmp / "data" / "labelled.csv", index=False)
-    p = subprocess.run([sys.executable, str(ROOT / "ml/features/build.py")],
-                       cwd=tmp, capture_output=True, text=True, timeout=600)
-    check("build.py builds the fixture", p.returncode, 0)
-    if p.returncode:
-        print((p.stdout + p.stderr)[-2000:])
-        return
+def read_built(data: pathlib.Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     keys = {c: str for c in GROUP}
-    dev = pd.read_csv(tmp / "data" / "features.csv", dtype=keys)
-    held = pd.read_csv(tmp / "data" / "holdout.csv", dtype=keys)
-    md, mh = meta(dev), meta(held)
-    check("step 1 changes no build: every metadata row is still there",
-          int(md.sum() + mh.sum()), int(meta(df).sum()))
+    return (pd.read_csv(data / "features.csv", dtype=keys),
+            pd.read_csv(data / "holdout.csv", dtype=keys))
 
-    before = digest(tmp / "data")
-    code, out = run_count(tmp)
+
+def case_build(tmp: pathlib.Path, df: pd.DataFrame, only: set) -> None:
+    print("\n2. build.py DROPS THEM, WHERE F1 DROPS VERSION STRINGS")
+    data = tmp / "data"
+    data.mkdir()
+    df.to_csv(data / "labelled.csv", index=False)
+    code, out = run(tmp, "ml/features/build.py")
+    check("build.py exits cleanly", code, 0)
+    if code:
+        print(out[-2000:])
+        return
+    n = int(meta(df).sum())
+    check(f"it reports dropping all {n} metadata rows and the 2 upgrades "
+          "they emptied",
+          (f"F39: {n:,} package-metadata rows dropped" in out,
+           "2 more upgrades held nothing else" in out), (True, True))
+    dev, held = read_built(data)
+    built = pd.concat([dev, held], ignore_index=True)
+    check("no metadata row in features.csv or holdout.csv",
+          int(meta(built).sum()), 0)
+    versions = int(df["symbol"].str.rsplit(".", n=1).str[-1]
+                   .isin(VERSION_LEAVES).sum())
+    check("every other row is still there, once", len(built),
+          len(df) - n - versions)
+    left = set(built[GROUP].itertuples(index=False, name=None))
+    check("the upgrades that were only metadata are gone", only & left,
+          set())
+    leaf = built["symbol"].str.rsplit(".", n=1).str[-1]
+    check("a removed __author__ and an unlisted __cake__ stay",
+          (int((leaf.eq("__author__") & built["kind"].eq("OBJECT_REMOVED"))
+               .sum()), int(leaf.eq("__cake__").sum())), (1, 2))
+    size = built.groupby(GROUP)["symbol"].transform("size")
+    check("release_size counts only the rows left, so the drop came first",
+          bool((built["release_size"] == size).all()), True)
+    when = pd.to_datetime(built["released_at"])
+    churn = (when.groupby(built["package"]).rank(method="min").sub(1)
+             .astype(int))
+    check("package_churn counts only the rows left, too",
+          int((built["package_churn"] != churn).sum()), 0)
+
+    code, out = run(tmp, "scripts/metadata_count.py")
+    check("the count, on what build.py wrote, finds none",
+          (code, "F39 finds no rows" in out,
+           number(r"dev\s+([\d,]+) of [\d,]+ rows", out)), (0, True, (0,)))
+
+
+def build_before_step2(df: pd.DataFrame, data: pathlib.Path) -> None:
+    """features.csv and holdout.csv as build.py wrote them before step 2:
+    version strings out and metadata rows in. main()'s steps, in its
+    order, from the CSV it reads, minus the F39 drop."""
+    df.to_csv(data / "labelled.csv", index=False)
+    raw = pd.read_csv(data / "labelled.csv")
+    dev, held = split_off(add_features(drop_version_strings(raw)))
+    temporal_split(dev).to_csv(data / "features.csv", index=False)
+    held.assign(split="holdout").to_csv(data / "holdout.csv", index=False)
+
+
+def case_count(tmp: pathlib.Path, df: pd.DataFrame, only: set) -> None:
+    print("\n3. THE COUNT, ON FILES BUILT BEFORE STEP 2")
+    data = tmp / "before"
+    (data / "data").mkdir(parents=True)
+    build_before_step2(df, data / "data")
+    dev, held = read_built(data / "data")
+    md, mh = meta(dev), meta(held)
+    check("the files hold every metadata row", int(md.sum() + mh.sum()),
+          int(meta(df).sum()))
+
+    before = digest(data / "data")
+    code, out = run(data, "scripts/metadata_count.py")
     check("metadata_count.py runs", code, 0)
     if code:
         print(out[-2000:])
         return
     check("and writes nothing: every file in data/ is byte for byte the same",
-          digest(tmp / "data"), before)
+          digest(data / "data"), before)
 
     used = int(dev.loc[md, "label_alias"].sum())
     check("section 2, dev: rows taken out, of all, and the used ones",
@@ -253,6 +326,9 @@ def case_count(tmp: pathlib.Path, df: pd.DataFrame, only: set) -> None:
     lic = block(out, "__license__")
     check("__license__: one row in dev, one in the holdout",
           bool(re.search(r"dev\s+1 \(0 used\)\s+holdout\s+1\b", lic)), True)
+    info = block(out, "__version_info__")
+    check("__version_info__, added after the count, is counted with them",
+          bool(re.search(r"dev\s+1 \(0 used\)\s+holdout\s+0\b", info)), True)
     cop = block(out, "__copyright__")
     want = (int((md & dev["symbol"].str.endswith("__copyright__")).sum()),
             int((mh & held["symbol"].str.endswith("__copyright__")).sum()))
@@ -279,22 +355,25 @@ def case_count(tmp: pathlib.Path, df: pd.DataFrame, only: set) -> None:
               number(lab + r"\s+now (\d+)/(\d+)/(\d+), after F39 "
                      r"(\d+)/(\d+)/(\d+)", out), b + a)
 
-    cake = re.search(r"^\s+__cake__\s+(\d+)\s+e\.g\. (\S+)", out, re.M)
-    check("section 6 lists __cake__, not on the list, with its two rows",
-          (bool(cake), cake and int(cake.group(1))), (True, 2))
+    sec6 = out.split("6. FOR THE RECORD")[-1].split("This script")[0]
+    cake = re.search(r"^\s+__cake__\s+(\d+)\s+e\.g\. (\S+)", sec6, re.M)
+    check("section 6 lists __cake__, not on the list, with its two rows, "
+          "and not __version_info__, which now is",
+          (bool(cake), cake and int(cake.group(1)),
+           "__version_info__" in sec6), (True, 2, False))
     flipped = [x.assign(**{lab: 1 - x[lab] for lab in LABELS if lab in x})
                for x in (dev, held)]
     check("and section 6's table is the same whatever the labels say",
           M.other_dunders(dev, held).equals(M.other_dunders(*flipped)), True)
-    sec6 = out.split("6. FOR THE RECORD")[-1].split("This script")[0]
     check("section 6 prints no label count", "used" in sec6, False)
 
 
 def case_refusals(tmp: pathlib.Path) -> None:
-    print("\n3. WHAT IT REFUSES")
-    feats = tmp / "data" / "features.csv"
+    print("\n4. WHAT THE COUNT REFUSES")
+    data = tmp / "before"
+    feats = data / "data" / "features.csv"
     if not feats.exists():
-        check("the fixture was built (case 2)", False, True)
+        check("the files were built (case 3)", False, True)
         return
     keep = feats.read_bytes()
     dev = pd.read_csv(feats, dtype={c: str for c in GROUP})
@@ -302,14 +381,14 @@ def case_refusals(tmp: pathlib.Path) -> None:
     day = (HOLDOUT_START + pd.Timedelta(days=3)).strftime("%Y-%m-%d")
     late = dev.head(1).assign(released_at=day)
     pd.concat([dev, late]).to_csv(feats, index=False)
-    code, out = run_count(tmp)
+    code, out = run(data, "scripts/metadata_count.py")
     check("a features.csv carrying a holdout row is refused",
           (code != 0, "HOLDOUT ROWS" in out), (True, True))
 
     version = dev.head(1).assign(
         symbol=dev["package"].iloc[0] + ".__version__", kind=VALUE)
     pd.concat([dev, version]).to_csv(feats, index=False)
-    code, out = run_count(tmp)
+    code, out = run(data, "scripts/metadata_count.py")
     check("files that still hold a version string (built before F1) are "
           "refused", (code != 0, "before F1" in out), (True, True))
     feats.write_bytes(keep)
@@ -320,6 +399,7 @@ def main() -> None:
     df, only = with_metadata(base_fixture())
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="breakrank-metadata-"))
     try:
+        case_build(tmp, df, only)
         case_count(tmp, df, only)
         case_refusals(tmp)
     finally:
@@ -329,8 +409,8 @@ def main() -> None:
     if failures:
         print(f"{len(failures)} FAILED: {', '.join(failures)}")
         sys.exit(1)
-    print("All checks passed. The rule is the one NOTES §32.1 fixed, and the")
-    print("count says what the data holds without changing any of it.")
+    print("All checks passed. build.py drops what NOTES §32 says, before any")
+    print("feature is computed, and the count says what the data held.")
 
 
 if __name__ == "__main__":

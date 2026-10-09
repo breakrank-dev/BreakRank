@@ -157,20 +157,25 @@ def drop_version_strings(df: pd.DataFrame) -> pd.DataFrame:
     return df[~version_strings(df)]
 
 
-# F39 (NOTES §31.2, rule §32.1): package metadata other than the version.
-# A copyright notice whose year changed was ranked first in the demo
-# story's release, used by nobody. The names were fixed on 9 Oct, before
-# any row was counted, from the places that define them:
+# F39 (NOTES §31.2, §32): package metadata other than the version. A
+# copyright notice whose year changed was ranked first in the demo story's
+# release, used by nobody. Fifteen names were fixed on 9 Oct, before any
+# row was counted, from the places that define them (§32.1):
 METADATA_LEAVES = {
     # pydoc prints these as a module's DATE, AUTHOR and CREDITS
     "__author__", "__credits__", "__date__",
-    # the __about__.py convention (pypa's packaging up to 21.3; cryptography)
+    # the __about__.py convention (pypa's packaging 21.3; cryptography today)
     "__title__", "__summary__", "__uri__", "__email__", "__license__",
     "__copyright__",
     # requests' __version__.py, the same idea under other names
     "__description__", "__url__", "__build__", "__author_email__",
     # the module-header fields §31.2 named
     "__maintainer__", "__status__",
+    # Added after the count (§32.2), by §32.1's test and not by their
+    # labels, which the count did not show: each describes the release, as
+    # __date__ and F1's names do. The version as a tuple, and when it was
+    # built.
+    "__version_info__", "__version_time__",
 }
 # Only a changed VALUE: a changed string breaks nobody. A removed name can
 # (code that reads pkg.__author__ would fail), so a removal stays a change.
@@ -182,13 +187,20 @@ def metadata_strings(df: pd.DataFrame) -> pd.Series:
     (pkg.__copyright__, pkg.__author__ and the like): the last part of the
     symbol is in METADATA_LEAVES and griffe reports a changed value.
 
-    Step 1 of F39 only counts these rows (scripts/metadata_count.py).
-    Nothing drops them yet; step 2 (NOTES §32) will, where F1 drops
-    version strings.
+    scripts/metadata_count.py counted them first (§32.2); main() drops
+    them with the version strings (F39 step 2, §32.3).
     """
     leaf = df["symbol"].astype(str).str.rsplit(".", n=1).str[-1]
     changed = df["kind"].astype(str).eq(METADATA_KIND)
     return leaf.isin(METADATA_LEAVES) & changed
+
+
+def drop_metadata(df: pd.DataFrame) -> pd.DataFrame:
+    """F39: the rows where a package-metadata string changed value,
+    removed before any feature is computed, for F1's reasons: they break
+    nobody, and dropping them here keeps release_size and package_churn
+    from counting them. labelled.csv keeps them."""
+    return df[~metadata_strings(df)]
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -307,15 +319,21 @@ def main() -> None:
     if not LABELLED.exists():
         sys.exit(f"{LABELLED} not found — run ml/features/labels.py first.")
     raw = pd.read_csv(LABELLED)
-    df = add_features(drop_version_strings(raw))
+    df = add_features(drop_metadata(drop_version_strings(raw)))
     gone = version_strings(raw)
-    emptied = (len(raw[GROUP].drop_duplicates())
-               - len(raw.loc[~gone, GROUP].drop_duplicates()))
+    meta = metadata_strings(raw)
+    pairs = len(raw[GROUP].drop_duplicates())
+    after_f1 = len(raw.loc[~gone, GROUP].drop_duplicates())
+    after_f39 = len(raw.loc[~(gone | meta), GROUP].drop_duplicates())
     print(f"\nF1: {int(gone.sum()):,} version-string rows dropped before any "
           "feature was computed"
           + (f", {int(raw.loc[gone, 'label'].sum()):,} of them positive "
              "under label" if "label" in raw else "")
-          + f".\n    {emptied:,} upgrades held nothing else and are gone.")
+          + f".\n    {pairs - after_f1:,} upgrades held nothing else and are "
+          "gone.")
+    print(f"F39: {int(meta.sum()):,} package-metadata rows dropped the same "
+          f"way (NOTES §32).\n    {after_f1 - after_f39:,} more upgrades "
+          "held nothing else and are gone.")
 
     # THE HOLDOUT COMES OFF BEFORE THE SPLIT, never after. The train/test
     # cut below is a quantile of whatever rows it is handed, so it has to

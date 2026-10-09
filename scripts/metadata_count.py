@@ -1,12 +1,17 @@
 """
-F39, step 1: how many rows are package metadata, counted before anything
-changes. Counts only: nothing is fitted or scored.
+F39: how many rows are package metadata. Counts only: nothing is fitted
+or scored.
 
     python scripts/metadata_count.py
 
 Reads  data/features.csv and data/holdout.csv, as build.py wrote them
        (version strings already out, F1)
 Writes nothing
+
+Step 1 ran it on files built before F39, to count what step 2 would take
+out (NOTES §32.2). Once build.py drops these rows (step 2, §32.3), it
+finds none in what build.py writes, and says so: that is the check that
+the drop happened.
 
 WHY (NOTES §31.2). The demo story's release, cryptography 46.0.7 ->
 47.0.0, is ranked with cryptography.__about__.__copyright__ first: a
@@ -17,9 +22,10 @@ not, and F1 took those out of the model (§23). F39 does the same here.
 THE RULE (NOTES §32.1), pushed before this script first ran on real data:
 
     A row is package metadata when the last part of its symbol is one of
-    the 15 names in build.py's METADATA_LEAVES and griffe reports that its
-    value changed (ATTRIBUTE_CHANGED_VALUE). Other changes to those names
-    stay: a removed __author__ can break code that reads it.
+    the names in build.py's METADATA_LEAVES (15 fixed before the count,
+    two added after it by the test below, §32.2) and griffe reports that
+    its value changed (ATTRIBUTE_CHANGED_VALUE). Other changes to those
+    names stay: a removed __author__ can break code that reads it.
 
     The rows go where F1 sends version strings: out before any feature
     is computed, from features.csv and holdout.csv alike; with no score,

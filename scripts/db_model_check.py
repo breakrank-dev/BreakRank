@@ -35,6 +35,8 @@ from an earlier load beside 21,498 new ones: before that day's ml/db.py
 fix, a re-load only overwrote the rows it scored. A version's scores
 should all come from one load, and F1 took the version-string rows out of
 the model, so after a load the first list has one day and the count is 0.
+F39 (NOTES §32) took package-metadata rows out the same way, so they are
+counted the same way, from 9 Oct: 0 after the first load that follows.
 """
 
 import json
@@ -44,7 +46,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.db import connect  # noqa: E402
-from ml.features.build import VERSION_LEAVES  # noqa: E402
+from ml.features.build import (METADATA_KIND, METADATA_LEAVES,  # noqa: E402
+                               VERSION_LEAVES)
 
 METRICS = pathlib.Path("artifacts") / "metrics.json"
 # /health answers {"ok": true, "model_version": ...}, the model the API is
@@ -78,6 +81,14 @@ def main() -> None:
               AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
         """), {"v": ours, "leaves": sorted(VERSION_LEAVES)}).scalar() \
             if ours else 0
+        stale_meta = conn.execute(text(r"""
+            SELECT count(*) FROM prediction p
+            JOIN breakage b ON b.id = p.breakage_id
+            WHERE p.model_version = :v
+              AND b.kind = :kind
+              AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
+        """), {"v": ours, "kind": METADATA_KIND,
+               "leaves": sorted(METADATA_LEAVES)}).scalar() if ours else 0
 
     print(f"\nmodel_run rows, newest first ({breakages:,} breakage rows in "
           "the table):\n")
@@ -101,6 +112,10 @@ def main() -> None:
               + ("   (none, as F1 intends)" if not stale_vs else
                  "   ** F1 took these out of the model; these scores are "
                  "an earlier model's"))
+        print(f"package-metadata rows with a score: {stale_meta:,}"
+              + ("   (none, as F39 intends)" if not stale_meta else
+                 "   ** F39 took these out of the model; reload:\n** "
+                 "python ml/db.py --scores"))
 
     if not runs:
         print("  (none) Load one with: python ml/db.py --scores")

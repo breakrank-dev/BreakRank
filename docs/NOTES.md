@@ -4994,3 +4994,88 @@ rows counted from the holdout, the emptied upgrades, section 6 filtered
 on labels, the holdout tripwire, the F1 check, private rows among the
 story candidates, the gates' "more than", the test half, the used count,
 a file written) and each turned a check to FAIL.
+
+### 32.2 The count, and two names added after it (9 Oct)
+
+`scripts/metadata_count.py`, run 9 Oct after §32.1 was pushed (5e061a4),
+on the files the tuned model was built from.
+
+| | rows F39 takes out | of them used (`label_alias`) |
+|---|---|---|
+| dev | **31** of 16,628 (0.19%) | **0** (dev has 611 used rows) |
+| holdout | **0** of 4,871 | |
+
+- By name, all in dev: `__copyright__` 10 (6 packages, packaging 23.1
+  -> 23.2 among them), `__date__` 7 (one package, deprecated),
+  `__credits__` 6 (pathspec), `__license__` 4 (dill), `__author__` 3
+  (3 packages), `__url__` 1. The other nine never changed value here.
+- 25 other changes to these names stay, all removals: `__url__` 17,
+  `__author__` 2, `__license__` 2, and one each of `__copyright__`,
+  `__email__`, `__summary__` and `__title__`.
+- **16 dev upgrades held nothing else.** After F39 they changed nothing
+  anyone could feel, and they join the all-clear (F15).
+- The single split's test half holds 2 of the rows, neither used. The
+  story candidates stay at 9, and one of them holds a metadata row:
+  cryptography 46.0.7 -> 47.0.0, its `__copyright__`.
+- The holdout's gates do not move: `label` 140/14/10, `label_scoped`
+  206/23/15, `label_alias` 263/19/13.
+
+**Why the model put one first.** Against every dev row, these rows sit at
+the top of their packages: median public_depth 1 against 3, top level
+54.8% against 3.1%, in `__all__` 41.9% against 2.9%. That is what the
+model reads as important (reachability, §30.3), and a package's metadata
+always sits there. So the copyright notice at #1 is not a random miss: it
+is the model's main signal applied to a row it should never have been
+shown.
+
+**Added after the count**, by §32.1's test, from what each name is.
+Section 6 showed no labels, and its counts take dev and the holdout
+together:
+
+| name | rows | why it is package metadata |
+|---|---|---|
+| `__version_info__` | 18 | the version as a tuple: F1's `__version_tuple__` under another name |
+| `__version_time__` | 9 | when the release was built, as `__date__` is |
+
+**Not added**, because code uses each of these, or because it describes
+something other than the package: `__slots__` (142, a class's
+attributes), `__protobuf__` (37, proto-plus's module manifest, read at
+import), `__all__` (7, what a module exports), `__array_api_version__`
+(4, the array-API standard a namespace implements, which callers check),
+`__tabversion__` (2, PLY's table format, which PLY checks), and the
+class-level `__str__`, `__bound__`, `__contains__`, `__elements__` and
+`__match_args__`. `__doc__` (9) is a docstring set as an attribute: a
+changed one breaks nobody either, but it describes an object, not the
+package, so it is not F39's. Noted for the hand audit.
+
+**F39 is small.** 31 rows plus the added names' 27, none of the 31 used,
+against 611 used rows in dev. It matters for what a viewer sees first
+more than for the headline: the demo story's list starts with one of
+them. The model's numbers are expected to move little.
+
+**Step 2, and how it is read**, fixed here before it runs. build.py drops
+these rows where F1 drops version strings (`drop_metadata`, after
+`drop_version_strings` and before `add_features`, so release_size and
+package_churn never count them). Then:
+
+1. The seven cut dates again (`stability.py --at` them), set beside the
+   5 Oct sweep by `scripts/compare_sweeps.py`: the lift before -> after at
+   each date, a date counting as moved only by more than 0.25x (§24.1).
+2. The sweep at its own dates, which train.py quotes, and train.py for
+   the single split and ranker.txt, read beside §30.3's numbers.
+3. stories.py again, under §31.1's rules. Whichever release it picks is
+   the demo story.
+4. The load, under the same name. It replaces the model's scores whole
+   (§28.3), so the metadata rows lose theirs and sort last.
+   `db_model_check.py` counts metadata rows with a score; after the load
+   it should read 0.
+
+Tested by `scripts/test_metadata.py`, four cases now (the rule; build.py's
+drop, before the features; the count on files built before step 2; what
+the count refuses), and `scripts/test_compare_sweeps.py`, three cases.
+Sixteen guards in the first and five in the second were broken on
+purpose, and each turned a check to FAIL. db_model_check.py's new count
+was run against a scratch Postgres built from migrations 001-006: it
+counted the two metadata value changes among six rows (not a removed
+`__author__`, a version string or `__slots__`), and read 0 once their
+scores were gone.
