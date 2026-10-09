@@ -2882,6 +2882,8 @@ Measured 2 Oct (§29.2), for the record: classifier median lift over
 popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
 
 **F26. "One story of a real release it got right" — 30 Oct DoD.**
+*[Rules fixed 5 Oct, §31.1: a success and a failure story, chosen by
+rule from the test half. The stories: §31.2.]*
 Not produced. One hour with `features.csv` + the model's scores.
 
 **F27. Provenance error, corrected Day 15:** the deck/report/study
@@ -4659,9 +4661,11 @@ is_private, is_top_level, inherited_by, bump).
 §30.1 required):
 
 - **Noise floor 9.7%** (dropping is_top_level, zero gain, moved PR-AUC
-  by 9.7%). The last ablation, at a fixed 20 trees on the 21 Sep data,
-  read 16.8% (§20.3); a fixed run on today's data is the fair comparison
-  and is the next run (`ablate.py --tuning fixed`).
+  by 9.7%). The fixed model on the same data and split, `ablate.py
+  --tuning fixed` run the same day: **16.7%** (dropping inherited_by),
+  at 20 trees. So tuning cut the floor from 16.7% to 9.7%, as F7
+  expected, and the fixed table showed why it was unreadable: dropping
+  popularity "improved" PR-AUC by 39%, dropping history by 24%.
 - **One group clears it: reachability** (public_depth,
   has_export_path). Removing it costs 28.3% of PR-AUC (2.9x the floor),
   path shape and reachability together 30.8%. Path shape, blast radius,
@@ -4727,8 +4731,8 @@ withdrawn):
 And the ablation, which the report can now quote in part:
 
 > With the model's size chosen by cross-validation, removing a feature
-> the model never uses moves PR-AUC by up to 9.7%, so smaller effects
-> are not interpreted. One group clears that floor: the two reachability
+> the model never uses moves PR-AUC by up to 9.7% (16.7% at the old
+> fixed size of 20 trees), so smaller effects are not interpreted. One group clears that floor: the two reachability
 > features, how short a symbol's public import path is and whether it is
 > re-exported under a shorter name. Removing them costs 28% of PR-AUC,
 > and on their own they score as well as all 17 features. We state the
@@ -4760,13 +4764,72 @@ median 5.20x min 2.20x max 6.04x, lift's 95% interval above 1.0x at
 
 ### 30.4 Still open from item 7
 
-- **Commit ranker.txt and load it.** `artifacts/ranker.txt` is the tuned
-  model. A `--scores` load writes `lambdarank-label_alias-tuned`, the
-  newest model_run row, and the API serves it from its next start
-  (§28.5). `lambdarank-label_alias` stays in the table, so
-  `MODEL_VERSION=lambdarank-label_alias` rolls back in one setting.
+- **Commit ranker.txt and load it.** *[Done 5 Oct, §30.5.]*
 - **`ablate.py --tuning fixed` on today's data**, for the fair
-  comparison of the noise floor.
+  comparison of the noise floor. *[Done 5 Oct: 16.7%, against 9.7%
+  tuned; §30.3.]*
 - Item 7 is otherwise done. Next on the list: item 8 (F16, F17), item 11
   (F6, F14) with the measurement above, and F26's real-release story for
   the 30 Oct demo.
+
+### 30.5 Loaded and served (5 Oct)
+
+ae24497 commits the tuned ranker.txt. `python ml/db.py --scores` the same
+day wrote `lambdarank-label_alias-tuned` (positive_rate 0.078772) and
+21,498 scores, all written 2026-10-05, none on a version-string row
+(db_model_check.py). It is the newest model_run row (trained_at
+2026-10-05 08:36 UTC), ahead of `lambdarank-label_alias` (1 Oct's scores,
+kept as the fallback), `lambdarank-label_scoped` and `v0-fake`.
+
+`curl -s https://breakrank.onrender.com/health` right after the load
+answered `{"ok":true,"model_version":"lambdarank-label_alias-tuned"}`:
+the API had started since the load (it sleeps when idle, §28.5), so the
+site serves the tuned model now. `MODEL_VERSION=lambdarank-label_alias`
+on Render rolls it back without touching data.
+
+The other numbers the load printed are the 1 Oct load's, unchanged:
+23,267 breakage rows sent, 27,900 in the table, the same release
+statuses (§21.9), 232 releases with no status the files can establish.
+
+## 31. F26: one release the model got right, and one it got wrong (5 Oct)
+
+§31.1 was written and committed before `scripts/stories.py` read the
+real data. The stories are §31.2.
+
+### 31.1 Where the stories come from, and how they are chosen
+
+The project book asks for two (§11.9): "a real release your model
+ranked correctly, with the GitHub issues that followed", and "a case it
+got wrong, and why you think it did". It adds that the failure story
+matters more. F26 makes the first part of the 30 Oct definition of done.
+
+- **Only releases the model never trained on.** The test half of the
+  development data: upgrades released after the single split's cut
+  (5 Apr) and before the holdout (28 Jul). ranker.txt was fitted on the
+  train half, and the site ranks these releases with that same model, so
+  each story can be shown live. The holdout is not read: choosing a
+  story from it would mean looking at its labels.
+- **The list the site shows.** One release's changes, private symbols
+  left out as the API does by default, ranked by the model's score.
+- **Candidates:** releases with at least one used change and at least 20
+  changes, so ranking has something to do.
+- **The success story:** the most used changes in the model's top 10
+  above what a random order would put there (used x 10 / changes).
+  Popularity and semver score every change of one release alike, so
+  inside a release they are a random order. A tie goes to the release
+  whose found changes more packages use.
+- **The failure story:** the most-used change the model put in the
+  bottom half of its list, the change people most needed to see,
+  buried. With none in a bottom half, the used change ranked lowest
+  relative to its list. Its features are printed, for the why.
+- **Printed with them:** how the model did on every candidate, so the
+  two are read against the rest; the site's address for each release;
+  and a GitHub issue search for the change, for "the issues that
+  followed".
+- Tested by `scripts/test_stories.py`, five cases. Seven rules were
+  broken on purpose (the tie-break, the bottom-half rule both ways, the
+  train half, private symbols, the random expectation, the size filter)
+  and each turned a check to FAIL.
+
+A story shows what the numbers mean; it is not more evidence than they
+are. The report quotes the summary line beside it.
