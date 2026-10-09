@@ -92,8 +92,10 @@ def main() -> None:
     print(f"  {n} cut dates measured by both; tuning "
           f"{', '.join(stamp(after, 'tuning'))}, relevance "
           f"{', '.join(stamp(after, 'relevance'))}\n")
-    print(f"  {'cut':<12}{'lift over pop':<16}{'moved':<7}{'PR-AUC':<18}"
-          f"{'test rows':<16}nDCG@20")
+    # Each cell is followed by a space whatever its width, so a wide one
+    # (11,043 -> 11,023) can never run into the next.
+    print(f"  {'cut':<12}{'lift over pop':<15} {'moved':<5} {'PR-AUC':<17} "
+          f"{'test rows':<17} nDCG@20")
     for d in dates:
         x, y = b.loc[d], a.loc[d]
         lift = f"{x['lift_vs_pop']:.2f}x -> {y['lift_vs_pop']:.2f}x"
@@ -101,7 +103,7 @@ def main() -> None:
         rows = f"{int(x['test_rows']):,} -> {int(y['test_rows']):,}"
         nd = f"{x['ndcg_20']:.4f} -> {y['ndcg_20']:.4f}"
         mark = moved(x["lift_vs_pop"], y["lift_vs_pop"])
-        print(f"  {d:<12}{lift:<16}{mark:<7}{pr:<18}{rows:<16}{nd}")
+        print(f"  {d:<12}{lift:<15} {mark:<5} {pr:<17} {rows:<17} {nd}")
 
     def both(col: str, how: str, fmt: str) -> str:
         bv = getattr(b[col].astype(float), how)()
