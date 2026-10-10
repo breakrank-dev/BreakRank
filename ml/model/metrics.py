@@ -91,12 +91,64 @@ def ndcg_at_k(df: pd.DataFrame, score: str, label: str, k: int = 20,
     return float(np.mean(out)) if out else 0.0
 
 
-def evaluate(df: pd.DataFrame, score: str, label: str = "label") -> dict:
-    """The three numbers, ready for a `model_run` row."""
+def average_precision_ties(y, s, sample_weight=None) -> float:
+    """Average precision expected over every order of tied scores (F42,
+    NOTES §35).
+
+    sklearn's average_precision_score scores a run of tied scores as one
+    threshold: every positive in the run is credited with the precision
+    at the run's end. A score that says nothing about the order inside
+    its ties should be scored as if every order of them were equally
+    likely, which is how precision@10 and nDCG@20 already treat ties
+    (_ranked, one fixed random order). This is that expectation, exact
+    (McSherry and Najork, ECIR 2008). In a run of n rows holding r
+    positives, with s rows and c positives ranked above it, the row at
+    position p of the run is a positive with probability r/n, and then
+    has on average c + 1 + (p - 1)(r - 1)/(n - 1) positives at or above
+    it. Summed over p and divided by all positives, that is the expected
+    average precision. With no ties it is the ordinary one, sklearn's.
+
+    sample_weight holds whole numbers: a row of weight k counts as k
+    copies of itself, the way intervals() uses it."""
+    y = np.asarray(y, float)
+    s = np.asarray(s, float)
+    w = (np.ones_like(y) if sample_weight is None
+         else np.asarray(sample_weight, float))
+    if not np.allclose(w, np.round(w)) or (w < 0).any():
+        raise ValueError("sample_weight must hold whole numbers")
+    keep = w > 0
+    y, s, w = y[keep], s[keep], np.round(w[keep])
+    positives = float((w * y).sum())
+    if not positives:
+        return 0.0
+    order = np.argsort(-s, kind="mergesort")
+    s, y, w = s[order], y[order], w[order]
+    start = np.flatnonzero(np.r_[True, s[1:] != s[:-1]])
+    n = np.add.reduceat(w, start)
+    r = np.add.reduceat(w * y, start)
+    above = np.r_[0.0, np.cumsum(n)[:-1]]
+    found = np.r_[0.0, np.cumsum(r)[:-1]]
+    harmonic = np.r_[0.0, np.cumsum(1.0 / np.arange(1, int(n.sum()) + 1))]
+    inv = harmonic[(above + n).astype(int)] - harmonic[above.astype(int)]
+    lin = n - (above + 1) * inv
+    with np.errstate(invalid="ignore", divide="ignore"):
+        slope = np.where(n > 1, (r - 1) / np.maximum(n - 1, 1), 0.0)
+    each = (r / n) * ((found + 1) * inv + slope * lin)
+    return float(each.sum() / positives)
+
+
+def evaluate(df: pd.DataFrame, score: str, label: str = "label",
+             ties: bool = False) -> dict:
+    """The three numbers, ready for a `model_run` row.
+
+    ties=True scores PR-AUC with its ties averaged
+    (average_precision_ties, F42); the default is sklearn's convention,
+    which every number before 10 Oct used."""
     y = df[label].to_numpy(int)
     s = df[score].to_numpy(float)
+    ap = average_precision_ties if ties else average_precision_score
     return {
-        "pr_auc": float(average_precision_score(y, s)) if y.sum() else 0.0,
+        "pr_auc": float(ap(y, s)) if y.sum() else 0.0,
         "precision_at_10": precision_at_k(df, score, label, 10),
         "ndcg_at_20": ndcg_at_k(df, score, label, 20),
     }
@@ -109,7 +161,8 @@ BOOT_SEED = 0
 
 def intervals(df: pd.DataFrame, label: str, model: str = "model",
               baseline: str = "popularity", draws: int = DRAWS,
-              seed: int = BOOT_SEED) -> dict:
+              seed: int = BOOT_SEED, ties: bool = False,
+              per_upgrade: bool = True) -> dict:
     """95% intervals for the numbers one scored test half reports (F11).
 
     Each of `draws` resamples draws the test half's upgrades (version
@@ -133,7 +186,12 @@ def intervals(df: pd.DataFrame, label: str, model: str = "model",
     precision_at_10 and ndcg_at_20, plus "upgrades", the number of
     version pairs resampled. A resample with no positive (or, for the two
     per-upgrade numbers, no rankable upgrade) is left out of that
-    number's interval."""
+    number's interval.
+
+    ties=True scores every PR-AUC with its ties averaged (F42), a row's
+    draw count standing for that many copies of it. per_upgrade=False
+    leaves out precision@10 and nDCG@20 (returned as NaN), when only the
+    PR-AUCs and their ratio are wanted."""
     df = df.reset_index(drop=True)
     key = df[PAIR].astype(str).agg("\x1f".join, axis=1)
     codes, uniq = pd.factorize(key)
@@ -146,18 +204,21 @@ def intervals(df: pd.DataFrame, label: str, model: str = "model",
     # Rows weighted by how often their upgrade was drawn: the same as
     # stacking that many copies of the upgrade, without building them.
     ap = {model: np.full(draws, np.nan), baseline: np.full(draws, np.nan)}
+    score = average_precision_ties if ties else average_precision_score
     for d in range(draws):
         w = counts[d][codes]
         if (w * y).sum() == 0:
             continue
         for s in ap:
-            ap[s][d] = average_precision_score(
-                y, df[s].to_numpy(float), sample_weight=w)
+            ap[s][d] = score(y, df[s].to_numpy(float), sample_weight=w)
 
     # The per-upgrade numbers: each rankable upgrade's own value, once,
     # then averaged with the draw's counts as weights.
-    per = {}
+    per = {"precision_at_10": np.full(draws, np.nan),
+           "ndcg_at_20": np.full(draws, np.nan)}
     for k, name in ((10, "precision_at_10"), (20, "ndcg_at_20")):
+        if not per_upgrade:
+            break
         vals, where = [], []
         for g in _rankable(df, label, k):
             if k == 10:
@@ -176,6 +237,31 @@ def intervals(df: pd.DataFrame, label: str, model: str = "model",
             "baseline_pr_auc": _band(ap[baseline]), "lift": _band(lift),
             "precision_at_10": _band(per["precision_at_10"]),
             "ndcg_at_20": _band(per["ndcg_at_20"]), "upgrades": n_pairs}
+
+
+def tie_averaged(df: pd.DataFrame, label: str, model: str = "model",
+                 draws: int = DRAWS, seed: int = BOOT_SEED) -> dict:
+    """F42 and F41 in one place (NOTES §34, §35), for one scored test half
+    that carries the model's scores and the baselines (add_baseline_scores):
+    the model's, popularity's and path length's PR-AUC with ties averaged,
+    the model's lift over each of the two, and the paired 95% interval of
+    each lift, every PR-AUC in it with ties averaged too. `path` is
+    evaluate()'s dict for path length alone, so its precision@10 and
+    nDCG@20 come with it. stability.py, train.py and final_eval.py all take
+    their numbers from here."""
+    y = df[label].to_numpy(int)
+    nan = float("nan")
+    mine = average_precision_ties(y, df[model]) if y.sum() else 0.0
+    pop = average_precision_ties(y, df["popularity"]) if y.sum() else 0.0
+    path = evaluate(df, "path", label, ties=True)
+    ci_pop = intervals(df, label, model, "popularity", draws, seed,
+                       ties=True, per_upgrade=False)
+    ci_path = intervals(df, label, model, "path", draws, seed, ties=True,
+                        per_upgrade=False)
+    return {"model": mine, "popularity": pop, "path": path,
+            "lift_pop": mine / pop if pop else nan,
+            "lift_path": mine / path["pr_auc"] if path["pr_auc"] else nan,
+            "ci_pop": ci_pop["lift"], "ci_path": ci_path["lift"]}
 
 
 def _band(x: np.ndarray) -> tuple[float, float]:

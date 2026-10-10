@@ -10,7 +10,7 @@ cannot know which you have unless you measure the dumb thing first. The
 kill-date gate is stated in exactly these terms: the model must beat the
 version-number baseline on PR-AUC.
 
-Five baselines, weakest first:
+Six baselines, weakest first:
 
   griffe_all   every change is equally important. This is the world
                WITHOUT BreakRank: 187 changes, no ordering, read them all.
@@ -37,7 +37,16 @@ Five baselines, weakest first:
                line does as well, the trees are not what the result is
                made of, whatever the report says about U-shapes.
 
-All five are scored on the TEST half only, with the same metrics the
+  path         the shortest import path first: minus public_depth, the
+               dots in the shortest public name a user can write for the
+               symbol (F41, NOTES §34). The ranker's top feature, alone,
+               with nothing fitted. The ablation found the two
+               reachability features matching all 17 (§32.3); this is
+               the rule anyone could write down from that, and the one an
+               examiner will ask about. Most of its scores tie, so its
+               PR-AUC is always taken with ties averaged (F42, §35).
+
+All six are scored on the TEST half only, with the same metrics the
 ranker will use, so the comparison is like for like.
 """
 
@@ -172,6 +181,15 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
     # F8. Also fitted on TRAIN ONLY, on the same rows the ranker was.
     test["linear"] = linear_scores(train, test, label)
 
+    # F41. Shortest import path first: nothing fitted, so train plays no
+    # part. A row with no depth scores as the deepest. Most rows tie:
+    # precision@10 and nDCG@20 break ties by metrics.py's fixed random
+    # order, as for every baseline, and its PR-AUC is taken with ties
+    # averaged (metrics.average_precision_ties, F42).
+    depth = pd.to_numeric(test["public_depth"], errors="coerce")
+    deepest = depth.max() if depth.notna().any() else 0
+    test["path"] = -depth.fillna(deepest).astype(float)
+
     return test
 
 
@@ -235,6 +253,14 @@ def main() -> None:
     print(f"strongest baseline: {best} at {results[best]['pr_auc']:.4f}")
     print(f"the line (logistic regression, the ranker's {len(LINEAR_FEATS)} "
           f"features): {results['linear']['pr_auc']:.4f}")
+    # F41 and F42 (NOTES §34, §35): with ties averaged, which path needs
+    # and every tied baseline will move to.
+    tied = {n: evaluate(test, n, args.label, ties=True)["pr_auc"]
+            for n in ("path", "popularity", "kind_prior", "semver")}
+    print("with ties averaged (F42): path length alone (shortest import "
+          f"path first, F41) {tied['path']:.4f},\n  popularity "
+          f"{tied['popularity']:.4f}, kind_prior {tied['kind_prior']:.4f}, "
+          f"semver {tied['semver']:.4f}")
     print(f"\n** The ranker has to beat {results[best]['pr_auc']:.4f} PR-AUC "
           f"to be worth shipping. **")
     print(f"** The kill-date gate is the semver line: "

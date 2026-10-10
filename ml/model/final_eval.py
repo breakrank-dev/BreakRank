@@ -61,7 +61,7 @@ from ml.holdout import (FROZEN_ON, GROUP, HOLDOUT_FILE,  # noqa: E402
                         assert_no_holdout, fingerprint, holdout_mask, track)
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (DRAWS, evaluate, intervals,  # noqa: E402
-                              n_rankable, ndcg_at_k)
+                              n_rankable, ndcg_at_k, tie_averaged)
 from ml.model.train import (COUNT_OF, RELEVANCE,  # noqa: E402
                             SHIPPED_RELEVANCE, SHIPPED_TUNING, TUNING,
                             fit_cv, graded_gain, prepare, relevance_problem,
@@ -328,6 +328,18 @@ def main() -> None:
     print(f"  semver {sem['pr_auc']:.4f}; the line (logistic regression, "
           f"same features) {res['linear']['pr_auc']:.4f}. {changes:,} "
           f"changes in {pairs} upgrades; intervals resample upgrades.")
+    # F42 (NOTES §35) and F41 (§34): the same with every PR-AUC's ties
+    # averaged, and path length alone, which is only ever taken that way.
+    # Printed and in the NOTES block, not in the ledger.
+    tie = tie_averaged(scored, label)
+    print(f"  With ties averaged (F42): PR-AUC {tie['model']:.4f} vs "
+          f"popularity {tie['popularity']:.4f}, {tie['lift_pop']:.2f}x "
+          f"({tie['ci_pop'][0]:.2f}-{tie['ci_pop'][1]:.2f});\n  path "
+          f"length alone {tie['path']['pr_auc']:.4f}, "
+          f"{tie['lift_path']:.2f}x ({tie['ci_path'][0]:.2f}-"
+          f"{tie['ci_path'][1]:.2f}), its nDCG@20 "
+          f"{tie['path']['ndcg_at_20']:.4f} against the model's "
+          f"{m['ndcg_at_20']:.4f}.")
     print(f"  precision@10 {m['precision_at_10']:.4f} "
           f"({ci['precision_at_10'][0]:.4f}-{ci['precision_at_10'][1]:.4f}) "
           f"over {r10} upgrades; nDCG@20 {m['ndcg_at_20']:.4f} "

@@ -31,6 +31,19 @@ the model was, with `linear_ndcg_20`, `lift_vs_linear` (model PR-AUC over
 the line's) and `beats_linear`. scripts/item7_linear.py reads a
 lambdarank sweep and a binary one and applies NOTES §29.1's rule.
 
+And, since 10 Oct, two things beside each other (metrics.tie_averaged).
+F42 (NOTES §35): `pr_auc_ties` and `popularity_ties` are the model's and
+popularity's PR-AUC with ties averaged, with `lift_vs_pop_ties`, its
+interval `lift_lo_ties`-`lift_hi_ties`, and `beats_pop_ties`; every other
+number keeps sklearn's convention until the report moves. F41 (NOTES
+§34): `path` is the PR-AUC, ties averaged, of ranking by the shortest
+import path (minus public_depth, nothing fitted), with `path_p_at_10`,
+`path_ndcg_20`, `lift_vs_path` (pr_auc_ties over path, to four places)
+and its interval `lift_vs_path_lo`-`lift_vs_path_hi`, `beats_path` and
+`beats_path_ndcg`. scripts/path_verdict.py reads the sweep at the seven
+reference dates and applies §34.1's rule; every row now also says its
+label and objective, which the verdict checks.
+
 BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
 quantiles, so they move whenever the rows do: item 2 deleted 708 dev
 upgrades and every date moved. A fix judged by comparing a sweep before
@@ -88,7 +101,7 @@ from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (evaluate, intervals,  # noqa: E402
-                              n_rankable, ndcg_at_k)
+                              n_rankable, ndcg_at_k, tie_averaged)
 from ml.model.train import (COUNT_OF, FIXED_PARAMS, GROUP,  # noqa: E402
                             RELEVANCE, SHIPPED_RELEVANCE, SHIPPED_TUNING,
                             TUNING, fit_cv, fit_model, graded_gain,
@@ -238,6 +251,11 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     # the model held fixed. The spread ACROSS cuts, which report() prints
     # as the range, is the other kind; neither stands in for the other.
     ci = intervals(scored, label, "model", "popularity")
+    # F42 and F41 (NOTES §35, §34): every PR-AUC again with ties averaged,
+    # each lift's interval the same way, and path length alone, beside the
+    # convention every earlier number used, so the size of the change is
+    # measured at the same dates before the report moves to it.
+    tie = tie_averaged(scored, label)
 
     return {
         "cut": str(cutoff.date()),
@@ -264,6 +282,8 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         "beats_pop": bool(m["pr_auc"] > pop["pr_auc"]),
         "beats_semver": bool(m["pr_auc"] > sem["pr_auc"]),
         **against_the_line(m, lin),
+        **with_ties(tie),
+        **against_path(m, tie),
         # F7: the setting this cut's model was fitted with, as
         # leaves/learning rate/smallest leaf. Always 31/0.05/30 untuned.
         "setting": setting_text(getattr(model, "tuned_", {}).get(
@@ -282,6 +302,44 @@ def against_the_line(m: dict, lin: dict) -> dict:
         "lift_vs_linear": round(m["pr_auc"] / lin["pr_auc"], 2)
         if lin["pr_auc"] else float("nan"),
         "beats_linear": bool(m["pr_auc"] > lin["pr_auc"]),
+    }
+
+
+def with_ties(tie: dict) -> dict:
+    """The F42 columns of a sweep row (NOTES §35), from tie_averaged(): the
+    model's and popularity's PR-AUC with ties averaged, the lift between
+    them with its 95% interval, and whether the model is ahead, beside the
+    convention every earlier number used."""
+    return {
+        "pr_auc_ties": round(tie["model"], 4),
+        "popularity_ties": round(tie["popularity"], 4),
+        "lift_vs_pop_ties": round(tie["lift_pop"], 2),
+        "lift_lo_ties": round(tie["ci_pop"][0], 2),
+        "lift_hi_ties": round(tie["ci_pop"][1], 2),
+        "beats_pop_ties": bool(tie["model"] > tie["popularity"]),
+    }
+
+
+def against_path(m: dict, tie: dict) -> dict:
+    """The F41 columns of a sweep row (NOTES §34.1), from the model's
+    evaluate() dict and tie_averaged(): path's PR-AUC (ties averaged,
+    F42), precision@10 and nDCG@20; the model's PR-AUC, ties averaged too,
+    over path's, with that lift's 95% interval; and whether the model is
+    ahead on PR-AUC and on nDCG@20. Ratio and flags come from the values
+    as stored, to four places, which is what scripts/path_verdict.py
+    reads, so a tie there is ahead for neither."""
+    pth = tie["path"]
+    mp, pp = round(tie["model"], 4), round(pth["pr_auc"], 4)
+    mn, pn = round(m["ndcg_at_20"], 4), round(pth["ndcg_at_20"], 4)
+    return {
+        "path": pp,
+        "path_p_at_10": round(pth["precision_at_10"], 4),
+        "path_ndcg_20": pn,
+        "lift_vs_path": round(mp / pp, 4) if pp else float("nan"),
+        "lift_vs_path_lo": round(tie["ci_path"][0], 4),
+        "lift_vs_path_hi": round(tie["ci_path"][1], 4),
+        "beats_path": bool(mp > pp),
+        "beats_path_ndcg": bool(mn > pn),
     }
 
 
@@ -344,6 +402,10 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
     # And how its trees were sized (F7); a file from before item 7 has no
     # stamp and was fixed.
     t["tuning"] = tuning
+    # And, from 10 Oct, which label and objective: a sweep's file name says
+    # them, and scripts/path_verdict.py checks the rows too (F41).
+    t["label"] = label
+    t["objective"] = objective
     return t
 
 
@@ -402,6 +464,18 @@ def report(t: pd.DataFrame, label: str) -> None:
     if has_line:
         cols.insert(cols.index("popularity"), "linear")
         cols.append("linear_ndcg_20")
+    # F42 and F41: PR-AUC with ties averaged, and path length alone,
+    # where the file has them.
+    has_ties = "pr_auc_ties" in t and t["pr_auc_ties"].notna().all()
+    if has_ties:
+        cols.insert(cols.index("pr_auc") + 1, "pr_auc_ties")
+        cols.insert(cols.index("popularity") + 1, "popularity_ties")
+        after = "lift_95" if "lift_95" in cols else "lift_vs_pop"
+        cols.insert(cols.index(after) + 1, "lift_vs_pop_ties")
+    has_path = "path" in t and t["path"].notna().all()
+    if has_path:
+        cols.insert(cols.index("popularity"), "path")
+        cols.append("path_ndcg_20")
     # A skipped row has no tree count, which turns the column into floats
     # ("20.0") for the rows that do. Every fitted row has a whole number.
     t["trees"] = t["trees"].astype(int)
@@ -437,6 +511,24 @@ def report(t: pd.DataFrame, label: str) -> None:
               f"{int(t['beats_linear'].sum())}/{n}; model/line PR-AUC "
               f"median {ratio.median():.2f}x, range {ratio.min():.2f}x – "
               f"{ratio.max():.2f}x")
+    if has_ties:
+        # F42 (NOTES §35): the same lift with every PR-AUC's ties averaged.
+        lt = t["lift_vs_pop_ties"].astype(float)
+        print(f"  with ties averaged (F42): lift vs pop median "
+              f"{lt.median():.2f}x, range {lt.min():.2f}x – {lt.max():.2f}x;"
+              f" beats popularity\n  at {int(t['beats_pop_ties'].sum())}/{n},"
+              f" by more than its interval at "
+              f"{int((t['lift_lo_ties'].astype(float) > 1).sum())}/{n}")
+    if has_path:
+        # NOTES §34.1 judges these at the seven reference dates
+        # (scripts/path_verdict.py); here they are read, not ruled on.
+        ratio = t["lift_vs_path"].astype(float)
+        print(f"  beats path length alone (shortest import path first, ties "
+              f"averaged) at {int(t['beats_path'].sum())}/{n} on PR-AUC;\n"
+              f"  model/path median {ratio.median():.4f}x, range "
+              f"{ratio.min():.4f}x – {ratio.max():.4f}x; and on nDCG@20, "
+              f"within an upgrade,\n  at {int(t['beats_path_ndcg'].sum())}/"
+              f"{n}")
 
     if wins == n:
         print("\n  ** Holds at every cut date. The result is not one lucky")
@@ -612,7 +704,7 @@ def main() -> None:
         close = len(gaps) > 1 and (gaps[-1] - gaps[-2]) < 0.5
 
         if close:
-            print(f"\n** Median lift does NOT separate these: the top two are")
+            print("\n** Median lift does NOT separate these: the top two are")
             print("** within 0.5x of each other. Ignore that column.")
         print(f"\n** Decide on lift_MIN. '{by_worst}' has the best worst case "
               f"at\n** {comp.loc[comp['lift_MIN'].idxmax(), 'lift_MIN']:.2f}x, "

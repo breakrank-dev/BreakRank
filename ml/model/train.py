@@ -63,7 +63,8 @@ from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (DRAWS, compare, evaluate,  # noqa: E402
-                              intervals, n_rankable, ndcg_at_k)
+                              intervals, n_rankable, ndcg_at_k,
+                              tie_averaged)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -717,6 +718,27 @@ def main() -> None:
               "their own features.\n** NOTES §29 says what that does to the "
               "report.")
 
+    # F42 (NOTES §35): every PR-AUC above takes sklearn's convention, which
+    # scores a run of tied scores as one threshold. The same numbers with
+    # ties averaged, paired the same way, beside them; and F41 (§34), path
+    # length alone, which ties on most rows and is only ever taken this
+    # way. Read here; path is ruled on at seven dates by
+    # scripts/path_verdict.py.
+    tie = tie_averaged(scored, label)
+    m_ties, pth = tie["model"], tie["path"]
+    print(f"\nwith ties averaged (F42): model PR-AUC {m_ties:.4f}, "
+          f"popularity {tie['popularity']:.4f}, path length alone "
+          f"{pth['pr_auc']:.4f}")
+    print(f"  {'lift over popularity':<22}{tie['lift_pop']:>6.2f}x   "
+          f"{tie['ci_pop'][0]:.2f}x to {tie['ci_pop'][1]:.2f}x")
+    print(f"  {'lift over path length':<22}{tie['lift_path']:>6.2f}x   "
+          f"{tie['ci_path'][0]:.2f}x to {tie['ci_path'][1]:.2f}x   "
+          "(shortest import path first, nothing fitted)")
+    print(f"  path length alone, within an upgrade: precision@10 "
+          f"{pth['precision_at_10']:.4f} (model {m['precision_at_10']:.4f}),"
+          f" nDCG@20 {pth['ndcg_at_20']:.4f} (model "
+          f"{m['ndcg_at_20']:.4f})")
+
     ART.mkdir(exist_ok=True)
     model.booster_.save_model(str(ART / "ranker.txt")) if hasattr(
         model, "booster_") else None
@@ -775,7 +797,14 @@ def main() -> None:
              f"lift_95={ci['lift'][0]:.2f}-{ci['lift'][1]:.2f} "
              f"linear={lin:.4f} lift_vs_linear={lift_lin:.2f}x "
              f"lift_vs_linear_95={ci_lin['lift'][0]:.2f}-"
-             f"{ci_lin['lift'][1]:.2f}")
+             f"{ci_lin['lift'][1]:.2f} "
+             f"pr_auc_ties={m_ties:.4f} "
+             f"lift_vs_popularity_ties={tie['lift_pop']:.2f}x "
+             f"lift_ties_95={tie['ci_pop'][0]:.2f}-{tie['ci_pop'][1]:.2f} "
+             f"path={pth['pr_auc']:.4f} "
+             f"lift_vs_path={tie['lift_path']:.2f}x "
+             f"lift_vs_path_95={tie['ci_path'][0]:.2f}-"
+             f"{tie['ci_path'][1]:.2f}")
 
     # CARRY THE RANGE INTO THE ROW ITSELF. pr_auc here is ONE cut date, and
     # §5.6 measured that a single cut can sit anywhere in a band half as

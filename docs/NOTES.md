@@ -3011,7 +3011,9 @@ demo story's release. Its rule, fixed before the count: §32.1.
 cut date's lift can hinge on one release; with item 11.
 
 Added 10 Oct: F1 narrowed at Varad's request (§33.1), before item 12's
-database steps; the path-length baseline (§34) in the same retrain.
+database steps; F41, the path-length baseline (§34), in the same retrain;
+F42, ties in PR-AUC (§35), measured in it, and the report moved to ties
+averaged after it.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -5410,3 +5412,247 @@ submodule, a class's `VERSION`, or a `VERSION` with no griffe message)
 and the two metadata changes (`__copyright__` and `__version_info__`; not
 an `__author__` changed to `unset`), and read 0 for each once those
 scores were gone.
+
+### 33.2 The count (10 Oct)
+
+`scripts/version_count.py`, run 10 Oct after §33.1 was pushed (868bd34),
+on the labelled.csv the 9 Oct model was built from.
+
+| | rows | dev (used) | holdout | upgrades emptied |
+|---|---|---|---|---|
+| F1 until 10 Oct | 1,769 | 1,400 (378) | 369 | 868 |
+| F1 from 10 Oct | **1,757** | 1,390 (375) | 367 | 866 |
+| F39, unchanged by today's rule | 58 | 58 (9) | 0 | 29 more, with F1 |
+
+**12 rows come back into the model**, 10 in dev (3 used) and 2 in the
+holdout:
+
+- 5 removed `__version__`, 1 of them used (iniconfig 0.1 -> 1.0.0 among
+  them), and 1 whose kind changed (aioitertools 0.7.0 -> 0.7.1);
+- prompt_toolkit 3.0.52 -> 3.0.53's `__version__` and `VERSION`, both
+  changed to `unset` and both used: the case the review found, in a
+  package downstream code reads;
+- 3 removed objects named `version` (the submodule `mcp.shared.version`
+  in mcp 1.30.0 -> 2.0.0 among them), 1 in dev and 2 in the holdout;
+- 1 class attribute, babel's `CommandLineInterface.version` (2.11.0 ->
+  2.12.0).
+
+**What F1 still takes**: `__version__` 1,459 rows (167 packages),
+`version` 118, `VERSION` 99, `version_tuple` 45, `__version_tuple__` 36.
+The bare names come from 33 symbols, all listed by the count. Each sits
+in a version or metadata module (`_version`, `version`, `consts`,
+`__about__`) or at the top of its package, and each reads as that
+package's own version; pydantic.v1's is the bundled v1's.
+`kubernetes.aio.setup.VERSION`, the one in a setup module, is for the
+hand audit to confirm. No name was added or removed.
+
+**The all-clear**: 897 releases before, **895** now (735 in dev, 160 in
+the holdout). Two leave it, each because its only change now stays:
+iniconfig 0.1 -> 1.0.0 (`__version__` removed) and aioitertools 0.7.0 ->
+0.7.1 (`__version__` changed kind).
+
+**The holdout** takes back 2 rows and no pair: still 191 pairs,
+fingerprint 9b524ece19cf, 191 of the 351 frozen pairs, 160 gone (F1), 0
+added. The gates do not move: `label` 140/14/10, `label_scoped`
+206/23/15, `label_alias` 263/19/13.
+
+**What the loader will stop writing**: 1,815 rows of labelled.csv, where
+the old rules gave Varad's 1,827. Against the 27,900 rows he counted in
+the database that is still 6.5%, over db_prune's 5%, so the deletion
+step of its own (§33.1, step 3) stands. It counts again in the database
+itself, which also holds rows from earlier loads.
+
+**The analysed_clean preset** sent to Varad (his item h): cryptography
+50.0.0 -> 50.0.1 (25 Aug 2026), whose only change is `__version__`. It is
+the same package as the first preset, 46.0.7 -> 47.0.0, with nothing to
+fix. Others on the list: boto3 1.43.95 -> 1.43.96, packaging 26.1 ->
+26.2, idna 3.18 -> 3.19.
+
+10 dev rows come back, 3 of them used, among 16,570. The retrain (§33.3)
+measures what that does, at the seven reference dates, with the
+path-length baseline beside it (§34).
+
+## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
+
+**F41. No baseline ranks by path length alone, and the model leans on
+it most.** Varad, 9 Oct: "since the model leans mostly on import-path
+length (§30.3), have you measured a baseline that ranks by path length
+alone? An examiner who reads §30.3 will ask whether we beat that, not
+just popularity." It has not been measured. The closest result is the
+ablation's: a LightGBM given only the two reachability features scored
+102% of the full model on 5 Oct and 115% on 9 Oct (§32.3). That is a
+model fitted on two features, not a rule anyone could write down.
+*Fix:* the baseline and the rule below. §34.1 was written and pushed
+before the baseline was scored on the real data.
+
+### 34.1 What is compared, how it is judged, and what each outcome means
+
+**The baseline, `path`.** Each change scores minus its `public_depth`:
+the number of dots in the shortest public name a user can write for the
+symbol, from the package's own alias graph (labels.py; `pandas.read_csv`
+is 1, though griffe reports it at depth 4). Shortest import path first.
+Nothing is fitted, so it needs no training rows. A row with no depth
+scores as the deepest in its test half. Most rows tie, since the depth
+takes a handful of values, and within one depth the order means nothing,
+which is what "path length alone" means. So ties are averaged out:
+precision@10 and nDCG@20 break them by metrics.py's fixed random order,
+as for every baseline, and PR-AUC is the average precision expected over
+every order of the ties, computed exactly (F42, §35), for path and for
+the model it is set against. It is a strong baseline and partly
+circular, like the feature: code imports a symbol by its shortest public
+name, so a short path also gives the usage label more ways to match
+(§32.3). That is why it is the one to beat.
+
+**Where it is measured.**
+
+- At the seven reference dates of §23.5, in the retrain's
+  `stability.py --at` run (§33.1, step 1): at each date the model that
+  ships (lambdarank, `label_alias`, binary relevance, tuned by CV) and
+  `path` are scored on the same test half, and each row carries the
+  model's lift over path with its 95% interval (`lift_vs_path`,
+  `lift_vs_path_lo`, `lift_vs_path_hi`). `scripts/path_verdict.py` reads
+  that file and applies the rule. Nothing is refitted for it.
+- On the single split: train.py prints `path` in its block of
+  tie-averaged numbers, with the paired 95% interval of the model's lift
+  over it and path's precision@10 and nDCG@20, and writes `path`,
+  `lift_vs_path` and `lift_vs_path_95` into model_run's notes. Read, not
+  ruled on.
+- On the holdout, once, when it is opened: final_eval.py puts path's
+  PR-AUC, the model's lift over it with its interval, and path's nDCG@20
+  in the NOTES block, beside the tie-averaged lift over popularity (§35).
+  The ledger's columns stay as they were.
+
+**Two questions, two verdicts.** The report makes two kinds of claim, and
+path length could match the model on one and not the other.
+
+1. **Across releases**, PR-AUC over the pooled test half: does the model
+   put the used changes of every upgrade above the unused ones better
+   than path length does? At each date, r = model PR-AUC / path PR-AUC,
+   both with ties averaged (`pr_auc_ties` and `path` in the sweep).
+   - The model wins: r > 1 at 6 or more of the 7 dates, and the median r
+     is 1.25 or more.
+   - Path length wins: r < 1 at 6 or more, and the median r is 0.80 or
+     less.
+   - No difference the rule can see: anything else.
+2. **Within an upgrade**, nDCG@20 over the upgrades rankable at 20, which
+   is the product's own question: does the model order one upgrade's
+   changes better?
+   - The model wins: its nDCG@20 is higher at 6 or more of the 7 dates.
+   - Path length wins: path's is higher at 6 or more.
+   - No difference the rule can see: anything else.
+
+Values are compared as the sweep stores them, PR-AUC and nDCG@20 to four
+places, and each ratio is read to four places, as the sweep stores
+`lift_vs_path` and its report prints the median: a tie at four places is
+higher for neither, and a median that reads exactly 1.25x or 0.80x
+counts. precision@10 is printed beside the second verdict and not ruled
+on, as in §25.3.
+
+Why these numbers: §29.1's, for its reasons. PR-AUC's floor moves from
+date to date, and the ratio puts one date's two numbers on one scale;
+1.25 is §24.1's quarter, as a ratio. nDCG@20 already runs from 0 to 1 at
+every date with no floor of its own, so it is judged by the count alone,
+as §25.3 judged graded relevance. 6 of 7 because a coin does that about
+one time in sixteen, and the dates share most of their data, so that is
+a floor on chance, not a p-value.
+
+**It checks itself.** path_verdict.py gives no verdict unless every row
+is stamped as the shipped model is run (`label_alias`, lambdarank, tuning
+cv, binary relevance, holdout from 2026-07-28; sweep rows carry the label
+and objective from today), the file holds exactly the seven dates of
+§23.5, none skipped, and the path and tie-averaged columns are there: a
+sweep written before this change has none.
+
+**What each outcome leads to.** The report's wording follows the two
+verdicts, whatever they are.
+
+- Across releases, the model wins: the report adds the ratio, its median
+  and range over the seven dates, beside the lift over popularity.
+- Across releases, path length wins, or no difference: the report says
+  that ranking by the shortest import path does as well across releases,
+  so the lift over popularity is path length's, not the model's; item 15
+  (F25), whether a simpler model should ship, moves up and gets its own
+  rule.
+- Within an upgrade, the model wins: the report says the model orders an
+  upgrade's changes better than path length at that many of 7 dates.
+- Within an upgrade, path length wins, or no difference: the report says
+  that inside one upgrade the shortest path first does as well, and does
+  not claim the model's ordering adds to it. What the project adds is then
+  the pipeline around the ordering: griffe's diff, the usage-checked
+  label, the all-clear, and the fixer.
+
+Tested by `scripts/test_path_baseline.py`, six cases: average precision
+with ties averaged (§35), against every order of the ties on small
+cases, against sklearn where nothing ties, with weights as copies, and
+through one resample of the intervals worked by hand; the baseline
+(minus public_depth, nothing fitted, so flipping every training label
+moves no score; a row with no depth scored as the deepest);
+`metrics.tie_averaged`, the one place every tie-averaged number comes
+from, against the same numbers worked out in the test on a test half
+whose model scores tie, then the sweep's row, its stamps and its report;
+train.py and final_eval.py on a fixture where a symbol's parameter rows
+tie; the rule at every edge on both measures, ratios read to four
+places; and the verdict on files, with its refusals, its table printing
+each ratio as the rule reads it. Thirty-nine guards were broken on
+purpose, across metrics.py, baselines.py, stability.py, train.py,
+final_eval.py and the verdict, and each turned the test to FAIL. An
+independent review of the code before the run found F42 (§35) and two
+smaller gaps, both closed: the verdict did not check a sweep's label and
+objective, and the report and the verdict read the ratio at different
+precision. Then a sweep that `stability.py --at` wrote on the test
+fixture was read by the verdict, end to end: its stamps and columns
+passed, and its table printed each date's ratio to two places, so a date
+the rule counts as lost (0.9985) read 1.00x. It prints four places now.
+Nothing was scored on the real data before this was pushed.
+
+## 35. F42: a run of tied scores counted as one threshold (10 Oct). What follows was fixed before any number
+
+**F42. PR-AUC counts a run of tied scores as one threshold, which
+misstates every ranking with ties.** Every PR-AUC so far comes from
+sklearn's `average_precision_score`, which treats a run of tied scores as
+one threshold: each positive in the run is credited with the precision at
+the run's end. A score that says nothing about the order inside its ties
+should be scored as if every order of them were equally likely, which is
+how precision@10 and nDCG@20 already treat ties (metrics.py breaks them
+by one fixed random order). The two disagree. With labels 1, 0, 1, 0
+scored as two tied pairs, sklearn reads 0.5 where the average over the
+four orders is 0.667; on synthetic test halves, path length alone read
+8-16% below its expectation. Popularity ties every change of a package,
+semver every change of a bump, kind_prior every change of a kind, and
+griffe_all every row; the model's and the line's scores tie too, wherever
+rows share every feature, as a symbol's parameter rows do. So every lift
+over popularity quoted so far rests on a convention that misstates both
+of its sides, by an amount nobody has measured. Found 10 Oct by an
+independent review of F41's code, before F41 ran.
+
+*Fix:* `metrics.average_precision_ties` computes the expectation exactly
+(McSherry and Najork, ECIR 2008). In a run of n rows holding r positives,
+with s rows and c positives above it, the row at position p of the run is
+a positive with probability r/n, and then has on average
+c + 1 + (p - 1)(r - 1)/(n - 1) positives at or above it; summed over the
+run and divided by all positives, that is the expected average precision.
+With no ties it is sklearn's number, and a row of weight k counts as k
+copies of itself, the way the intervals resample. It matched the average
+over every order on 200 small cases (`scripts/test_path_baseline.py`).
+
+**What follows, fixed now, before any real number exists:**
+
+1. F41's path baseline uses it from its first run, for path and for the
+   model it is set against (§34.1).
+2. The retrain measures the rest at no extra cost. Every sweep row
+   carries the model's and popularity's PR-AUC with ties averaged
+   (`pr_auc_ties`, `popularity_ties`), the lift between them with its 95%
+   interval (`lift_vs_pop_ties`, `lift_lo_ties`, `lift_hi_ties`) and
+   `beats_pop_ties`. train.py prints and notes the same for the single
+   split, and final_eval.py puts them in its NOTES block. Everything
+   else keeps the old convention for this retrain, compare_sweeps.py's
+   before and after included, so F1's narrowing is measured on its own.
+3. Then the report moves to ties averaged, for every number, whatever
+   the measurement shows: it corrects a measurement and is not a model
+   choice, as F1 was not. The old convention's numbers are given once
+   beside the new, as the before; §32.3's claims ("beats popularity at
+   every date", "2.25x to 5.96x") are restated from the new columns; and
+   the site copy follows (Varad). evaluate()'s default changes with it.
+4. If, with ties averaged, the model no longer beats popularity at some
+   date, or a date's interval reaches 1.0x, the report says so at that
+   date. Nothing about the model is changed because of it.
