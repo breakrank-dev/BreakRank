@@ -2,7 +2,7 @@
 The bar the model has to clear. Run this BEFORE training anything.
 
     python ml/model/baselines.py
-    python ml/model/baselines.py --label label_scoped
+    python ml/model/baselines.py --label label
 
 A learning-to-rank model that cannot beat "sort by download count" is not
 a contribution, it is a slower way to sort by download count — and you
@@ -10,7 +10,7 @@ cannot know which you have unless you measure the dumb thing first. The
 kill-date gate is stated in exactly these terms: the model must beat the
 version-number baseline on PR-AUC.
 
-Four baselines, weakest first:
+Six baselines, weakest first:
 
   griffe_all   every change is equally important. This is the world
                WITHOUT BreakRank: 187 changes, no ordering, read them all.
@@ -30,18 +30,38 @@ Four baselines, weakest first:
                fitting it on everything would be leakage wearing a
                baseline's clothes.
 
-All four are scored on the TEST half only, with the same metrics the
+  linear       a logistic regression on the ranker's own features, every
+               one of them (F8, NOTES §29). Fitted on train only, like
+               kind_prior. The ranker is a few hundred decision trees; this
+               is one straight line through the same 17 numbers. If the
+               line does as well, the trees are not what the result is
+               made of, whatever the report says about U-shapes.
+
+  path         the shortest import path first: minus public_depth, the
+               dots in the shortest public name a user can write for the
+               symbol (F41, NOTES §34). The ranker's top feature, alone,
+               with nothing fitted. The ablation found the two
+               reachability features matching all 17 (§32.3); this is
+               the rule anyone could write down from that, and the one an
+               examiner will ask about. Most of its scores tie, so its
+               PR-AUC is always taken with ties averaged (F42, §35).
+
+All six are scored on the TEST half only, with the same metrics the
 ranker will use, so the comparison is like for like.
 """
 
 import argparse
 import pathlib
 import sys
+import warnings
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
+from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
+from ml.holdout import assert_no_holdout  # noqa: E402
 from ml.model.metrics import compare, evaluate, n_rankable  # noqa: E402
 
 DATA = pathlib.Path("data")
@@ -50,6 +70,84 @@ FEATURES = DATA / "features.csv"
 GROUP = ["package", "version_from", "version_to"]
 
 BUMP_SCORE = {"major": 3.0, "minor": 2.0, "patch": 1.0, "other": 0.0}
+
+# ------------------------------------------------ the linear baseline (F8)
+
+# The ranker's feature list, exactly (train.py builds the same one).
+LINEAR_FEATS = NUMERIC + BOOLEAN + CATEGORICAL
+
+# Counts and a rank with long tails: inherited_by is 0 on almost every row
+# and 3,242 on a few (§10.2). On a straight line those few rows would set
+# the scale for everything else, so these are log1p'd first. log1p is
+# monotone, so it hands the line nothing it could not already express: a
+# U-shape (F8's claim) stays out of its reach either way.
+LOG_FEATS = ["inherited_by", "prior_breaks_in_module", "package_rank",
+             "release_size", "package_churn"]
+
+
+def _log1p_nonneg(x):
+    return np.log1p(np.clip(x, 0, None))
+
+
+def linear_model():
+    """Logistic regression, L2 at scikit-learn's default strength, classes
+    weighted to balance. Numbers are median-imputed and standardised, the
+    long-tailed ones log1p'd first; kind and bump are one-hot, a value
+    unseen in training scoring as all zeros. Nothing is tuned: it is a
+    baseline, and the ranker's own settings are constants too (F7)."""
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import (FunctionTransformer, OneHotEncoder,
+                                       StandardScaler)
+
+    logged = make_pipeline(SimpleImputer(strategy="median"),
+                           FunctionTransformer(_log1p_nonneg),
+                           StandardScaler())
+    plain = make_pipeline(SimpleImputer(strategy="median"), StandardScaler())
+    pre = ColumnTransformer([
+        ("log", logged, LOG_FEATS),
+        ("num", plain, [f for f in NUMERIC + BOOLEAN if f not in LOG_FEATS]),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL)])
+    return make_pipeline(pre, LogisticRegression(class_weight="balanced",
+                                                 max_iter=5000))
+
+
+def linear_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """The 17 feature columns as the pipeline wants them: numbers and
+    booleans as floats (a bool column, or one read back from CSV as text,
+    both end up 0.0/1.0), kind and bump as strings."""
+    x = df[LINEAR_FEATS].copy()
+    for c in NUMERIC + BOOLEAN:
+        col = x[c]
+        if not pd.api.types.is_numeric_dtype(col):
+            # Text, whatever string dtype pandas gave it: "True"/"False"
+            # become 1/0, a number in text its value, anything else NaN.
+            s = col.astype(str).str.strip().str.lower()
+            col = s.map({"true": 1.0, "false": 0.0}).fillna(
+                pd.to_numeric(s, errors="coerce"))
+        x[c] = pd.to_numeric(col, errors="coerce").astype(float)
+    for c in CATEGORICAL:
+        x[c] = x[c].astype(str)
+    return x
+
+
+def linear_scores(train: pd.DataFrame, test: pd.DataFrame,
+                  label: str) -> np.ndarray:
+    """P(positive) from a line fitted on TRAIN ONLY, for every test row."""
+    y = train[label].astype(int).to_numpy()
+    if len(set(y)) < 2:
+        raise ValueError(f"the linear baseline needs both classes in train; "
+                         f"{label} has {int(y.sum())} positives in "
+                         f"{len(y)} rows")
+    with warnings.catch_warnings():
+        # scikit-learn 1.6 hands scipy 1.18's L-BFGS an option it dropped
+        # ("Unknown solver options: iprint"), once per fit. The fit is
+        # unaffected; the warning is theirs, not a sign about the data.
+        warnings.filterwarnings("ignore", message="Unknown solver options")
+        model = linear_model().fit(linear_matrix(train), y)
+    return model.predict_proba(linear_matrix(test))[:, 1]
 
 
 def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
@@ -60,29 +158,53 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
     # which is what "no ranking" honestly means.
     test["griffe_all"] = 1.0
 
-    test["semver"] = test["bump"].map(BUMP_SCORE).fillna(0.0)
+    # astype(str) before each map below. train.py and final_eval.py pass
+    # `bump` and `kind` as pandas categories (prepare()), and on pandas 2.x
+    # mapping a category can return a category, whose fillna() then raises
+    # TypeError for any fill value that is not already one of its
+    # categories. Measured on pandas 2.2.3: the old lines raised on every
+    # prepared frame tried, so train.py could not run there at all. pandas
+    # 3 does not raise. Scores are identical on both; this only stops the
+    # crash.
+    test["semver"] = test["bump"].astype(str).map(BUMP_SCORE).fillna(0.0)
 
     # rank 1 is the most downloaded, so invert it.
     test["popularity"] = -test["package_rank"].fillna(test["package_rank"].max())
 
     # Fitted on TRAIN ONLY. The global mean is the fallback for a kind the
     # training half never saw.
-    rates = train.groupby("kind")[label].mean()
-    test["kind_prior"] = test["kind"].map(rates).fillna(train[label].mean())
+    rates = train.groupby("kind", observed=True)[label].mean()
+    rates.index = rates.index.astype(str)
+    test["kind_prior"] = (test["kind"].astype(str).map(rates)
+                          .fillna(train[label].mean()))
+
+    # F8. Also fitted on TRAIN ONLY, on the same rows the ranker was.
+    test["linear"] = linear_scores(train, test, label)
+
+    # F41. Shortest import path first: nothing fitted, so train plays no
+    # part. A row with no depth scores as the deepest. Most rows tie:
+    # precision@10 and nDCG@20 break ties by metrics.py's fixed random
+    # order, as for every baseline, and its PR-AUC is taken with ties
+    # averaged (metrics.average_precision_ties, F42).
+    depth = pd.to_numeric(test["public_depth"], errors="coerce")
+    deepest = depth.max() if depth.notna().any() else 0
+    test["path"] = -depth.fillna(deepest).astype(float)
 
     return test
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score the dumb baselines.")
-    ap.add_argument("--label", default="label",
-                    choices=["label", "label_scoped"],
-                    help="which label to score against")
+    ap.add_argument("--label", default="label_alias",
+                    choices=["label", "label_scoped", "label_alias"],
+                    help="which label to score against (label_alias "
+                         "ships, NOTES §24)")
     args = ap.parse_args()
 
     if not FEATURES.exists():
         sys.exit(f"{FEATURES} not found — run ml/features/build.py first.")
     df = pd.read_csv(FEATURES)
+    assert_no_holdout(df, "baselines.py")
     if args.label not in df.columns:
         sys.exit(f"no column {args.label} in {FEATURES}")
 
@@ -93,7 +215,7 @@ def main() -> None:
 
     test = add_baseline_scores(train, test, args.label)
 
-    names = ["griffe_all", "semver", "popularity", "kind_prior"]
+    names = ["griffe_all", "semver", "popularity", "kind_prior", "linear"]
     results = {n: evaluate(test, n, args.label) for n in names}
 
     print(f"\nlabel: {args.label}")
@@ -129,6 +251,16 @@ def main() -> None:
     floor = test[args.label].mean()
     print(f"\nrandom-guess PR-AUC would be {floor:.4f} (the positive rate).")
     print(f"strongest baseline: {best} at {results[best]['pr_auc']:.4f}")
+    print(f"the line (logistic regression, the ranker's {len(LINEAR_FEATS)} "
+          f"features): {results['linear']['pr_auc']:.4f}")
+    # F41 and F42 (NOTES §34, §35): with ties averaged, which path needs
+    # and every tied baseline will move to.
+    tied = {n: evaluate(test, n, args.label, ties=True)["pr_auc"]
+            for n in ("path", "popularity", "kind_prior", "semver")}
+    print("with ties averaged (F42): path length alone (shortest import "
+          f"path first, F41) {tied['path']:.4f},\n  popularity "
+          f"{tied['popularity']:.4f}, kind_prior {tied['kind_prior']:.4f}, "
+          f"semver {tied['semver']:.4f}")
     print(f"\n** The ranker has to beat {results[best]['pr_auc']:.4f} PR-AUC "
           f"to be worth shipping. **")
     print(f"** The kill-date gate is the semver line: "

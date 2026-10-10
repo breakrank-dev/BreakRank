@@ -48,7 +48,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from ml.ingest.api_extract import find_import_names          # noqa: E402
+from ml.ingest.api_extract import resolve_layout             # noqa: E402
 from ml.ingest.download import download_and_extract, list_releases  # noqa: E402
 from ml.ingest.packages import get_top_packages              # noqa: E402
 from ml.ingest.usage_index import scan_package               # noqa: E402
@@ -131,7 +131,7 @@ def scan_one(name: str, tracked: set[str], timeout_s: int) -> list[dict]:
 
             # Which modules are this package's OWN? Anything it imports from
             # itself is self-use and must not count.
-            own = set(find_import_names(path, name))
+            own = set(resolve_layout(path, name)[1])
 
             used = scan_package(path, tracked - own)
             return [{"scanner": name, "symbol": s} for s in used

@@ -7,36 +7,184 @@ report is due, and an examiner asking "how do you know?"
 Rule for this file: **no claim without the number that produced it.** If a
 line here says something is true, the run that showed it is named.
 
-Last updated after the Day-4 model run. Dataset: **23,025 breakage rows
-across 410 packages**, top 500 PyPI by download count, 6 releases each.
+Last updated 14 Sep 2026. Dataset: **19,121 breakage rows across 415
+packages**, top 500 PyPI by download count, 6 releases each.
+
+That row count went **down** from 22,914 and the dataset got better: the
+fold in §10.2 removed 13,694 rows that were the same change counted once
+per inheriting class, and §10.6 recovered 8 packages a version filter had
+been hiding. Neither is a sampling change. Both are described where they
+happened.
+
+**Read §1's range table before quoting any single number from this file.**
+Several sections still cite one cut date because that is what produced
+them; §5.6 measured how far those numbers move when the date moves, and
+the answer is: a lot.
+
+**Sections dated before 14 Sep carry superseded figures.** They are kept
+because the reasoning in them is still how the conclusion was reached,
+and a findings notebook that quietly rewrites its own history is worth
+less than one that shows where it was wrong. Where a number has been
+replaced, the subsection says so at the top. §1 and §11 are current.
 
 ---
 
 ## 1. Where the project stands
 
-| | strict `label` | `label_scoped` |
-|---|---|---|
-| positive rows | 611 (2.65%) | 1,073 (4.66%) |
-| test positives | 98 | 194 |
-| test positive rate — **the PR-AUC floor** | 0.0174 | 0.0344 |
-| semver baseline PR-AUC | 0.0227 | 0.0339 |
-| popularity baseline PR-AUC | 0.0884 | 0.1202 |
-| **ranker PR-AUC** | **0.1634** | **0.3465** |
-| lift over floor | 9.4× | 10.1× |
-| lift over best baseline | 1.85× | 2.88× |
+Three labels now, on the same rows (§9). `label_alias` is the shipped one.
 
-`label_scoped` is the shipped model, and §5.3 is why: under the strict
-label the ranker is provably a path-shape heuristic.
+> **FROZEN 16 Sep 2026, tag `dataset-20260916`.** 17,014 rows, 416
+> packages, 1,601 version pairs. Every number below and in the public
+> write-up cites that tag.
+>
+> This section was rewritten four times in five days, and **not one of
+> those rewrites was caused by a modelling decision.** The six-release
+> window is defined relative to *today*, so each re-ingest produced a
+> different dataset: the headline lift read 2.48×, 2.59×, 4.82× and
+> 2.25× as releases shipped underneath it. `databricks-sdk` alone moved
+> the dataset by 1,901 rows overnight.
+>
+> That is correct behaviour for a live site and impossible for a report
+> with a submission date. So the two are now separate: re-ingests keep
+> the site current and are never quoted; the report cites the frozen tag.
+> §15.4 has the reasoning.
+
+| | strict `label` | `label_scoped` | **`label_alias`** |
+|---|---|---|---|
+| rule | exact path match | exact, or one symbol owns the leaf | exact, or a real export path |
+| basis | fact, and incomplete | **a guess** | fact, from griffe's alias graph |
+| positive rows | 609 (3.58%) | 1,113 (6.54%) | **1,019 (5.99%)** |
+| test positives | 132 | 292 | **278** |
+| test positive rate — **the PR-AUC floor** | 0.0313 | 0.0693 | **0.0660** |
+| ranker PR-AUC | 0.2262 | 0.2296 | **0.3866** |
+
+### The headline, stated the way it survives scrutiny
+
+**No lift this project quotes is a single number.** §5.6 refits at seven
+cut dates and reports the range; §11.2 discards any cut with fewer than
+10 rankable version pairs, because precision@10 over four pairs is not a
+weak measurement of anything — it is not a measurement.
+
+`label_alias`, against the strongest baseline (popularity), on its own
+six usable cuts:
+
+| | value |
+|---|---|
+| beats popularity | **6 of 7 cut dates** (the seventh too small to measure) |
+| median lift | **1.99×** |
+| worst cut | **1.45×** |
+| best cut | 2.76× |
+
+> The ranker beats the strongest baseline at **every cut date with enough
+> rankable pairs to measure one** — six of seven — by a median of
+> **1.99×** and never less than **1.45×**.
+
+Say "six of seven, the other two too small to measure", never "6/6". The
+excluded cuts are a limitation, not a rounding.
+
+### Why `label_alias` and not one of the others
+
+**On the five cuts all three labels share** — which is the only fair
+comparison, and the code now enforces it (§15.1):
+
+| label | lift median | **lift MIN** |
+|---|---|---|
+| strict `label` | 1.90× | 1.81× |
+| `label_scoped` | 1.38× | 1.27× |
+| **`label_alias`** | **2.05×** | **1.92×** |
+
+Two numbers, two jobs, and they must not be mixed. **Which label ships**
+is decided on shared cuts: 1.92×. **How good the shipped model is** comes
+from `label_alias` on its own six cuts: median 1.99×, min 1.45×. That
+second set is what `metrics.json` carries.
+
+The comparison had to be fixed before it could be read. Taken over each
+label's own cuts, the rule picked the strict `label` — because `label`
+was skipped at one cut for having too few rankable pairs and so never
+faced the hardest one. A worst case measured over different exams is not
+a comparison (§15.1, and the same class of error as §11.2 and §13.2).
+
+The provenance argument agrees with the numbers rather than carrying
+them: §9.3 found 220 of scoped's positives have no import statement
+behind them.
+
+Single-split reference numbers, frozen cut (2026-07-28):
+
+| | value | vs floor |
+|---|---|---|
+| floor — test positive rate | 0.0660 | 1.0× |
+| semver baseline (the kill-date gate) | 0.0622 | 0.9× |
+| best baseline — popularity | 0.1722 | 2.6× |
+| ranker PR-AUC | 0.3866 | 5.9× |
+| precision@10 | 0.2231 | over 26 rankable pairs — see §5.1 |
+| nDCG@20 | 0.6289 | over 18 rankable pairs |
+
+### The score went up. The model did not. (§11.5)
+
+*Figures in this subsection are from the 14 Sep dataset, and stay that
+way deliberately: it is a controlled experiment about the FOLD, and both
+sides of it saw the same data. Re-running it on the frozen dataset would
+answer a different question.*
+
+PR-AUC was 0.3465 on 5 Sep and 0.5137 after the fold, and **that rise was
+arithmetic, not skill.** Measured with the cut date held fixed and only
+the duplicates differing:
+
+| | before the fold | after |
+|---|---|---|
+| floor (positive rate) | 0.0112 | 0.0356 |
+| PR-AUC | 0.4439 | 0.5137 |
+| **lift over popularity** | **4.88×** | **4.82×** |
+
+Lift over popularity is flat. The floor rose 3.18× because 13,694
+guaranteed negatives left the dataset, and PR-AUC's floor *is* the
+positive rate — so the score rose without the ranker changing.
+
+**Never present the PR-AUC increase as an improvement.** The true
+sentence is less flattering and considerably stronger: *the dataset was
+30% duplicates, every duplicate was a guaranteed negative, and they were
+depressing the measured score of a model that was already this good.*
+
+Ignore vs-floor when comparing the two: it reads 39.6× → 14.4×, which
+looks like a collapse and is only a smaller ratio over a bigger floor.
+Lift is the one measure comparable across datasets, because the baseline
+is refit inside each.
+
+### What the model is actually made of
+
+All 16 features, by gain, on the shipped model (§11.3 explains why the
+whole table is printed and not the top eight):
+
+`public_depth` 35.6% · `name_length` 13.4% · `package_rank` 12.2% ·
+`package_churn` 10.4% · `module_depth` 7.4% · `kind` 5.1% ·
+`release_size` 4.8% · `is_version_string` 3.9% · `has_sub_target` 2.9% ·
+`bump` 1.4% · `in_dunder_all` 1.2% · `is_dunder` 1.0% ·
+`has_export_path` 0.7% · `is_top_level` 0.1% · **`inherited_by` 0.0%** ·
+**`is_private` 0.0%**
+
+Two features at zero gain, and neither is embarrassing once stated:
+
+- **`inherited_by`** (§10.2) is real information the model does not want.
+  Passing one test and failing another is an acceptable outcome for a
+  feature; pretending otherwise is not. It keeps two jobs and neither is
+  "predictor": as a **database column** it belongs next to a finding on
+  the site — "this change affects 3,242 inheriting classes" is the kind
+  of thing a human reading a diff wants — and as a feature the model
+  ignores it is the ablation's **control** (§11.3), which is the only
+  reason that table knows what zero looks like. Left in the feature set
+  deliberately: LightGBM never splits on it, so it costs nothing, and
+  removing it would leave the noise floor resting on a single point.
+- **`is_private`** is *redundant*, not irrelevant. Private symbols really
+  are near-dead (0.34% positive against 3.26%), but `public_depth` and
+  `has_export_path` already carry that at finer resolution. Expect the
+  question — the frozen API contract's central rule having zero gain
+  looks alarming until you say why.
 
 Kill-date gate (≥20,000 labelled rows AND ranker beats the version-number
 baseline on PR-AUC): **cleared 22 days early**, 5 September against a
 27 September deadline. The database went live 6 September (§8), so both
 halves of the project now talk through Postgres rather than through a
 person.
-
-PR-AUC across labels is **not comparable** — its floor is the positive
-rate, and the two labels have different ones. Compare lift over the
-same-label baseline.
 
 ---
 
@@ -356,33 +504,67 @@ baseline **without being able to use popularity**.
 | strict | 0.1716 | 0.1634 | **105%** |
 | scoped | 0.1639 | 0.3465 | **47%** |
 
+> **CORRECTED 9 Sep 2026 — the reading below was wrong, and it was my
+> error, not the data's.** The claim was: 105% means the model *is* the
+> depth heuristic. Re-running the ablation with a fourth column showed the
+> real cause. Under the strict label, on the 9 Sep dataset, EVERY subset
+> beats the full model:
+>
+> | run | PR-AUC | vs full |
+> |---|---|---|
+> | everything (15 features) | 0.0981 | 1.00 |
+> | no path shape | 0.1632 | 1.66 |
+> | no reachability | 0.1744 | 1.78 |
+> | no popularity | 0.2058 | **2.10** |
+> | path shape only | 0.1720 | 1.75 |
+> | per-change only | 0.1511 | 1.54 |
+>
+> A 15-feature model scoring below every 2-, 3- and 7-feature subset of
+> itself is not a heuristic in disguise. It is an evaluation too noisy to
+> answer the question: 98 test positives, early stopping at 7 trees.
+> **The 105% was the same instability, read as a finding.** Nothing in the
+> strict-label column supports a claim about which features matter, and
+> the original text stands below only so the mistake is on the record.
+
 Three features — `module_depth`, `name_length`, `is_top_level` — give
 almost identical absolute PR-AUC under both labels. Under the strict label
 that *is* the whole model and the other ten features are net-negative
 decoration. Under the scoped label the model reaches twice as far, so the
 same three account for under half.
 
-The mechanism: under the strict label the positives essentially **are**
-the shallow symbols, because deep paths are exactly where the exact join
-fails (§4.2). Once you know the depth you know the label, leaving nothing
-for `kind` to explain. Repair the re-export misses and depth stops being
-sufficient.
+The mechanism proposed at the time: under the strict label the positives
+essentially **are** the shallow symbols, because deep paths are exactly
+where the exact join fails (§4.2). Repair the re-export misses and depth
+stops being sufficient.
 
-**`module_depth` was substantially predicting our own measurement error.**
-That is why `label_scoped` is the primary result — not because 0.3465
-looks better, but because the strict-label model is a depth heuristic and
-we can prove it.
+**That prediction was testable, and §9.4 tested it. It was wrong** — but
+wrong in an interesting direction. Fixing the join did not make depth stop
+mattering; it separated *depth* from *reachability*, and reachability was
+the thing carrying the signal all along.
 
-Small differences in that table (`no popularity` at 1.08×) are noise: with
-98 test positives and early stopping landing between 8 and 59 trees,
-anything inside ±0.02 PR-AUC is run-to-run variance. The 105%-vs-47%
-contrast is far too large to be.
+### 5.4 The split is unstable, and the stopping rule is the worst of it
 
-### 5.4 The temporal split is unstable
+Positive rates on the 9 Sep run, `label_alias`:
 
-Positive rates: train 2.95%, validation 4.84%, test 1.74%. Not a gradient
-— noise. Early stopping fired at 26 and 14 trees, so the shipped model is
-a handful of splits.
+| slice | rows | positive |
+|---|---|---|
+| train | 13,850 | 4.25% |
+| **validation** | 3,381 | **6.39%** |
+| test | 5,683 | 3.48% |
+
+Validation is nearly **twice as dense in positives as test**. Early
+stopping judges the model against a slice that does not resemble what it
+is scored on, and it halts at 10 trees. Across the nine ablation runs the
+tree count ranged from **1 to 120**.
+
+This is no longer "the numbers are noisy". It is: *the stopping rule is
+being asked a different question from the one we report on.* Every
+percentage in §5.3's correction traces back here.
+
+The fix is not another feature. It is **repeated temporal splits** — cut
+at several dates, train and score at each, report the spread — so a
+result has to survive more than one arbitrary date to count. That is now
+the highest-value open item (§7).
 
 Test being sparser than train makes every reported number pessimistic,
 which is the right direction to be wrong in, but it should be said rather
@@ -391,19 +573,20 @@ than found.
 ### 5.5 The three numbers that make PR-AUC readable
 
 PR-AUC's floor is the **positive rate**, not 0.5 the way ROC-AUC's is. The
-shipped model is `lambdarank-label_scoped`; its test positive rate is
-**3.44%** over 5,638 rows. (§5.4's 1.74% is the *strict* label — the two
-floors differ by 2x and are not interchangeable.)
+shipped model is `lambdarank-label_alias`; its test positive rate is
+**3.48%** over 5,683 rows. (§5.4's strict-label floor is 1.72% — the two
+differ by 2× and are not interchangeable.)
 
 | | value | vs floor |
 |---|---|---|
-| floor — positive rate | 0.0344 | 1.0x |
-| best baseline — popularity | 0.1202 | 3.5x |
-| **model** | **0.3465** | **10.1x** |
+| floor — positive rate | 0.0348 | 1.0× |
+| semver baseline | 0.0389 | 1.1× |
+| best baseline — popularity | 0.1057 | 3.0× |
+| **model** | **0.3301** | **9.5×** |
 
-2.88x the strongest baseline, 10x the floor. precision@10 is 0.2238
-against the same 3.44% base rate, a 6.5x lift — but read §5.1 before
-quoting that one anywhere.
+**3.12× the strongest baseline, 9.5× the floor.** precision@10 is 0.3313
+and nDCG@20 is 0.6148 — both up sharply from the scoped label's 0.2238
+and 0.4631 — but read §5.1 before quoting either anywhere.
 
 **Quote all three or none.** "PR-AUC 0.35" on its own is unreadable: it is
 excellent at this positive rate and mediocre at 30%. Note also that the
@@ -415,6 +598,118 @@ project exists to answer.
 The first `model_run` row written to Postgres carried no floor, and
 recovering the number afterwards meant reloading `features.csv` and
 re-deriving the split. `train.py` now writes `positive_rate` into `notes`.
+
+### 5.6 Does it survive a different date? (12 Sep, `ml/model/stability.py`)
+
+§5.4 said one arbitrary cut decides everything. This measures how much.
+Seven cut dates across the middle of the release history; at each one the
+model **and the baselines** are refitted, so lift is computed inside a
+split before anything is summarised. Carrying one cut's baselines across
+all seven would compare a moving model against a fixed target.
+
+> **SUPERSEDED 14 Sep — kept as the record of what was measured on 12
+> Sep, not as a current figure.** Every number in this subsection comes
+> from the 21,336-row dataset, which contained roughly 3,600 inherited
+> duplicate rows (§10.2, §10.5) and was missing 8 OpenTelemetry packages
+> (§10.6). It also predates the rankable-pairs gate (§11.2), so its
+> seven cuts include two that cannot support precision@10 at all.
+> Current figures: §1. The comparison *within* this subsection — holdout
+> versus cv — remains valid, because both sides saw the same data.
+
+| label | beats popularity | median lift | worst cut | best cut | PR-AUC spread |
+|---|---|---|---|---|---|
+| strict `label` | 4 / 7 | 1.08× | 0.57× | 1.45× | 0.070 |
+| `label_scoped` | 6 / 7 | 1.74× | 0.37× | 2.17× | 0.331 |
+| **`label_alias`** | **7 / 7** | 1.82× | **1.48×** | 3.12× | 0.221 |
+
+**Three findings, in order of how much they change what we can say.**
+
+**1. The strict label does not beat popularity.** It reported 1.85× on one
+cut; across seven it is 1.08× median and loses outright at three. Every
+conclusion drawn from the strict-label column — §5.3's original claim
+included — was drawn from a sample of one.
+
+**2. `label_scoped` has a failure mode `label_alias` does not.** They are
+0.08× apart on the median, which separates nothing. At the 2026-05-10 cut
+scoped scores **0.37×** — three times *worse* than sorting by download
+count — with early stopping firing at **1 tree**. Alias's worst cut is
+1.48×. A model that is sometimes worse than the dumb baseline cannot be
+shipped on the strength of its median, because you cannot tell in advance
+which day you are having. **That, not the ablation and not the median, is
+why `label_alias` ships.**
+
+**3. The baseline moves too, and nobody was watching it.** Popularity's
+own PR-AUC ranges **0.088 – 0.245** across the cuts. At the last two the
+test half is down to ~3,200 rows and popularity roughly doubles, so those
+splits are not merely noisier — they are a different problem, with a
+denser, more concentrated test half. Any single-split lift silently
+depends on this.
+
+**Two things this does not fix.** `rankable10` falls to **5 pairs** at the
+last cut, so precision@10 there is meaningless whatever it prints (§5.1).
+And early stopping still lands anywhere from **1 to 81 trees** — the two
+worst splits in the whole table are both 1-tree fits, which is now a
+specific, findable cause rather than general noise.
+
+**What the spread is not.** These splits share most of their training data
+and overlap heavily in test, so they are not independent draws. The range
+is a *sensitivity* — how much the answer moves when the arbitrary choice
+moves — not a confidence interval, and must never be written with a `±`.
+
+### 5.7 Fixing the stopping rule (12 Sep, `--stopping cv`)
+
+§5.6 named the mechanism: one validation slice picks the tree count, and
+the two worst results in the table were both **1-tree fits**. So stop
+letting one slice decide. Four expanding-window folds *inside train* each
+propose a count, the **median** wins, and the model is then refitted on
+**all** of train with that number fixed — no early stopping at fit time,
+because re-deciding it on a slice would reinstate the problem. Every fold
+lives inside the training half; test is not involved at any point.
+
+The median is the mechanism, not a detail: one fold collapsing to 1 tree
+barely moves a median of four.
+
+> **SUPERSEDED 14 Sep — kept as the record of what was measured on 12
+> Sep, not as a current figure.** Every number in this subsection comes
+> from the 21,336-row dataset, which contained roughly 3,600 inherited
+> duplicate rows (§10.2, §10.5) and was missing 8 OpenTelemetry packages
+> (§10.6). It also predates the rankable-pairs gate (§11.2), so its
+> seven cuts include two that cannot support precision@10 at all.
+> Current figures: §1. The comparison *within* this subsection — holdout
+> versus cv — remains valid, because both sides saw the same data.
+
+| | holdout (one slice) | **cv (four folds)** |
+|---|---|---|
+| strict `label` | 4/7, median 1.08×, worst **0.57×** | 5/7, median 1.96×, worst 0.75× |
+| `label_scoped` | 6/7, median 1.74×, worst **0.37×** | **7/7**, median 1.97×, worst **1.58×** |
+| `label_alias` | 7/7, median 1.82×, worst 1.48× | **7/7**, median **2.48×**, worst **1.79×** |
+| trees chosen | **1 – 81** | **20 – 37** |
+| alias PR-AUC spread | 0.221 | **0.129** |
+
+**Every label improved.** That is the tell that this was a bug rather than
+a tuning preference: a broken stopping rule was *suppressing* the result,
+not inflating it. `label_scoped`'s worst case improved four-fold and its
+collapse disappeared entirely.
+
+Two legitimate effects are combined here and both should be stated. The
+count no longer depends on one unrepresentative slice — and `fit_fixed`
+trains on the whole training half, where the old path threw away a fifth
+of it to build a validation set it then used badly.
+
+**Why this changed the shipping decision's basis, not its outcome.**
+Before the fix, alias was chosen because scoped had a failure mode. After
+it, scoped has no failure mode either, and alias wins on the ordinary
+merits instead: better worst case (1.79× vs 1.58×), better median (2.48×
+vs 1.97×, a gap wider than the 0.5× this file treats as the readability
+threshold), and the **smallest spread of the three**. The label-provenance
+argument in §9.3 now agrees with the metrics rather than outvoting them.
+
+**Still open.** The strict label loses to popularity at 2 of 7 dates even
+with the fix, so nothing in the strict column is quotable. `rankable10`
+still falls to 5–9 pairs at the late cuts (§5.1). And the CV fold count,
+the 40% starting boundary and the 20-tree floor are all unexamined
+choices — they are stated in `train.py` rather than tuned, which is
+honest but not the same as justified.
 
 ---
 
@@ -455,16 +750,39 @@ re-deriving the split. `train.py` now writes `positive_rate` into `notes`.
 
 ## 7. Open, and where it goes
 
-1. **Alias resolver** (§4.2) — record griffe's real export path at ingest,
-   join exactly, retire the leaf-name heuristic. Needs a re-ingest.
-   Also settles Varad's decision-10 false-positive concern.
+0. ~~**Repeated temporal splits**~~ — done, §5.6. It cost the project
+   three headline numbers and bought a defensible one. **New top item
+   below.**
+0b. ~~**Early stopping**~~ — done, §5.7. Every label improved; scoped's
+   0.37× collapse became 1.58×. Remaining: the fold count, the 40% start
+   boundary and the 20-tree floor are stated, not tuned.
+0c. **ORIGINAL TEXT, kept for the record — early stopping.** Trees land anywhere from **1
+   to 81** across cuts, and the two worst splits in §5.6 are both 1-tree
+   fits: `label_scoped` at 0.37× and the strict label at 0.57×. That is no
+   longer "the numbers are noisy" — it is a specific, findable cause with
+   two named victims. The validation slice is the newest 20% of train and
+   runs ~2× denser in positives than test (§5.4), so the stopping rule is
+   judging against a distribution the model is never scored on. Options,
+   cheapest first: a minimum tree count; stratifying validation to match
+   test's positive rate; or k-fold-style validation *within* the training
+   window instead of one tail slice.
+1. ~~**Alias resolver**~~ — done, §9. Recovered 392 rows by fact and
+   identified 210 heuristic claims with no import statement behind them.
 2. **`was_deprecated_before`** (§3.3) — the click shim class.
 3. **Version-string handling** (§4.1) — report metrics with and without.
 4. ~~**`ml/db.py`**~~ — done, §8.
-5. **More test positives** — 98 is thin. A larger test fraction, or
-   repeated temporal splits, would make §5.1 quotable.
+5. **More test positives** — 98 strict / 198 alias is thin, and only
+   16 test pairs are rankable at 10. Same fix as item 0.
 6. **PARAMETER_MOVED is 24% of the dataset and 0.6% positive.** Nobody has
    looked at why. Largest unexamined class.
+6b. **Drop `module_depth`, `name_length`, `is_top_level`?** The alias
+   ablation says removing them *improves* PR-AUC by 12.8% (§9.4). Do NOT
+   act on that number: it is measured on test, and choosing features by
+   test score is test-set selection — the same class of error as a random
+   split. Decide it on validation, confirm once on test.
+6c. **The `py_src` class of bad symbol roots** (§9.5). ~210 rows, 1.0%,
+   all guaranteed negatives. Two-line fix in `_is_noise` plus a deeper
+   sdist descent in `download.py`; needs a re-ingest, so batch it.
 7. **Quiet releases are not recorded** (§8.3). A release we analysed and
    found clean leaves no row anywhere, so it is indistinguishable from one
    we never looked at — the exact distinction decision 1 exists to keep.
@@ -545,3 +863,5160 @@ A release analysed and found clean is absent. Decision 1 wants
 with the three cases above it is really a **three-way** distinction:
 analysed-and-clean, analysis-failed, and no-source-to-analyse. If that is a
 boolean in the schema it wants to be an enum. Open, §7.7.
+
+---
+
+## 9. The alias resolver (Day 6)
+
+`ml/ingest/api_extract.py` — `alias_hops`, `resolve_alias_chains`,
+`export_index`, `user_paths`; new `export_paths` column in `changes.csv`.
+
+The re-export gap (§4.2) was patched with a heuristic: relax the join
+where exactly one changed symbol in the package owns the leaf name. That
+guess is usually right and has no way to know when it is wrong. griffe
+already holds the answer — `from .api import get` is in the source — so
+Day 6 replaced the guess with the fact.
+
+### 9.1 Three things the fixture caught before the pipeline ran
+
+Built on a hand-made package and on requests/attrs/click, deliberately
+before touching the real ingest.
+
+**`alias.target_path` needs no resolution.** It is a plain string built
+from the import statement. Reading it never makes griffe go and find the
+target, so none of §3.2's AliasResolutionError machinery can fire. That
+is the only reason this is cheap enough to run on every version —
+measured at **0.7% of parse time** on requests.
+
+**One hop is not enough, and it fails silently.** Aliases chain:
+
+```
+fakepkg.read_csv     -> fakepkg.io.read_csv           still an alias
+fakepkg.io.read_csv  -> fakepkg.io.parsers.read_csv   the real function
+```
+
+which is exactly pandas. A one-hop map joins against a middle path griffe
+never reports and **does nothing at all** — no error, no crash. The
+obvious implementation would have looked like "the alias idea doesn't
+work". Cycles are real too (`a` imports from `b`, `b` from `a`), so the
+closure needs a guard; numpy's cyclic aliases already truncate griffe's
+own diff walker.
+
+**The alias is rarely on the thing that changed.** griffe reports
+`pandas.io.formats.style.Styler.where`; the re-export is on `Styler`. So
+each prefix is checked and the remainder carried across —
+`fakepkg.io.parsers.Frame.append` becomes `fakepkg.Frame.append`. Without
+this, methods on re-exported classes are all missed, and classes are
+where the methods are.
+
+### 9.2 The 55% that was noise
+
+First run of the new column: 55% of rows gained a user-facing path. Then:
+
+```
+packaging.utils.BuildTag  ->  packaging.metadata.utils.BuildTag
+```
+
+Backwards. `import` creates aliases in **both directions** and griffe
+records both identically:
+
+| source | alias | names | direction |
+|---|---|---|---|
+| `requests/__init__.py`: `from .api import get` | `requests.get` | `requests.api.get` | **shorter** — real |
+| `packaging/metadata.py`: `from . import utils` | `packaging.metadata.utils` | `packaging.utils` | longer — noise |
+
+A real re-export makes a name **shorter**. Filtering on that, plus keeping
+equal depth when the root differs (`attrs.*` vs `attr.*` is a genuine
+second name):
+
+| package | before | after | truth |
+|---|---|---|---|
+| packaging | 55% | **0%** | 0% — it has no shorter names |
+| click | 89% | 56% | four junk paths per row removed |
+| attrs | 100% | 100% | was right all along |
+
+**The most valuable line is the one that went to zero.**
+`packaging.utils.BuildTag` really is the only way to import it, and a
+measurement saying otherwise is inventing coverage.
+
+Final: **12,442 rows (54.3%) have at least one shorter public name**,
+mean 1.69 paths each. Highest: `databricks-sdk` 99.6% of 1,956 rows — a
+generated SDK that re-exports everything. Lowest: `pygments` **0.0% of
+237 rows**, which is the check that makes the rest trustworthy.
+
+### 9.3 What the heuristic was getting wrong — 210 rows
+
+| | rows |
+|---|---|
+| exact join | 611 |
+| scoped recovers over exact | 463 |
+| alias recovers over exact | 392 |
+| **both agree** | **253** |
+| **scoped claims, no import statement exists** | **210** |
+| alias finds, heuristic was too cautious | 139 |
+
+**Just under half of what the shipping label claimed beyond the exact
+join has nothing in any package's source to support it.** That is Varad's
+decision-10 concern, answered with a number instead of an opinion. The
+ratio held at 45–46% before and after `transformers` (1,578 rows) was
+added, so it is a property of the heuristic, not of the sample.
+
+The mechanism, in one row:
+
+```
+yaml.representer.BaseRepresenter.add_representer   leaf used by 7 pkgs
+```
+
+`add_representer` genuinely is used by seven packages — as
+**`yaml.add_representer`**, the module-level function. The changed symbol
+is the classmethod on `BaseRepresenter`, a different object sharing a
+name. The leaf heuristic cannot tell them apart. The alias graph can,
+because no import statement connects the two.
+
+### 9.4 Reachability, not depth
+
+`ablate.py` now separates two things that were tangled:
+
+- **path shape** — `module_depth`, `name_length`, `is_top_level`: where a
+  symbol is DEFINED.
+- **reachability** — `public_depth`, `has_export_path`: how short the name
+  anyone can import it by is.
+
+Under `label_alias`, every entry points the same way:
+
+| run | PR-AUC | vs full |
+|---|---|---|
+| everything | 0.3301 | 1.00 |
+| no reachability | 0.2057 | **0.62** |
+| no path shape | 0.3725 | 1.13 |
+| no popularity | 0.3322 | 1.01 |
+| reachability only (2 features) | 0.3079 | **0.93** |
+| path shape only (3 features) | 0.2094 | 0.63 |
+| popularity only | 0.0482 | 0.15 |
+
+Removing reachability costs **37.7%**. Removing definition-path shape
+*gains* 12.8%. Popularity is neutral, consistent with §5.2.
+
+So the answer to §5.3's question is: **the depth effect was never the
+story — reachability is.** The model has learned "how short is the name a
+user can import this by", not "how deep is it buried", and the two were
+inseparable until the alias graph pulled them apart.
+
+**The circularity, stated rather than buried.** The usage index records
+paths as downstream code writes them, and downstream code writes short
+ones. So a symbol with a short public name has both more ways to match
+and matches on the kind of path the index is dense in. This is
+simultaneously a real property of the ecosystem and a property of how the
+label is built. Keeping the two feature groups separate is what makes it
+arguable with numbers. It is not resolved.
+
+### 9.5 A data-quality bug found on the way
+
+3.0% of rows have a symbol root that does not resemble the package name.
+Most are legitimate — `scikit-learn` → `sklearn` (294 rows), `protobuf` →
+`google`, `pymongo` → `bson`. About **210 rows (1.0%) are not**:
+
+```
+tokenizers -> py_src (129)     ruff, ast-serialize -> crates (25)
+cryptography -> _cffi_src (15) grpcio-* -> grpc_version (17)
+dill, multiprocess -> version (10)   cython -> runtests (4)
+```
+
+`py_src.tokenizers.models.BPE.from_file` is importable by nobody; the
+real path is `tokenizers.models.BPE.from_file`. Every such row is a
+**guaranteed negative** no matter how used the function is.
+
+Two causes. `_is_noise()` tests the **raw** lowercased stem against a set
+containing **normalised** entries — so `py_src` sails past a filter that
+literally contains `pysrc`, and the set's own `third_party` entry can
+never match either. And stray top-level scripts (`version.py`,
+`runtests.py`, `make_cffi.py`) are accepted by the single-file-module
+branch; the fix there is that a top-level script should only count when
+no package directory sits beside it, which is what keeps `six.py` working
+without also admitting `runtests.py`.
+
+Not fixed on the day, deliberately: filtering `py_src` without also
+fixing the sdist descent in `download.py` would turn tokenizers into a
+`NoPythonModule` failure — losing 129 rows and gaining nothing. It is 1%
+of the negative class and needs a re-ingest, so it waits for a batch
+(§7.6c).
+
+### 9.6 Why the row count moved, and how we knew
+
+The re-ingest produced 21,336 rows against the previous 23,025.
+`scripts/compare_runs.py` exists to decide whether that is PyPI moving or
+our own code, and the decisive test is: **for version pairs present in
+both runs, do the row counts agree?**
+
+1,540 shared pairs, 4 disagreed — all `tokenizers`, net −19 rows, three
+of them **exactly halved**. Not duplicate rows (24 rows, 24 distinct
+keys) but the same 12 changes recorded twice under two different wrong
+roots, `bindings.*` and `py_src.*`; `--restart` cleared the stale sdists
+and one copy went away. So the drop was a fix, and the rest was the
+release window shifting.
+
+The remaining gap was 8 packages that failed this run and had succeeded
+before — `transformers` alone was 1,270 rows. **`done.txt` records
+failures as done**, so a plain re-run does nothing; the failed packages
+have to be removed from the ledger first. After that: **22,914 rows
+across 406 packages**, parity with the old dataset while carrying the new
+column.
+
+---
+
+## 10. The sdist layout fix, and what it uncovered (Day 8)
+
+### 10.1 `py_src` — three bugs in one filter
+
+`NOT_THE_LIBRARY` is a list of directory names that are never the
+package: `tests`, `docs`, `examples`, `bindings`, `crates`. `tokenizers`
+ships its Python under `bindings/python/py_src/tokenizers/`, and the
+filter contained `pysrc` — so `py_src` sailed straight past it and the
+extractor produced symbols like
+`bindings.python.py_src.tokenizers.models.BPE.from_file`. Nobody can
+import that. 87 such rows were in the database (NOTES §9.5).
+
+Three separate fixes, and only the second is the one people guess:
+
+1. **Normalise before comparing.** `re.sub(r"[-_.]", "", name).lower()`
+   on both sides, so `py_src`, `py-src` and `pysrc` are one name.
+2. **Descend when the top level is empty.** Some sdists nest the package
+   two or three directories down. `resolve_layout` now walks down —
+   **but only when the top level has nothing importable at all**, never
+   merely because the directory name does not match the distribution
+   name. `protobuf` is the case that rule protects: it ships
+   `google/protobuf/`, and a rule that descended on a name mismatch
+   would have thrown away the real package to go hunting for a directory
+   called `protobuf`.
+3. **Setup scripts lose to real packages.** When a directory holds both
+   a real package and loose scripts, the scripts are only kept if their
+   name matches the distribution.
+
+12/12 regression checks passed, and `compare_runs.py` section 3 —
+the section that exists to tell "our code changed the diff" from "PyPI
+moved" — showed 24 shared pairs differing by a net **−40 rows**, every
+one of them a junk root going away: `crates`, `runtests`, `grpc_version`,
+`make_cffi`, `version`. The fix removed exactly what it was meant to.
+
+### 10.2 Then one version pair produced 30% of the dataset
+
+The re-ingest came out at **32,405 rows**, up from 22,914. Section 3 had
+already exonerated the code, so the growth sat on new pairs — and almost
+all of it on one:
+
+```
+transformers 5.16.1 -> 5.17.0     9,863 rows
+```
+
+9,827 under `transformers.models`, 9,797 `OBJECT_REMOVED`, 487 of 509
+model subpackages implicated, 9,780 at exactly depth 5.
+
+**Two hypotheses, both killed by measurement before anything was
+changed.** Models deleted wholesale? No: 509 → 516 subpackages, net +7,
+zero removed. A half-failed load on the new side? No: 2,636 vs 2,680
+modules materialised against 2,637/2,681 `.py` files on disk, 74,390 vs
+75,638 members — the new side has *more*. I then guessed an import
+sweep, having seen griffe count `torch`, `nn` and `Callable` as members
+of `modeling_roberta`, and asked for the leaf names expecting
+`Optional`, `Union`, `dataclass`.
+
+The leaf names said something else. **Eleven distinct names in 9,781
+rows:**
+
+```
+invert_attention_mask                         3,243
+create_extended_attention_mask_for_decoder    3,243
+get_extended_attention_mask                   3,243
+rot_pos_emb                                      28
+fast_pos_embed_interpolate                       12
+...six more, single digits
+```
+
+3 × 3,243 = **9,729 of 9,781 rows are three methods.** They are
+`ModuleUtilsMixin` methods. transformers 5.17.0 removed them from that
+mixin, and 3,242 model classes inherit it.
+
+### 10.3 Why griffe reports it 3,243 times
+
+Not a bug, and not ours. Read at the source
+(`griffe/_internal/diff.py:623`):
+
+```python
+for name, old_member in old_obj.all_members.items():
+```
+
+and `all_members`, for a class, is
+`{**self.inherited_members, **self.members}`. So every method a subclass
+inherits is diffed as if the subclass declared it. Reproduced in a
+10-line fixture — one mixin, one removed method, ten subclasses:
+
+```
+rows produced: 11
+   pkg.base.Mixin.gone      Function  declared
+   pkg.models.m0.M0.gone    Alias     target_path=pkg.base.Mixin.gone
+   ... one per subclass
+```
+
+The defining row is a `Function`; every repeat is an `Alias` whose
+`target_path` names the definition and whose own `.path` has been
+re-parented onto the subclass. That `target_path` is a plain string
+filled in at parse time — the same property the alias resolver leans on
+(§9.1), so reading it resolves nothing and cannot raise.
+
+### 10.4 What we did about it
+
+Every one of those 9,729 rows is **true**. None of them is a separate
+event. Left alone they would have been 30% of the training data, all
+with near-identical features, all labelled 0 — one library's refactor
+setting the positive rate for the entire dataset, and the site showing
+one removal 3,243 times.
+
+`fold_inherited()` collapses them onto the defining class and keeps the
+count as a new column, **`inherited_by`**. Folding at extract time, not
+in `labels.py`, is deliberate: a fold at label time would leave the raw
+rows in `changes.csv` and in the database, so the product would still be
+wrong even if the model was not.
+
+The count is not bookkeeping. A method 3,242 classes inherit is a
+different kind of break from one on a leaf class, and `inherited_by`
+gives the ranker that in one number instead of 3,242 duplicate rows. It
+goes into the feature set on its own ablation group (`BLAST_RADIUS`) so
+it has to earn its place rather than be assumed useful.
+
+**The guard matters more than the fold.** griffe skips private members,
+so if the base class is private no row for the definition exists, and
+folding onto it would silently delete a real public breakage — a public
+subclass of a private mixin is exactly the case where the subclass's
+name is the one users wrote. In that case the fold keeps the shallowest
+inheriting path as a stand-in instead. Tie-broken on the path string,
+not on iteration order: `breakage` is keyed on `symbol_path`, and a
+stand-in that changed between runs would write a second row instead of
+upserting the first.
+
+`scripts/test_inherited.py` covers all three cases plus the stability
+property. No network, no sdists, under a second — run it before every
+ingest.
+
+### 10.5 What this costs, and what it does not
+
+> **CORRECTED 14 Sep.** The paragraph below claimed the Day 7 stability
+> result "was never contaminated by this". **That was wrong**, and the
+> measurement that disproved it is in this same section.
+>
+> The fold collapsed **13,694** repeats in total. transformers accounts
+> for roughly 10,100 of them. The other **~3,600 were in python-docx,
+> sympy, cython, pandas, matplotlib, mpmath, xlsxwriter and pyasn1** —
+> every one of which was in the Day 6 dataset the Day 7 numbers came
+> from. So **roughly 17% of that dataset was inherited duplicates.**
+>
+> transformers was the loud case, not the only one, and the claim was
+> made after checking only the loud one. Duplicate rows inside a
+> lambdarank group change the group structure the ranker optimises, so
+> the Day 7 figures were not wrong so much as **unverified**. They have
+> since been recomputed (§1): the result survived — `label_alias` still
+> beats popularity at every measurable cut — but "it survived" is a
+> finding, and "it was never at risk" was an assumption wearing a
+> finding's clothes.
+>
+> The original text is kept below. The error worth remembering is not
+> the number; it is checking the one package that was obviously
+> implicated and generalising from it.
+
+The transformers pair should fall from 9,863 rows to roughly 140. Every
+other package with a base class and many subclasses shrinks too, by an
+amount nobody has measured yet — that is the number the next run
+produces, and `compare_runs.py` section 3 will light up with differences
+this time, correctly, because the code genuinely did change the diff.
+
+Two things this does **not** invalidate. The Day 7 stability result
+(`label_alias` beating popularity at 7/7 cut dates, median lift 2.48×,
+worst 1.79×) was computed on the 21,336-row dataset, before transformers
+re-entered — so it was never contaminated by this. And the fold removes
+only rows that were duplicates of a row we keep. But the positive rate
+**will** move once 9,729 guaranteed negatives leave, and PR-AUC's floor
+is the positive rate — so every number in §1 and §5 has to be recomputed
+before it is quoted again, and the public write-up stays frozen until
+then.
+
+**What actually happened, measured:** 32,405 rows → **19,121**. The
+transformers pair went 9,863 → **107**. Across 1,558 shared version
+pairs, 63 changed and **every one of them fell** — zero pairs gained a
+row, which is the property the fold had to have and now demonstrably
+does.
+
+### 10.6 The pre-release filter was hiding eight packages
+
+`list_releases` skipped any version `packaging` calls a pre-release. That
+rule is right almost everywhere — nobody upgrades to `2.0.0rc1`, so
+diffing it would describe a change no user ever had.
+
+`Version("0.65b0").is_prerelease` is `True`. OpenTelemetry's
+instrumentation line has shipped `0.NNbM` for years and has never left
+beta: **that suffix is their release.** The pipeline discarded every
+version they have ever published, reported `TooFewReleases`, and moved
+on. Eight packages, ranks 79 to 386, all publishing real non-yanked
+sdists on every release.
+
+The fix is a fallback, not a relaxation: take stable releases when a
+package has two or more, and only then widen to include pre-releases.
+A package with real releases never sees its rc builds; a package that
+only ships betas stops being invisible. `is_prerelease` rides along on
+every row so the fallback is visible in the data instead of inferred
+from it. Dev releases (`1.2.3.dev4`) are excluded in **both** passes —
+and that needs its own check, because `is_devrelease` implies
+`is_prerelease`, so a single flag would have let dev builds in.
+
+Verified on three packages before any re-ingest: `opentelemetry-util-http`
+6 releases all flagged pre-release (the fix firing), `requests` 6 releases
+0 flagged (the guard holding), `torch` still 0 (the fallback not papering
+over a real absence).
+
+### 10.7 What the 25 failures actually are
+
+The question that prompted this: *transformers was excluded by a timeout —
+could that be happening to others?* The answer is no as asked, and yes as
+meant.
+
+Not as asked: failures are **not** concentrated among big packages.
+Median download rank of a failed package is 308 against 250 for the set;
+3 in the top 100, 3 in the bottom 100.
+
+As meant: the failure table's reasons had not earned their trust. Of the
+three failures ever investigated, **two were misclassified**. transformers
+was recorded as a 600s timeout and then finished in 3.1 minutes on retry —
+the binding constraint was memory contention across ten parallel workers
+loading 2,680-module trees, not elapsed time. `sniffio` was recorded as a
+griffe `RuntimeError` and ran clean on re-run.
+
+| | n | verdict |
+|---|---|---|
+| `types-*` stubs, C/Rust extensions | 8 | correct — `.pyi` or no Python at all |
+| wheel-only (torch, triton, onnxruntime, playwright, psycopg-binary) | 5 | correct — griffe needs source |
+| opentelemetry pre-release filter | 8 | **bug, fixed §10.6** |
+| griffe cyclic-alias crash (numpy, multiprocess) | 2 | real, known |
+| transformers, sniffio | 2 | misclassified, both recovered |
+
+13 of 25 are real limits of the method and belong in the write-up as
+such. The other 12 were recoverable and have been recovered. **A
+distribution that ships no sdist cannot be analysed by reading source** —
+that is a boundary, not a defect, and it is better stated than
+discovered.
+
+---
+
+## 11. Measuring the measurements (Day 9)
+
+Four bugs found on 14 Sep, none in the model, all in the things used to
+judge it. A wrong model is a bad afternoon; a wrong instrument is every
+number in the file.
+
+### 11.1 The ablation was varying two things at once
+
+Each ablation row chose its own tree count by early stopping, and the
+counts came back **4, 10, 11, 27, 40, 47, 53, 59** — a fifteen-fold
+range. "Removing blast radius costs 25% of PR-AUC" was then
+indistinguishable from "that row happened to stop at 4 trees".
+
+It was also still using the **holdout** stopping rule that §5.7 replaced
+everywhere else, on a validation slice 2.1× denser in positives than
+test.
+
+Now every row is fitted on all of train at one CV-chosen count. The check
+that it worked: the `everything` row went from 0.4365 to **0.5137**, the
+shipped model's exact score. An ablation whose baseline disagrees with
+the model it is ablating was never comparing anything.
+
+### 11.2 A decision rule that flipped on 0.26% of the data
+
+`lift_MIN` picked `label_alias` on 12 Sep and `label_scoped` on 14 Sep.
+Between those runs: **50 rows added, out of 19,121.**
+
+Both worst cases came from the `q=0.85` cut, which had **4 rankable
+version pairs**. A pair is rankable at 10 only if it has more than ten
+changes and at least one positive; precision@10 over four such pairs is
+not a weak measurement, it is not a measurement. `MIN_TEST_POSITIVES`
+already conceded that tiny cuts are invalid — it gated on the wrong
+quantity.
+
+`MIN_RANKABLE_PAIRS = 10`, checked before fitting:
+
+| `lift_MIN` | with the 4-pair cut | without it |
+|---|---|---|
+| 12 Sep dataset | alias 1.94 wins | **alias 2.19 wins** |
+| 14 Sep dataset | scoped 1.92 wins | **alias 2.32 wins** |
+
+The ungated rule reverses; the gated one does not. Cut dates are
+**quantiles**, so adding any rows moves all seven — two runs are not
+comparable cut-by-cut, and a rule resting on the smallest cut inherits
+all of that movement.
+
+**This rule was added after seeing that it mattered, and that has to be
+said out loud** — it is the same family of error as choosing features on
+test PR-AUC (§5.4). Two things defend it. The justification never
+references which label wins: four pairs cannot support a top-10 metric
+whoever is being scored. And it is checkable against data collected
+before the rule existed — the table above is exactly that check. It is
+still a post-hoc choice and the viva answer is "yes, and here is why it
+is not outcome-driven", not a denial.
+
+The cost is honest: five or six usable cuts instead of seven. Say **"six
+of seven, the other two too small to measure"**, never "6/6" alone.
+
+### 11.3 An ablation table with no idea what zero looks like
+
+`inherited_by` has **exactly zero gain** — the model was offered it and
+never split on it. Dropping it moved PR-AUC by **12.6%**, because
+removing a column changes LightGBM's binning and column sampling and the
+fit moves whether or not the feature was used.
+
+Meanwhile "removing path shape costs 10.4%" was being read as a result.
+It is smaller than what happens when nothing is really removed.
+
+So the ablation now fits the full model, asks which features it never
+split on, and drops each as a **control** — discovered, never hardcoded,
+since which features go unused changes with the label and the data. Their
+cost is the noise floor, and every effect at or below it prints as
+nothing.
+
+```
+NOISE FLOOR  12.6%
+  path shape     10.4%   BELOW THE FLOOR — read as nothing
+  reachability   26.7%   2.1x the floor
+  path+reach     44.0%   3.5x the floor
+  popularity     17.2%   1.4x the floor
+  CONTROL  inherited_by  +12.6%
+  CONTROL  is_private     +5.0%
+```
+
+**The floor is itself uncertain.** Two controls gave 5.0% and 12.6% — a
+2.5× range on a two-point estimate. `max()` is the conservative choice,
+but path shape at 10.4% lies *inside* that range: above one control,
+below the other. The defensible sentence is **"path shape cannot be
+distinguished from noise"**, not "path shape is nothing". The proper fix
+is standard and not yet done: add several columns of pure random noise as
+features and ablate each, giving a floor with a distribution rather than
+two points.
+
+What survives the floor: **reachability at 2.1× and path+reach at 3.5×.**
+That is the finding. §5.3 was reaching for it and got there with a wrong
+number ("105%"); this is the same conclusion with an instrument that
+knows its own resolution.
+
+### 11.4 The gain table was truncated, and it read as a claim
+
+`imp.head(8)` on a 16-feature model. `inherited_by` was absent from the
+printed table, which reads as "the model ignores it" — flatly
+contradicting an ablation saying its removal cost PR-AUC. The
+contradiction was in the *printing*.
+
+All 16 print now, with shares, and any feature at zero gain is named
+explicitly. A feature the model declined is the interesting case, not the
+boring one, and it is exactly what `head(8)` hides once the feature set
+passes eight.
+
+### 11.5 Did the model improve, or did the data get honest?
+
+Varad asked this on 15 Sep, and it is the right question: PR-AUC moved in
+the same step that removed 13,694 rows, which is exactly the shape of a
+number nobody should take at face value.
+
+`scripts/fold_effect.py` answers it by holding everything still except
+the duplicates — same label, same features, same CV stopping rule, and
+**the same cut date**. That last part is the one that is easy to get
+wrong: the normal split cuts at a *quantile of the rows*, so 32,405 rows
+and 19,121 rows would cut at different dates and be scored on different
+test halves. That comparison would measure the split as much as the fold.
+
+```
+                        before       after
+  rows                  32,405      19,121
+  floor                 0.0112      0.0356
+  PR-AUC                0.4439      0.5137
+  vs floor               39.6x       14.4x
+  lift over popularity   4.88x       4.82x
+  trees (CV median)         72          25
+```
+
+**Lift is flat. The model did not improve.** Two of those rows are traps
+and both were nearly quoted:
+
+- **PR-AUC rose 16%** — because the floor rose 3.18×. Removing guaranteed
+  negatives raises the score with no change in skill.
+- **vs-floor fell 39.6× → 14.4%** — and this is *not* a regression. A
+  smaller floor mechanically inflates the ratio, the same way the method
+  subset's 25.2× is not evidence the model prefers methods. Neither raw
+  PR-AUC nor vs-floor is comparable across datasets with different
+  positive rates. Lift over popularity is, because the baseline is refit
+  inside each dataset and the floor cancels.
+
+#### The line that ties this to §11.6
+
+```
+  test rows       15,182 -> 4,778
+  test positives     170 ->   170
+```
+
+**10,404 test rows removed, not one of them a positive.** Every folded
+row was a negative — which is precisely what the label's method
+blindness predicts. One mechanism produces both findings:
+
+> griffe reports a base-class change once per subclass → those rows are
+> all methods → an import-based label cannot see methods → all 13,694
+> are guaranteed negatives → the positive rate is dragged to 1.12% →
+> PR-AUC reads lower than the model deserves.
+
+The CV also chose **72 trees** on the amplified data against 25 now: a
+model three times larger, to fit a dataset that was a third duplicates.
+
+Caveat that applies to the whole subsection: the two runs share most of
+their training data. This is a sensitivity check, not a significance
+test. There is no p-value here and there should not be one.
+
+### 11.6 The label cannot see methods, and that is 65% of the data
+
+This started as Varad's question — *why does `inherited_by` have literally
+zero gain, when a change hitting 3,242 classes is intuitively
+high-impact?* — and the answer turned out to be much larger than the
+feature.
+
+```
+  inherited_by = 0    18,604 rows    5.22% positive
+  inherited_by > 0       517 rows    0.00% positive
+```
+
+Not "low". **Zero.** Against a 5.22% base rate you would expect about 27;
+the odds of none by chance are around 10⁻¹². So it is structural, and the
+structure is this:
+
+```
+  method on a class   12,373 rows    1.12% positive
+  module-level         6,748 rows   12.34% positive
+```
+
+**Eleven times.** The usage index is built from **import statements**.
+People write `from pandas import read_csv`. Nobody writes
+`from pandas import DataFrame.append` — they call it on an object. So the
+scanner sees module-level symbols and is close to blind to methods.
+
+That 1.12% is not a fact about methods. `DataFrame.append` being removed
+broke thousands of codebases. **It is a fact about what we can observe**,
+and 65% of the dataset sits on the wrong side of it.
+
+`inherited_by` has zero gain because it identifies a subgroup that is
+100% negative *by construction*, and `public_depth` and friends already
+push those rows down. The feature is fine. The label is narrow.
+
+#### The worry that follows, and the test for it
+
+`public_depth` is the top feature at 35.6% of gain. Module-level symbols
+have low `public_depth`; methods have higher. So `public_depth` might be
+encoding *"is this the kind of symbol our label can observe"* — which
+would make the headline feature a proxy for our own blind spot, the same
+class of error as §5.3 in a form §5.3 did not cover.
+
+`scripts/label_blindspot.py` scores the shipped model separately on each
+half — one model, trained on everything, split only at scoring time,
+because training a specialist per subset answers "could a model do this?"
+rather than "what is this model doing?".
+
+| | rows | floor | PR-AUC | vs floor |
+|---|---|---|---|---|
+| module-level | 1,437 | 0.0905 | 0.6036 | 6.7× |
+| **methods** | **3,341** | **0.0120** | **0.3021** | **25.2×** |
+
+**It ranks inside the blind spot.** The model is ordering changes, not
+sorting symbol kinds, so the result survives with the limitation stated.
+
+Three numbers from that run that must **not** be quoted, two of them
+produced by my own script before it was fixed:
+
+- **"32× lift over popularity" among methods.** Popularity scores 0.0094
+  there against a 0.0120 floor — *worse than chance*. Dividing by it
+  manufactures a large number from an unstable near-zero denominator.
+- **precision@10 among methods.** It rested on **3 rankable version
+  pairs**, and §11.2 had just established that under 10 is not a
+  measurement. The script quoted one anyway until it was fixed.
+- **"25.2× beats 6.7×, so the model is better at methods."** No. A rarer
+  positive class yields a larger ratio for the same real skill. Each
+  number says only *within this group, far above chance* — they are not
+  comparable to each other.
+
+#### That popularity is worse than chance among methods is a finding
+
+Big packages ship enormous numbers of methods and almost no labelled
+ones, so sorting by download count **actively misleads** in exactly the
+half of the data where the label is weakest. The baseline this project
+exists to beat does worse than a coin flip on two-thirds of the rows.
+
+#### What would fix it, and whose job it is
+
+A Track B change, not a model change: the usage scanner would have to
+record attribute-access call sites — seeing `df.append(...)` and knowing
+`df` is a `DataFrame`. That is name resolution, not AST walking, and it
+is not happening before the demo. A cheap partial version exists —
+record `X.method()` wherever `X` is a name imported from a tracked
+package, with no type inference at all — and is worth scoping.
+
+Until then this is a **named limitation**, stated in the report rather
+than discovered by an examiner: *our labels measure import-time usage.
+Method-level breaking changes are systematically under-counted, and we
+can put a number on it — 1.12% against 12.34%.*
+
+### 11.7 What none of this changed
+
+The result. `label_alias` beat popularity at every measurable cut before
+these fixes and after them. What changed is that the numbers now come
+from instruments that agree with each other: the ablation's baseline
+equals the shipped model, the gain table is complete, the ablation knows
+its noise floor, and the decision rule survives a 0.26% perturbation of
+the data.
+
+Worth keeping in view: **three of the four bugs in this section were in
+code written to check the model, not to build it.** The instinct to
+verify was right; the instruments needed verifying too — and §11.5 and
+§11.6 were both written by *pointing an instrument at itself*, which is
+the only technique in this file that has never yet produced a wrong
+answer.
+
+What §11.5 and §11.6 did change is the **claim**, not the result. The
+ranker is as good as it was; the score it was previously given was
+depressed by duplicate negatives, and the half of the dataset it is
+scored on most heavily is the half our label can actually see. Both
+belong in the report as stated limitations. Neither is a reason to
+restate the headline in §1, which is still: *beats popularity at every
+cut date large enough to measure, median 1.99×, never below 1.45×,
+on the frozen dataset.*
+
+---
+
+## 12. What the analysed window actually contains (Day 10)
+
+Varad's review note was fair: *"wheel-only releases are probably rare"
+does not survive a review; "0.x% of releases, documented" does.*
+
+`scripts/window_gaps.py` takes the version range actually analysed for
+each of the 415 packages, asks PyPI for everything published inside it,
+and accounts for every release that is **not** in `changes.csv`.
+
+```
+  releases inside our analysed windows   2,470
+  in changes.csv                         2,081   84.3%
+
+  no sdist                                   3   0.12%   the off-by-one
+  yanked                                    38   1.54%   correct
+  pre-release                              207   8.38%   correct (§10.6)
+  dev release                              114   4.62%   correct
+  left no row (analysed, nothing found)     27   1.09%   quiet releases
+  unexplained                                0
+```
+
+### 12.1 The off-by-one is 0.12%, and it is one package
+
+griffe reads source, so a release shipping only a wheel cannot be
+analysed and a break introduced in it is attributed to the next release
+that did publish an sdist. **Three releases in 2,470, all of them
+`pure-eval`.** Real, documented, and small enough to state in a sentence
+rather than hedge around.
+
+### 12.2 The consistency check found the quiet-release gap
+
+The `unexplained` bucket was paranoia: a release with a real sdist, not a
+pre-release, not yanked, inside our window, that we did not analyse
+should be **impossible**, because `list_releases` takes the last six
+*eligible* releases and anything between them would have been among
+those six.
+
+It printed **27**. None has a logged failure; none appears anywhere in
+`changes.csv`.
+
+They were analysed and nothing broke. **A version pair with zero
+breaking changes writes zero rows**, so a release whose *both* adjacent
+pairs were clean disappears from the data entirely. `termcolor`,
+`tabulate`, `toolz`, `pkginfo` — small stable libraries doing the right
+thing, and the dataset cannot say so.
+
+That is the same gap the quiet-releases question has been circling since
+Day 5, arriving from a direction nobody was watching. A script written to
+count wheel-only releases found it as a side effect of refusing to let a
+category go unexplained.
+
+**The 1.09% is a LOWER BOUND and must be quoted as one.** It counts
+invisible *releases*, which need two clean pairs each. Clean *pairs* are
+strictly more numerous and cannot be counted from outside at all.
+
+### 12.3 Four of five enum values now have a source
+
+Varad's `analysis_status` needs five values. After this run:
+
+| value | source |
+|---|---|
+| `analysed` | `changes.csv` |
+| `analysis_failed` | `failures.csv` |
+| `no_source` | `window_gaps.csv` — the 3 above |
+| `yanked` | `window_gaps.csv` — the 38 above |
+| **`analysed_clean`** | **nothing. This is the outstanding work.** |
+
+The fix is not a mapping. `run_ingest` has to emit a row per release it
+**considered**, with a status and a change count, rather than only rows
+for changes it found. Until it does, *"we checked and it is safe"* and
+*"we never looked"* are the same absence — which is the one answer a
+dependency tool should be able to give confidently and currently cannot.
+
+---
+
+## 13. The audit that nearly deleted 591 true findings (Day 11)
+
+Migration 005 landed, the database reloaded against it, and then the
+clean-up nearly did more damage than the mess it was cleaning.
+
+### 13.1 A guard that fired on "unusual", not on "known bad"
+
+`db_prune.py` refuses to delete more than 5% of the table. After the
+reload it wanted **18.3%**, and refused.
+
+It had no idea what was wrong. It only knew the number was far outside
+normal, and that made a human look — which is the entire value of the
+guard. Had the bug affected 4% of rows instead, the delete would have
+gone through, ~900 true findings would have vanished, and **nothing
+downstream would ever have complained**: a missing breakage row looks
+exactly like a change that never happened.
+
+**A guard that only fires on conditions you already thought of catches
+nothing you have not already imagined.** This one fired on a shape.
+
+### 13.2 The bug was a meaning mismatch, not a logic error
+
+Both audit scripts decided whether a row was *superseded* — "we
+re-analysed that release and did not produce this row" — using:
+
+```python
+live_rel = set(zip(package, version_to)) | set(zip(package, version_from))
+```
+
+That reads naturally: *is this release still in our data?* It is the
+wrong question.
+
+**Every breakage row hangs off `version_to`.** `breakage_rows()` attaches
+each row via `release_id[(package, version_to)]`, so a row for release V
+was produced by the pair `previous -> V`. "Superseded" can therefore only
+mean *we re-ran that pair and it did not produce this row* — which
+requires V to be a **version_to** today.
+
+When the six-release window rolls forward, V becomes the OLDEST version
+in it and appears only as a `version_from`. The release is still "live",
+but the pair that produced its rows was never re-analysed. We know
+nothing about those rows — and the script called them superseded.
+
+Caught by reading the sample rows, not the summary. The breakdown said
+*"4,198 superseded"* and looked entirely plausible. The twelve example
+rows above it said `anthropic.AI_PROMPT: Public object was removed` — a
+public, module-level removal, which a fold that only touches inherited
+methods has no way to supersede. **Same failure as the Day 5 chain
+renderer: a summary that was internally consistent and wrong, with only
+the raw rows disagreeing.**
+
+Fixing it moved **591 rows** from *delete* to *keep*.
+
+| | before fix | after |
+|---|---|---|
+| superseded (delete) | 4,198 | 3,607 |
+| aged out (keep) | 198 | **789** |
+
+### 13.3 Proving the remaining 3,607 really were superseded
+
+"Close to what I expected" is how three bugs survived this week, so the
+3,607 got their own test rather than a nod.
+
+If the fold caused a row to disappear, **the same change is still in
+today's data** — same package, same release, same kind, same leaf name —
+recorded on the defining class instead of the inheriting one. The leaf
+survives; the path moves.
+
+```
+superseded rows: 3,607
+  same package+version+kind+LEAF under a different path today:  3,586  (99.4%)
+  no counterpart at all:                                            21
+```
+
+And the 21 are not mysterious either:
+
+```
+cython 3.3.0         runtests.TAG_EXCLUDERS
+zstandard 0.24.0     make_cffi.HEADERS
+grpcio-tools 1.82.1  grpc_version.PROTOBUF_VERSION
+python-dateutil      updatezinfo.main
+```
+
+`runtests`, `make_cffi`, `grpc_version`, `protoc_lib_deps`,
+`updatezinfo` — build and test scripts, removed by the Day 8 layout fix
+(§10.1), which `compare_runs` section 3 had already named as its intended
+removals. A second deliberate change, showing up in a different audit.
+
+Every one of the 3,745 deleted rows is accounted for by a fix we made on
+purpose. Final state: **19,909 rows — 19,120 current plus 789 aged-out**,
+0 superseded, 0 un-importable, Varad's `breakrank-fixture` rows untouched.
+
+### 13.4 The same confusion, from two directions, in one day
+
+Varad rejected `analysed_clean` for the oldest release in a window and
+added `no_baseline` instead, because *"recording it as analysed_clean
+would have the site say 'safe to upgrade' about a release we never
+compared"*.
+
+That is **this bug**, arrived at independently from the schema side. A
+release is not a unit of analysis; **a pair is.** A release with no
+predecessor has nothing to be clean about, and a release that is only
+ever a `version_from` has no rows of its own to supersede.
+
+Two people found the same distinction on the same day from opposite ends,
+which is the strongest argument available for keying `n_changes` on the
+pair rather than the release.
+
+### 13.5 Three loader fixes that shipped with the reload
+
+- **`inherited_by` and `positive_rate` are written**, detected rather
+  than assumed: `check_schema` returns a capability dict, and any optional
+  column the database lacks is dropped from **both** the column list and
+  the row dicts. A bound parameter with no column to land in fails a
+  transaction exactly as hard as the reverse.
+- **`positive_rate` is a field in `metrics.json`**, not a phrase inside
+  the notes string. A floor recoverable only by parsing prose is half a
+  result. A fallback still parses the old string, because a run produced
+  by an older `train.py` is still a valid run.
+- **`trained_at` is no longer set to `now()` on conflict.** Re-scoring an
+  *older* model version would have stamped it newest, and the API picks
+  the current model with `ORDER BY trained_at DESC LIMIT 1`. This is the
+  exact mirror of the `DEFAULT now()` bug Varad found in his seed, where
+  the fixture silently became newest on every reseed. Same bug, opposite
+  direction, both fixed while there is still only one real model.
+
+---
+
+## 14. "We checked and nothing broke" is now an answer (Day 11)
+
+`data/releases.csv` — one row per release **considered**, not one per change
+found. This is the file that closes the gap §12.2 found from the outside
+and Varad's `analysis_status` enum was designed around.
+
+```
+analysed        1,601  ┐ 2,405 pairs actually diffed
+analysed_clean    804  ┘
+no_baseline       487    one per segment: nothing to compare against
+analysis_failed    59
+pre_release       262  ┐
+dev_release       148  │ 499 filtered before analysis, reason kept
+yanked             54  │
+no_source          35  ┘
+                -----
+                3,450  release rows, 3,450 distinct — the ledger closes
+```
+
+### 14.1 The number that did not exist
+
+**804 clean pairs.** `scripts/window_gaps.py` could see only **27** from
+the outside and said so explicitly: a release only becomes invisible when
+*both* its adjacent pairs are clean, so the count of clean releases is a
+lower bound on the count of clean pairs. It is 30× larger.
+
+That caveat was written before the number was knowable. Being right about
+the *direction* of an unmeasurable quantity is worth more than a guess at
+its size, and stating it as a bound is what made the 804 verifiable
+rather than surprising.
+
+### 14.2 Two independent paths, one number
+
+```
+n_changes sum   17,014
+changes.csv     17,014
+```
+
+`n_changes` is accumulated per pair inside the ingest; `changes.csv` is
+written row by row. Nothing links them except both being correct. An
+exact match is the check worth having before a homepage ranks releases by
+that column.
+
+### 14.3 `no_baseline` is per SEGMENT, not per package
+
+The oldest release in a chain has no predecessor, so it is not clean —
+nothing was compared. But a failed download *splits* the chain (§2.1),
+and the release immediately after a gap has no comparable predecessor
+either. Both get `no_baseline`.
+
+487 of them across 500 packages: more than one per package, which is the
+failed downloads showing up exactly where they should.
+
+Varad rejected `analysed_clean` for this case before seeing any of the
+data, on the grounds that it *"would have the site say 'safe to upgrade'
+about a release we never compared"*. That is the same pair-not-release
+distinction as the `live_rel` bug in §13.2, caught from the schema side
+instead of the audit side.
+
+### 14.4 The bug in shipping it, and the check that should have caught it
+
+Changing `_process_package` to return four values instead of three, I
+updated three of its five return paths. The two I missed were the
+early exits for "every download failed" and "no importable module" — so
+8 packages died with `ValueError: not enough values to unpack` and were
+recorded as `pipeline / UnexpectedError` instead of
+`resolve_module / NoPythonModule`.
+
+The run still completed, because `main` catches per-package exceptions by
+design. **A pipeline built to survive one package exploding will happily
+survive its own author breaking every path that explodes.**
+
+Fixed, and verified with an AST walk over the function rather than by
+testing one path:
+
+```python
+sizes = {len(n.value.elts) for n in ast.walk(fn)
+         if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple)}
+assert sizes == {4}
+```
+
+Arity is a structural property, so check it structurally. Running the
+happy path proves nothing about the five error paths, and the error paths
+are where a resumable pipeline spends its interesting moments.
+
+---
+
+## 15. The comparison that graded on different exams (Day 11)
+
+`lift_MIN` has now produced a misleading answer **three times**, and the
+third one finally showed what the other two had in common.
+
+### 15.1 What happened
+
+On the 17,014-row dataset the rule chose the strict `label`:
+
+```
+       label  splits  lift_MIN
+       label       5      1.81   <- "winner"
+label_scoped       6      1.27
+ label_alias       6      1.45
+```
+
+**Five splits against six.** `label` was skipped at q=0.85 for having 9
+rankable pairs, so it never faced the 2026-08-22 cut — which is exactly
+where `label_alias` recorded its worst case of 1.45×.
+
+`lift_MIN` is a **worst case**. Comparing worst cases across different
+sets of cuts rewards whichever label was spared the hardest one. On the
+five cuts all three labels actually share:
+
+| | 05-10 | 06-05 | 07-08 | 07-28 | 08-10 | min |
+|---|---|---|---|---|---|---|
+| `label` | 1.86 | 1.81 | 2.13 | 1.90 | 2.23 | 1.81 |
+| `label_scoped` | 1.58 | 1.27 | 1.38 | 1.30 | 1.44 | 1.27 |
+| **`label_alias`** | 1.94 | 1.92 | 2.05 | 2.25 | 2.76 | **1.92** |
+
+`label_alias` wins, as it has on every dataset once the comparison is
+made fairly. The code now restricts the label-vs-label table to shared
+cuts and says so when they differ; per-label tables still use every cut
+that label could use, because that is the honest picture of each one.
+
+**Two numbers, two jobs, do not mix them.** Which label ships is decided
+on shared cuts (1.92×). How good the shipped model is comes from
+`label_alias` on its own six cuts (6/6, median 1.99×, min 1.45×) — that
+is what `metrics.json` carries and what the report quotes.
+
+### 15.2 What all three failures had in common
+
+| | §11.2 | §13.2 | §15.1 |
+|---|---|---|---|
+| where | stability | db audit | stability |
+| looked like | a model comparison | a row classification | a model comparison |
+| actually was | a measurement of which cut dates existed | a measurement of which releases were re-analysed | a measurement of which cuts each label could use |
+
+Every time, **a number that appeared to measure the models was partly
+measuring which rows each model was given.** That is one bug wearing
+three costumes, and it is worth naming as a class rather than fixing
+three times: *before comparing two things, check they were given the same
+question.*
+
+### 15.3 Still open: the tree count is being clamped, not chosen
+
+```
+CV folds chose [5, 7, 1, 3] trees -> median 20
+```
+
+The median of `[5, 7, 1, 3]` is **4**. `MIN_TREES = 20` clamped it, and
+the printed line hides that. The folds wanted a four-tree model, which is
+not a tree-count decision — it is the validation signal being too weak to
+make one.
+
+Every ablation row inherits that clamp, which is why the 16-feature model
+now loses to two of its own subsets again (`no path shape` 0.4441 and
+`no blast radius` 0.4292 against 0.3866) and why the noise floor reads
+**11%** off a single control feature. Nothing in that table below 11% is
+readable, which currently includes popularity at 8.5%.
+
+Not fixed. Named, so it is not rediscovered as a finding.
+
+### 15.4 The dataset moves faster than the write-up can
+
+Four ingests in five days. The headline lift has read **2.48×, 2.59×,
+4.82×, 2.25×**, and not one of those changes came from a modelling
+decision — they came from PyPI publishing releases. `databricks-sdk`
+alone swung the dataset by 1,901 rows overnight when its six-release
+window rolled forward.
+
+The window is defined relative to *today*, so the dataset is not a fixed
+object. That is correct for a live site and impossible for a report with
+a submission date: an examiner re-running the pipeline in November gets a
+different answer, and every figure in §1 is stale within days of being
+written.
+
+**So the dataset is frozen at 17,014 rows / 416 packages, 16 Sep 2026,
+tagged `dataset-20260916`.** Every number in the report and the public
+write-up cites that tag. Re-ingests continue for the live site and are
+never quoted. Separating "the dataset the report is about" from "the
+dataset the site serves" is the only way both can be honest.
+
+## 16. The two features that need more than one release (Day 12)
+
+Every feature in the model so far can be read off a single diff. These
+two cannot. `was_deprecated_before` needs the release *before* the break,
+and `prior_breaks_in_module` needs every release before that. The project
+book assigns them to week 5 and calls the first one "probably your single
+strongest feature."
+
+Both are written at **extract time**, in `api_extract.diff_series`, and
+that is not a style choice. Once a pair is diffed the two sdists are
+deleted; the deprecation marker is gone with them. Nothing in
+`changes.csv` can reconstruct it later. So the feature had to exist
+before the re-ingest, not after — otherwise the re-ingest happens twice.
+
+### 16.1 griffe's `deprecated` flag is None for real deprecations
+
+The obvious implementation is `obj.deprecated`. Measured on griffe 2.2.0,
+against a two-line fixture:
+
+| marker in source | `griffe.deprecated` |
+|---|---|
+| `.. deprecated:: 1.0` in the docstring | `None` |
+| `@deprecated('use plain instead')` decorator | `None` |
+
+The first is defensible — prose is not metadata. The second is not
+obvious at all, and it is the one that matters, because a decorator is
+the machine-readable form a maintainer is *supposed* to use.
+
+A feature reading only that flag would have been `False` on all 17,014
+rows. It would have reported zero gain, the ablation would have shown
+removing it costs nothing, and the honest-sounding conclusion —
+"deprecation warnings do not predict which breaks bite" — would have been
+a fact about a broken reader.
+
+So `was_deprecated()` reads three sources: the flag, the decorator list,
+and the docstring. Decorators come back as **strings** on this version
+(`decorators=["deprecated('use plain instead')"]`), so they are matched
+as text against the stem `deprecat`, which covers "deprecated",
+"deprecation", "DeprecationWarning" and `.. deprecated::` at once.
+
+### 16.2 The version that put the signal on the wrong rows
+
+Aliases must be skipped: reading `.docstring` on one raises
+`AliasResolutionError` — the same trap §9.1 documents, and the first
+probe crashed on it exactly as predicted.
+
+Skipping them naively gave this:
+
+```
+pkg.core.a   True      <- the definition path
+pkg.core.b   True
+pkg.a        False     <- the path users actually import
+pkg.b        False
+```
+
+Correct by the letter. Also useless: the signal landed on the rows almost
+nobody writes, and was withheld from the rows the feature exists for.
+
+Fixed with `deprecated_paths()` — one walk per version collecting every
+*definition* path that carries a marker, consulted by alias rows through
+`alias.target_path`, which is a plain string and needs no resolution
+(§9.1 again, used constructively this time).
+
+Worth recording *when* an alias row exists at all: griffe reports the
+re-exported name as its own breakage only if the package declares it in
+`__all__`. Measured — `from .core import a` yields `['pkg.core.a']`;
+adding `__all__ = ['a']` yields `['pkg.a', 'pkg.core.a']`. The first
+fixture for this test had no `__all__`, produced no alias rows, and would
+have passed by having nothing to check.
+
+### 16.3 `prior_breaks_in_module` must not see the future
+
+The counter accumulates oldest-first inside `diff_series`, so at pair *k*
+it holds pairs 0..*k*−1 only. Building it from a completed run and
+reading it back per row would leak later releases into earlier ones — the
+same class of error as a random split, and just as invisible in the
+output. A feature that can see the future scores beautifully and predicts
+nothing.
+
+`scripts/test_history.py` pins this: 13 checks, no network, under a
+second. It includes the controls, which are the point — an unmarked
+symbol that stays `False`, and a function *named* `deprecated` carrying
+no marker, which stays `False` too. Without those, a function returning
+`True` unconditionally passes every other check in the file.
+
+### 16.4 A summary that disagreed with its own table
+
+Adding the `HISTORY` group to `ablate.py` printed this:
+
+```
+history only     0.4003   ...   0.60
+...
+No single group reaches 85% of the full model (best is 'per-change only' at 35%)
+```
+
+Both lines came from the same script. The table iterates the `runs` dict;
+the sentence underneath held its own hand-typed list of group names, and
+the new group was in one and not the other. A summary that can contradict
+the table above it is worse than no summary — the table is skimmed, the
+sentence is quoted.
+
+Both the ablation loop and the "best solo group" line now derive their
+names from `runs` itself. Same fix, one more time, as §11/§13/§15: a
+number that looked like it described the model partly described which
+rows or names the code happened to be given.
+
+Also fixed while there: the noise-floor multiple printed `infx the floor`
+when every control came back exactly flat. There is no multiple of zero;
+it says so now.
+
+### 16.5 What went to the database, and what did not
+
+Nothing. `BREAKAGE_COLS` is unchanged, there is no migration, and Varad's
+contract ("do not add, rename or drop columns without telling me first")
+is untouched.
+
+One thing was added inside the existing `detail` JSON column:
+`deprecated_before: true`, and **only when true**. A key written on every
+row would be a claim on every row, and a `changes.csv` from before 16 Sep
+cannot tell "we looked and found nothing" apart from "we never looked".
+Writing it only when the answer is yes makes its absence mean nothing,
+which is honest for both files — and gives the site a sentence worth
+showing: *the maintainer marked this deprecated in the previous release.*
+
+### 16.6 The version of this feature I nearly shipped was half noise
+
+`was_deprecated()` originally matched one stem — `deprecat`, case
+insensitive — anywhere in the decorator text and anywhere in the
+docstring. The reasoning written next to it was that authors spell the
+word a dozen ways, so a stem is thorough rather than lazy.
+
+It is thorough. It is also answering a different question: *does this
+symbol mention deprecation*, when the feature needs *is this symbol
+deprecated*. Those are not close.
+
+**Decorators.** Surveyed across sqlalchemy, pydantic, numpy, django and
+pandas: 297 decorators contained the stem.
+
+| decorator | hits | what it means |
+|---|---:|---|
+| `@pytest.mark.filterwarnings("ignore::DeprecationWarning")` | 158 | a test *silencing* deprecation noise |
+| `@deprecate_nonkeyword_arguments` / `@deprecate_kwarg` / `@deprecate_posargs` | 47 | a calling convention is going, the function is not |
+| `@pytest.mark.parametrize(..., DeprecationWarning)` and friends | 16 | the stem is in an *argument* |
+| `@deprecated`, `@util.deprecated`, `@typing_extensions.deprecated` | 64 | the real thing |
+| `@util.deprecated_params` | 9 | a parameter, not the symbol |
+
+Roughly three noise hits for every real one, and the largest single
+category means close to the *opposite* of what the feature records.
+
+The fix is not a list of exceptions. It is reading the decorator's NAME —
+the part before the paren — instead of the whole call. `pytest.mark.
+filterwarnings` does not contain the word; only its argument did. All 158
+disappear without a rule that mentions pytest.
+
+**Docstrings.** Across 41,914 symbols in twelve packages the stem fired on
+symbols like these:
+
+| symbol | matching text | what it is |
+|---|---|---|
+| `sqlalchemy.exc.SADeprecationWarning` | "Issued for usage of deprecated APIs." | the warning class itself |
+| `click.core.Command` | ":param deprecated: ..." | documents a parameter *named* deprecated |
+| `numpy.linalg.qr` | "'economic' mode is deprecated" | a mode, not the function |
+| `boto3.compat.filter_python_deprecation_warnings` | the name and docstring both | machinery for handling deprecations |
+
+So `_DEPRECATED_DOC` matches declaration shapes instead: the Sphinx
+`.. deprecated::` directive, the reST `:deprecated:` field, a
+`Deprecated:` section header, an ALL-CAPS shout, MkDocs' `!!! warning
+"Deprecated"`, "deprecated since/in/as of", and plain self-scoped prose —
+"This class is deprecated" counts, "This parameter is deprecated" does
+not.
+
+**Result, measured over the same 41,914 symbols: 262 hits under the old
+rule, 147 under the new one. 44% of what the feature would have reported
+was noise.**
+
+Two smaller things, both mine:
+
+*The ALL-CAPS branch was not all-caps.* Written `^\s*DEPRECATED\b` under a
+pattern-wide `(?i)`, it matched any line merely beginning with the
+lowercase word — which a wrapped `:param:` description does the moment
+"deprecated" lands at the start of a continuation line. That is exactly
+the `click.core.Command` false positive, reproduced by a case-
+insensitivity I had added myself. `(?-i:DEPRECATED)` scopes the flag off
+for that branch alone.
+
+*The first fixture for the noise cases used `from .core import *`.*
+griffe records a star-import as a single pseudo-member named `pkg/core/*`,
+so the pair produced one row for the wildcard instead of one per symbol,
+and all six checks came back `None` rather than `False`. A test whose
+subject does not exist does not fail — it returns nothing, and `None`
+is not `False` only because `check()` compares exactly.
+
+None of this would have shown up in training. A feature that is 44% noise
+still correlates with the label, still reports gain, still survives an
+ablation. It would have gone into the report as "deprecation is the
+strongest signal we have", and roughly half of what it was reading would
+have been libraries talking about deprecation rather than doing it.
+
+`scripts/test_history.py` case 4 now pins every shape in the tables
+above, with one genuine `@deprecated` in the same fixture so the case
+cannot pass by the function simply returning False.
+
+### 16.7 What is still wrong, measured and left alone
+
+Two residuals, both known, both quantified rather than discovered later.
+
+**A directive that scopes to a parameter.** attrs writes
+`.. deprecated:: 24.1.0 *hash*` inside `define`'s docstring — the Sphinx
+directive is symbol-level everywhere else, and here it names a parameter.
+`attr._next_gen.define` and `attr._make.attrs` therefore read True while
+being perfectly current API.
+
+Measured across the same twelve packages: **3 of 147 flagged symbols, all
+three in attrs.** It is one library's house style, not a pattern. A regex
+branch for it would be tuning the extractor to one package's docstrings
+to move 2% of one column — so it is written down instead. If it ever
+matters, the rule is "a `.. deprecated::` directive followed immediately
+by an emphasised single identifier is about that identifier", and it
+would only ever turn True into False.
+
+**The feature is rare.** Across six packages at ten versions each — 158
+breakage rows — exactly **3 carried a prior deprecation marker**, all in
+attrs (`attr.validators.provides` and `attr._make.attrib`, plus the false
+positive above).
+
+That is worth saying before the model runs, because the project book
+calls `was_deprecated_before` "probably your single strongest feature"
+and a ~2% positive rate is not what a strongest feature usually looks
+like. Two readings, and the run will separate them:
+
+  - **It is rare but sharp.** When a maintainer does warn, the removal
+    really is less likely to break anyone, and LightGBM can split on a
+    2% feature if the split is clean.
+  - **It is rare and therefore weak.** A feature true on ~400 of 20,000
+    rows cannot move a ranking metric much no matter how right it is.
+
+Either way it should be reported as *what the data supports*, not as
+what the book predicted. The `HISTORY` ablation group exists to answer
+this with a number: "history only" against "popularity only" on the same
+fixed tree count.
+
+Also unchanged, and named in `was_deprecated`'s docstring: a bare
+`warnings.warn(..., DeprecationWarning)` in a function body with nothing
+in the docstring is not detected. That needs the function's source, not
+its signature. It is a false negative in every case, so the feature
+under-claims rather than over-claims — which, after §16.6, is the
+direction to be wrong in.
+
+## 17. The pipeline had permission to run the code it downloaded (Day 12)
+
+macOS raised **"Malicious Script Blocked — a script was blocked because
+it contains malware. This script did not harm your Mac"** during two
+consecutive ingests over the top 500. Both times it appeared while the
+same cluster of packages was in flight (`datasets`, `pypdf`, `sympy`,
+`transformers` and neighbours), and the first of those runs died at
+package 256 with no crash report and no jetsam event.
+
+The cause was one missing argument in this repo.
+
+### 17.1 What griffe does by default
+
+griffe reads a package two ways. **Static** analysis parses the `.py`
+files as text and never runs them. **Dynamic** analysis imports the
+module and inspects the live objects — and importing a module runs every
+line at its top level.
+
+`GriffeLoader.__init__` defaults `allow_inspection` to **True**.
+`load_all_modules` did not override it. So from the first ingest until
+16 Sep 2026, the pipeline had standing permission to import code it had
+downloaded from PyPI seconds earlier.
+
+`loader.py:600-606` is the whole decision:
+
+```python
+elif module_path.suffix in {".py", ".pyi"}:
+    module = self._visit_module(...)      # parse the text
+elif self.allow_inspection:
+    module = self._inspect_module(...)    # IMPORT the binary
+else:
+    raise LoadingError("Cannot load compiled module without inspection")
+```
+
+So the trigger is **a module whose file is not `.py` or `.pyi`** — a
+compiled extension. Reproduced on a fixture: a package containing
+`ext.cpython-311-darwin.so`, loaded with the default, calls
+`_inspect_module` on that path. That is a `dlopen` of a native binary
+extracted from a downloaded archive, which is exactly the shape of thing
+XProtect's behavioural monitor exists to stop.
+
+sdists are not supposed to contain binaries. They are tarballs, and
+plenty do: vendored libraries, prebuilt artifacts, test fixtures.
+
+### 17.2 Three wrong fixtures before the right one
+
+Worth recording, because the first three all "passed":
+
+| fixture | reaches the import fallback? |
+|---|---|
+| a package that parses cleanly | no — with the flag on or off |
+| a module body with a side effect | no — it parses, so it is never inspected |
+| a **SyntaxError** | no — griffe raises `LoadingError` instead |
+| a **compiled extension** | **yes** |
+
+The intuition "unparseable means it falls back to importing" is wrong on
+griffe 2.2.0, and a test built on it passes while proving nothing. The
+same trap as the star-import fixture in §16.6: a check whose subject does
+not exist does not fail, it returns nothing.
+
+`scripts/test_no_execution.py` therefore ends with a check that the test
+can fail — it runs the same fixture through griffe's own default and
+asserts that the import IS attempted. A guard that cannot be seen to fail
+is not a guard.
+
+### 17.3 What this cost, and what it did not
+
+No evidence anything was harmed. macOS said it blocked the script, and
+the machine kept working. But the honest statement is the one about
+permissions, not outcomes: **for four ingests the pipeline was allowed to
+execute third-party code, and whether it ever did is not something the
+data can now answer.** Absence of a crash is not absence of execution.
+
+The fix is one argument in two places, plus the standing rule that it is
+never removed "temporarily" to debug a package that will not load. The
+cost of turning it off is known and small: a compiled module produces no
+rows instead of inspected ones. A gap in coverage is a different category
+of thing from an executed binary, and no dataset is worth the trade.
+
+### 17.4 The diagnosis that was wrong three times first
+
+For the record, because the wrong answers were each stated with more
+confidence than they deserved:
+
+1. **"It's macOS scanning the extracted files."** Plausible, unverified.
+2. **"It's a memory kill."** Disproved by the user's own logs — no jetsam
+   event, no crash report. Asserted before checking.
+3. **"It's Brave's download protection, not macOS."** Wrong, and the
+   worst of the three: it told someone a security warning was not from
+   their operating system when it was. The screenshot settled it in one
+   glance — system alert styling, `?` help button, XProtect's exact
+   wording.
+
+Only the fourth attempt started from "read our own code and find out what
+it is permitted to do", which is where it should have started, because
+that is the one question we control the answer to. The user's machine
+was running the unfixed pipeline through all three wrong answers.
+
+## 18. "Malicious Script Blocked" was transformers' remote-code feature (Day 12)
+
+Every silent death of the top-500 run on the Mac — at package 256, then
+232, then again under `screen` — was macOS XProtect blocking what it calls
+`ScriptedMalware` and killing the process. The kill is a SIGKILL to the
+process group, which is why it left no Python traceback, no jetsam event
+and no crash report: the exact fingerprint we kept failing to explain.
+
+The false trails, recorded because each was stated with more confidence
+than it earned: a memory kill (disproved — no jetsam for python), Brave's
+downloader (wrong — the alert is macOS's own, `type=ScriptedMalware` in
+`syspolicyd`), and a bundled EICAR test file (a scan of ranks 225-275
+found none).
+
+### 18.1 Finding it: one package at a time
+
+`scripts/find_culprit.py` does what the parallel run cannot — processes
+the danger-zone packages **one at a time**, in rank order, writing the
+package name to disk *before* touching it. With no parallelism there is no
+ambiguity about which package was in flight when the kill lands.
+
+It died on **transformers (rank 225)**, every earlier package clean. The
+completion counters from the full runs (256, 232) were a red herring all
+along: transformers is huge and slow, so by the time a worker finished
+loading its 2,680-module tree and tripped XProtect, 200-plus smaller
+packages had already completed. Same trigger every time, different
+bystander count.
+
+### 18.2 What macOS actually objects to
+
+transformers 5.17.0's sdist has 2,714 files and **not one** carries a
+suspicious extension — no shell scripts, no binaries. The trigger is a
+`.py` file's *contents*: `src/transformers/dynamic_module_utils.py`,
+whose job is the `trust_remote_code` feature. Line 308:
+
+```python
+module_spec.loader.exec_module(module)
+```
+
+preceded by `get_cached_module_file` pulling a `.py` from the HuggingFace
+Hub into `HF_MODULES_CACHE`. Download remote code, then execute it — which
+is, byte for byte, the behaviour a malware heuristic exists to catch. It
+is not malware; it is one of the most-downloaded libraries on PyPI doing
+something it documents and warns about. XProtect cannot tell the
+difference from a static signature, and neither could any scanner.
+
+This is a hypothesis, not a proof — XProtect's rules are private and its
+detection cannot be reproduced off a Mac. But it is specific, it fits
+every observation (why transformers, why "scripted", why "did not harm
+your Mac", why the identical block each time), and it is a far better
+answer than "a false positive on the run's pattern".
+
+The irony worth stating: this project exists to read other people's code
+without running it, and it was killed by a library whose feature is to
+run other people's code. We were never in danger — `allow_inspection=False`
+(§17) and `ast.parse` mean we only ever read `dynamic_module_utils.py` as
+text. macOS flagged the file at rest, on write, not anything we did with it.
+
+### 18.3 The fix, and honest accounting
+
+`run_ingest.py` gains an `XPROTECT_BLOCKED = {"transformers"}` set. Blocked
+packages are excluded on macOS, **recorded as a `skipped` failure row**
+(never a silent gap), and marked done so a resume does not re-hit them.
+`BREAKRANK_NO_SKIP=1` disables the list — which is how Linux runs, where
+XProtect does not exist and transformers processes normally.
+
+So transformers is not lost. Its rows are backfilled from the Linux
+ingest (the cloud sandbox), where the same code reads the same file
+without a scanner in the way, and concatenated into the dataset. The
+skip is a macOS-only workaround, not a data decision, and the released
+dataset contains transformers exactly as if the Mac had never balked.
+
+## 19. The history features, measured (Day 13)
+
+Dataset: 17,802 rows, 250 packages, one code path (fixed griffe, history
+features, transformers skipped on macOS per §18). Strict label: 788
+positives (4.43%). Temporal split at 2026-04-13. All numbers below are
+from this run and are not comparable cut-by-cut to the frozen
+`dataset-20260916` — different rows, different floor (§11.2, §15.4).
+
+The model holds: PR-AUC 0.2375 (range 0.216–0.265 across 7 cut dates),
+**1.68× lift over popularity, beating it at 7 of 7 cuts** and beating
+the semver kill-date gate at 7 of 7. That is the robust claim.
+
+### 19.1 `was_deprecated_before` — the book's "single strongest feature" — is a dud
+
+*[Superseded 30 Sep by §26. Counted once per change on today's dev rows,
+under the label that ships, deprecated changes are used downstream MORE
+often: 10.2% against 4.5%, +5.8 points (+0.6 to +14.3). Under the strict
+label used here there is still no detectable difference, which says the
+sample is small, not that the effect is zero (F9).]*
+
+| | |
+|---|---|
+| rows where True | 199 of 17,802 (1.1%) |
+| gain share | **0.1%** — 15th of 18 features, above only `is_private` and the two zero-gain columns |
+| positive rate when True | 5.03% |
+| positive rate when False | 4.42% |
+
+That last pair is the finding. A deprecated-then-removed symbol is used
+downstream at the **same rate** as everything else — 5.0% against 4.4%,
+on 199 rows, is no difference at all. The book's intuition was that a
+maintainer's warning gives users time to migrate, so the removal breaks
+fewer people. In this data it does not show up. Either people do not
+act on deprecation warnings, or the ones who would have been broken
+migrated *and are still counted as users* because the usage index reads
+the latest version of downstream code (§4). Both are plausible; neither
+rescues the feature.
+
+It is not a broken reader. §16.6 tightened the matcher against 41,914
+symbols and it fires correctly on real deprecations (`attr.validators.
+provides`, urllib3's `format_header_param`). The feature works. The
+*signal* is not there.
+
+Reported as a negative result, which is worth more in a viva than a
+confirmation: the feature the book was most confident about was built,
+tested honestly, and found to contribute nothing. That is what testing a
+hypothesis looks like.
+
+### 19.2 `prior_breaks_in_module` — the one nobody bet on — works, and non-monotonically
+
+*[Superseded 30 Sep by §26. Per change, the rise is at 1–5 earlier
+breaks only, 1.65x the quiet modules (1.10–2.45); 6–20 shows no
+detectable rise; the collapse at 21+ holds, 1 of 494 changes used.]*
+
+Gain share 4.2%, 8th of 18. Modest, and real. The reason it earns a slot
+is the shape of it:
+
+| prior breaks in the module | positive rate | n |
+|---|---|---|
+| 0 | 3.38% | 10,162 |
+| 1–5 | 8.86% | 2,970 |
+| 6–20 | **10.13%** | 1,717 |
+| 21+ | **0.27%** | 2,953 |
+
+A first break in a quiet module is unremarkable. A break in a module
+that has been *moderately* churning is **three times** as likely to hit
+something people use — those are the actively-developed public
+surfaces. And a break in a module with 21+ prior breaks is almost never
+used by anyone: that is the giant-refactor signature, a library
+rewriting its internals on symbols nobody imports (the same population
+as the inherited-member repeats in §10.2 and `pandas.tests` in §4).
+
+That U-shape is exactly what a tree model can exploit and a linear one
+cannot, and it is a real property of how libraries evolve, not of how
+the label is built. *[Withdrawn 2 Oct (§29.2). Measured: a logistic
+regression on the same features gets 90% of the ranker's median lift,
+and the trees' edge over it fell short of the bar fixed in advance.]*
+
+### 19.3 What the model is actually made of
+
+| feature | share |
+|---|---|
+| is_version_string | 20.2% |
+| name_length | 14.4% |
+| package_churn | 14.3% |
+| module_depth | 10.2% |
+| package_rank | 10.0% |
+| kind | 8.0% |
+| release_size | 7.9% |
+| prior_breaks_in_module | 4.2% |
+| … | |
+| was_deprecated_before | 0.1% |
+| inherited_by, bump | 0.0% |
+
+Path shape and popularity, with the version-string flag on top. The
+history idea contributed one modest, interpretable feature and one
+null result.
+
+### 19.4 The ablation is unreadable below 12.2%, and it says so
+
+*[5 Oct: with the tuned model the floor is 9.7%, and one group clears
+it; §30.3.]*
+
+`ablate.py` reports a **noise floor of 12.2%**: removing `inherited_by`,
+a feature the model never split on, moved PR-AUC by 12.2%. Every
+per-group effect except two sits under that line, and the two that
+clear it (`no history` −14.6%, `no popularity` −13.5%) clear it by a
+hair. This is the `MIN_TREES = 20` clamp named in §15.3, still not
+fixed: at 20 trees the fit is unstable enough that the ablation cannot
+resolve anything smaller than a tenth of the score. The gain table and
+the positive-rate breakdowns above are the evidence; the ablation
+confirms only that history is not load-bearing.
+
+One line in it deserves a note rather than a headline: "path shape
+only" (3 features) scores 156% of the full model. Read with the noise
+floor in mind, that is a real signal that 18 features at 20 trees is
+over-featured for this dataset size, and a reason to revisit the tree
+count — not a reason to ship a three-feature model.
+
+## 20. The full top-500 ingest, and everything re-measured on it (Day 14)
+
+The sandbox fill finished: all 500 packages attempted, `done.txt` = 500.
+314 produced rows. **Correction (Day 15):** this section originally said
+the other 186 were "wheels-only, namespace or pure-data packages with no
+public Python API." That was an inference, never checked, and it is
+wrong. The true accounting, from `failures.csv` and `done.txt`:
+
+| outcome | packages | evidence |
+|---|---|---|
+| produced rows | 314 | `changes.csv` |
+| analysed, zero breaking changes in window | 27 | in `done.txt`, absent from both other files (certifi, mdurl, …) |
+| worker process killed (`BrokenProcessPool`) | 149 | all 149 `pipeline` failures; tracebacks in `ingest_fill.log`; memory pressure on the 2-core container — includes torch, transformers, reportlab; **retryable** |
+| no importable module (compiled-only / not Python) | 4 | `resolve_module` |
+| griffe error (numpy `CyclicAliasError` + 3 others) | 4 | `griffe`; numpy is NOT fixable by memory — needs a griffe workaround |
+| fewer than 2 source releases | 2 | `list_releases` |
+
+The 149 crashed packages are tail-biased (median download rank 426 vs
+172 for successes; none of the top-50), so head coverage is intact. The
+final dataset is **23,268 rows / 314 packages**, against 39,154 usage
+symbols — §19 was measured on 281 / 21,285, so every headline number
+was re-run rather than trusted.
+
+Pipeline, in order, on the complete `changes.csv`: `labels.py` →
+`build.py` (18 features, temporal split at 2026-06-13, 2,036 version
+pairs) → `baselines.py` → `train.py` → `stability.py --label label` →
+`ablate.py`. One trap worth recording: `train.py` prints a "across 6 cut
+dates" line by READING the previous `stability_label_cv.csv`, so run in
+this order it quoted the stale 281-set lift (1.45×). The number below is
+from the fresh stability run, which is the only honest source for it.
+
+### 20.1 The result got stronger, not weaker
+
+Medians across the 6 usable cut dates (q=0.85 skipped, 6 rankable pairs):
+
+| | 281 pkgs (§19) | 314 pkgs (full) |
+|---|---|---|
+| model PR-AUC | 0.206 | **0.236** (range 0.168–0.271) |
+| popularity | 0.145 | 0.135 |
+| semver gate | 0.083 | 0.058 |
+| floor (positive rate) | 0.045 | 0.048 |
+| lift vs popularity (median of per-cut ratios) | 1.45× | **1.78×** (1.16–1.97) |
+| beats popularity / semver | 6/6, 6/6 | **6/6, 6/6** |
+| precision@10 / nDCG@20 | — | 0.172 / 0.560 |
+
+The semver gate now sits barely above the random floor — the version
+bump is constant inside a release and cannot order anything, which is
+the project's thesis stated as a number. Overall positive rate over all
+rows is 3.69% (test-slice floor 4.8%; the two differ because the
+temporal split concentrates positives unevenly — both are reported,
+neither is "the" base rate without saying which).
+
+### 20.2 Both findings hold, and sharpen
+
+*[Superseded 30 Sep by §26, and the report and deck take §26.4's wording
+in place of this section's. Neither finding held as written here: the
+deprecation comparison ran the other way once version strings left the
+"rest", and the middle peak shrank to 1.65x at 1–5 once each change was
+counted once.]*
+
+`was_deprecated_before`: 278 / 23,268 rows carry the marker. Used
+downstream 3.60% when deprecated vs 3.69% when not — now marginally
+LOWER, i.e. zero signal. Gain share 0.1%, the lowest of every feature
+the model split on (`inherited_by` and `bump` are at 0.0% and were
+never split on, so "dead last of the real features" is the exact claim).
+
+`prior_breaks_in_module`: gain share **4.7% → 6.3%**, 7th of 18. The
+U-shape is unchanged in form: 0 → 2.58% (n=14,387), 1–5 → 8.21%
+(3,617), 6–20 → 8.69% (2,107), 21+ → 0.25% (3,157). Middle buckets are
+3.2–3.4× the quiet bucket. A feature that grows with the dataset while
+the rival shrinks to nothing is the cleanest version of §19's story.
+
+Gain table, full set: is_version_string 22.6, package_churn 17.1,
+module_depth 12.5, name_length 11.0, kind 8.0, package_rank 6.5,
+prior_breaks_in_module 6.3, release_size 6.1, public_depth 4.3,
+is_dunder 2.6, then the tail under 1%. module_depth and name_length
+swapped places vs §19; nothing else moved order.
+
+### 20.3 The ablation is still unreadable, and is not quoted
+
+*[5 Oct: with the tuned model the floor is 9.7%, and one group clears
+it; §30.3.]*
+
+Noise floor at the primary cut rose to **16.8%** (control: dropping
+`bump`, zero-gain, moved PR-AUC +16.8%). "path shape only" reports 116%
+of the full model. Same diagnosis as §19.4 and §15.3: 20 trees is too
+few for group ablation to resolve anything. The review deck, report and
+Q&A deliberately quote only the cross-cut medians and the gain shares,
+and the report's limitations now say so in one line so a panelist who
+runs `ablate.py` is not surprised.
+
+### 20.4 What changed in the deliverables
+
+Deck rebuilt to the supervisor's required outline (Title, Problem
+statement, Objectives, Introduction, Literature review, Methodology,
+Block diagram, Work done till date, Weekly plan), 15 slides. Literature
+slide cites Raemaekers et al. (Maven, 2014–17), Xavier et al. (SANER
+2017), Decan & Mens (IEEE TSE 2019) and griffe — all four verified
+against their publisher pages before being written in. Weekly plan no
+longer lists "finish the ingest" (done); week 4 became the label-variant
+experiment `labels.py` has been asking for since Day 3. Every number in
+deck, report and Q&A is now the §20.1–20.2 figure.
+
+## 21. Audit findings and the fix list (Day 15)
+
+Two audit passes over the code and data after the mid-semester review
+materials were built. Every number below was computed against
+`features.csv` / `labelled.csv` as they stand, and every experiment was
+run then reverted, so the artifacts in the repo are unchanged. The
+findings are ordered by how much they change a headline claim. Items
+marked **[better]** were tested and IMPROVE the result when fixed.
+
+### 21.1 Label validity — the deepest problems
+
+**F1. 45% of positives are `__version__` incrementing. [better]**
+*[Done 26 Sep, 0f7330f. The [better] did not replicate: measured alone
+on the frozen dev set it LOWERS the lift over popularity, median 3.22x →
+2.29x (§23.4).]*
+*[Narrowed 10 Oct at Varad's request: a changed value only, and the bare
+names only directly in a module (§33.1).]*
+1,760 of the 1,769 `is_version_string` rows are `ATTRIBUTE_CHANGED_VALUE`
+on `pkg.__version__` / `VERSION`. Downstream code references the
+constant, so usage > 0 and it is labelled positive — but a version
+constant changing value breaks nobody. Version strings: 21.65% positive;
+everything else: 2.21%. The model's top feature (22.6% gain) is
+detecting this artifact. Re-run with those rows dropped: 21,499 rows,
+476 positives, base rate 2.2%, PR-AUC median 0.177, **lift vs popularity
+1.78× → 2.88×**, still 6/6 on both gates. Popularity was propped up by
+version strings more than the model was.
+*Fix:* drop `is_version_string == 1` rows in `labels.py` (or `build.py`)
+before anything else; delete the feature. One filter line.
+
+**F2. "Impact" means "one of 1,500 packages imports it."**
+*[Done 30 Sep, by a rule fixed before the run (§25). Binary stays:
+graded relevance beat binary on its own target measure at 3 of 7 dates,
+and raised the worst-case lift by exactly the margin the rule calls a
+tie (§25.5). Kept as the option `--relevance graded`.]*
+`user_count` among the 859 positives: 55% have exactly 1 user, 68% have
+≤ 2, only 9 rows (1%) exceed 50. The median "high-impact" change has one
+user. Binarising at `user_count > 0` discards the ordering signal that
+LambdaRank natively consumes.
+*Fix:* graded relevance — pass `np.log1p(user_count)` (clipped to an
+integer grade 0–4) as the lambdarank label instead of 0/1. Keep the
+binary label for PR-AUC. This is the single biggest modelling change
+available and it is ~10 lines in `train.py`.
+
+**F3. The usage join is sparse and its failure rate is unmeasured.**
+*[Done 30 Sep, ahead of items 3–5: `label_alias` ships, by a rule fixed
+before the run (§24).]*
+Only 430 of 12,489 distinct changed symbols (3.4%) appear in the usage
+index at all. Some of that is genuine (internal symbols), but
+`ablate.py`'s own docstring warns the strict join fails on deep
+definition paths. `label_alias` finds 62% more positives (1,395 vs 859)
+and has never been evaluated.
+*Fix:* run `baselines.py`, `stability.py`, `train.py` with
+`--label label_alias`; compare lift over the SAME-label baseline (PR-AUC
+is not comparable across labels — floors differ). Ship whichever wins.
+
+**F4. Usage is a Sept-2026 snapshot applied to changes up to 14 years old.**
+17.3% of rows are > 2 years old; 4.8% > 5 years. Old rows have a HIGHER
+positive rate (5.9% at 5+ y vs 3.2% at < 1 y) — survivorship, not signal.
+*Fix (cheap):* restrict the ingest window to versions released within
+24 months of the usage scan, and state the snapshot date in the report's
+limitations. *Fix (proper):* scan usage at multiple historical dates —
+out of scope this semester.
+
+### 21.2 Feature leakage and the model
+
+**F5. `package_churn` leaks the future. [better]**
+*[Done 26 Sep, 0f7330f, with F1. Alone on the frozen dev set: median
+lift 3.22x → 3.09x, worst cut 2.82x → 3.01x, range narrower (§23.4).]*
+`build.py` computes it as `groupby("package").transform("size")` over
+the WHOLE frame before `temporal_split`. Single constant per package; a
+median 33% of it comes from releases after the cut. Not knowable at
+serving time. #2 feature at 17.1% gain. Re-run with a past-only count
+(`rank(method="min") - 1` over `released_at` within package): PR-AUC
+median 0.236 → 0.265, **lift 1.78× → 2.02×**, min lift across cuts
+1.16× → 1.73×.
+*Fix:* replace the transform with the past-only cumulative count in
+`add_features`. `release_size` is fine (within one pair — contemporaneous).
+
+**F6. `package_rank` is a package identifier.**
+314 distinct values for 314 packages. With `package_churn` constant per
+package, the model can memorise "package X has positives." Test-set
+split: PR-AUC **0.392 on packages seen in train vs 0.197 on unseen**
+(lift over floor 6.2× vs 5.0×). Mitigations already present: 70% of test
+rows are from unseen packages, and within-upgrade precision@10 is
+identical (0.192 vs 0.188) — the memorisation is entirely in
+cross-package ordering.
+*Fix:* report both regimes separately, always. For the product the
+"seen" regime is arguably the relevant one (new release of a known
+package); say so.
+
+**F7. Model complexity is set by a constant, not the data.**
+*[Done 2 Oct (§30.2), by a rule fixed before the run (§30.1): the
+setting and tree count are now chosen on the CV folds, each stopping on
+PR-AUC, no clamp. At the seven dates, median lift 5.20x against 4.08x,
+worst 2.20x against 2.30x; the shipped model sat on the clamp at 4 of
+7.]*
+CV folds chose [3, 10, 54, 6] trees; median 8; clamped to
+`MIN_TREES = 20`. This is why the ablation noise floor is 17% and why
+"path shape only" scores 116% of the full model. Nothing about the
+ensemble size is tuned.
+*Fix:* tune `n_estimators`, `num_leaves`, `learning_rate`,
+`min_child_samples` on the time-ordered validation slice; remove the
+clamp; re-run ablation and expect the noise floor to drop.
+
+**F8. "Trees exploit the U-shape a linear model can't" is asserted, not tested.**
+*[Done 2 Oct (§29.2). Trees on the same features were ahead of the line
+at 6 of 7 dates by a median 1.2499x, under the 1.25x fixed before the
+run, so the claim is withdrawn. The line alone beats popularity at
+every date, median 3.68x against the ranker's 4.08x.]*
+*Fix:* add a logistic-regression baseline in `baselines.py` on the same
+18 features. If it matches LightGBM, the claim goes; if not, it is now
+evidence.
+
+### 21.3 Statistical honesty
+
+**F9. Finding 1 (deprecation) is underpowered, not "no signal."**
+*[Done 30 Sep (§26). Under `label_alias` the difference is detectable
+and runs the other way: deprecated changes are used more often, +5.8
+points (+0.6 to +14.3), 215 changes. Under `label`, not detectable.]*
+278 deprecated rows, 10 positives. 95% CI on 3.60% is [1.4%, 5.8%]; the
+comparison 3.69% sits inside it. The data cannot distinguish "no effect"
+from a ±2-point effect either way.
+*Fix:* rewrite §19.1, the report, and the deck note as "no detectable
+effect at n = 278; the test cannot resolve effects smaller than ~2
+points." A larger deprecated sample (a wider version window) is the only
+way to actually answer the book's question.
+
+**F10. Finding 2's U-shape is mostly a version-string artifact.**
+*[Done 30 Sep (§26). Per change, the rise is at 1–5 earlier breaks only,
+1.65x (1.10–2.45); 6–20 shows none; the collapse at 21+ holds, 1 of 494
+changes used.]*
+With version strings: 2.58 → 8.21 → 8.69 → 0.25%. Without:
+2.30 → 3.92 → 2.76 → 0.03%. The middle peak ("3× more likely") largely
+evaporates; the feature keeps real gain (6.3% → 5.4%). What survives
+robustly is the collapse: modules with 21+ prior breaks are used
+downstream 0.03% of the time.
+*Fix:* restate the finding as "mass-refactor modules are effectively
+never used downstream," not "moderate churn triples risk." Re-measure
+after F1.
+
+**F11. No confidence intervals anywhere.**
+*[Done 1 Oct (§27). Every cut's lift interval clears 1.0x, the lowest at
+1.27x; the size of the lift is uncertain by a factor of 3 to 5 at each
+cut. The single split: PR-AUC 0.232 (0.186–0.331), 2.08x popularity
+(1.33–4.08).]*
+Every number in the deck and report is a point estimate on one cut or a
+median of six.
+*Fix:* bootstrap over version pairs (resample groups, not rows — see
+F12) for PR-AUC and lift; report 95% intervals. ~30 lines in
+`stability.py`. This would have caught F9 automatically.
+
+**F12. Row counts overstate the sample; rows are not independent.**
+*[Done 1 Oct (§27). Every script says its changes and upgrades beside
+its rows, and every interval resamples upgrades. Dev: 16,628 rows are
+9,946 changes in 977 upgrades; the single split's test, 1,955 rows, is
+1,511 changes in 191 upgrades.]*
+23,268 rows collapse to 15,139 distinct (pair, symbol) changes. 8,129
+rows are parameter-level entries sharing a symbol-level label (e.g.
+`redis.client.Redis.__init__` with 49 "moved" parameters → 49 rows, one
+label). 859 positive rows = 814 distinct positive changes. The 20,000-row
+target is met on rows, not on independent observations.
+*Fix:* state "15,139 distinct symbol-changes" alongside the row count;
+bootstrap by group (F11); consider collapsing parameter rows into their
+symbol row with a `n_param_changes` feature.
+
+**F13. No untouched holdout.**
+Every experiment — feature additions, ablations, stability, both
+findings — evaluated on the same test split. The headline is optimistic
+by an unknown amount.
+*Fix:* freeze the last cut (`released_at >= 2026-08-04`) NOW as a
+holdout; never evaluate on it until the final report; report it once.
+
+### 21.4 Metric reliability and the product
+
+**F14. The product-facing metrics stand on 96 of 2,036 upgrades (4.7%).**
+*[5 Oct, measured (§30.3): three package-level features, constant inside
+an upgrade, reach 78% of the tuned model's PR-AUC while ranking nothing
+inside one. Pooled PR-AUC is largely "which upgrades are risky". Item 11
+should lead with precision@10 and nDCG@20 beside it.]*
+precision@10 / nDCG@20 are (correctly) restricted to pairs with ≥ 1
+positive and > 10 rows. Per cut that is 12–38 groups; the latest cut's
+precision@10 is a mean over 12 upgrades. PR-AUC (the headline) is global
+across packages and does not match the product's within-upgrade question.
+*Fix:* report the group count next to every p@10 / nDCG; give intervals
+(F11); lead with within-upgrade metrics only where n ≥ 30 groups.
+
+**F15. For 95% of upgrades there is nothing to rank — and that is a product.**
+1,530 of 2,036 pairs have no positive; most of the rest have ≤ 10
+changes. The most valuable output for a typical upgrade is "no changed
+symbol in this release is imported by anyone in the top-1,500," which
+the pipeline can already assert.
+*Fix (Varad):* the live API should return an explicit `all_clear` state
+with the count of scanned downstream packages, before any ranking.
+*[Decided 9 Oct by Varad: the pipeline decides, his option (b), once F1
+is narrowed (§33.1). A release none of whose changes is imported is his,
+in the API, worded as that count and not as "all clear" (§33.1).]*
+
+### 21.5 Data quality
+
+**F16. `PARAMETER_MOVED` is 30% of the data at 0.32% positive, and 44% are echoes.**
+6,906 rows. 43.6% share a (pair, symbol) with an `OBJECT_REMOVED` /
+`PARAMETER_REMOVED` / `PARAMETER_ADDED_REQUIRED` row — griffe reporting
+the shift of every parameter after the one that actually changed.
+*Fix:* drop `PARAMETER_MOVED` rows that co-occur with a sibling
+removal/addition on the same symbol; keep the rest with a flag.
+
+**F17. 10.7% of rows involve a prerelease / dev / post version.**
+e.g. `opentelemetry-semantic-conventions 0.59b0 → 0.60b0`. Legitimate for
+beta-only packages; noise otherwise.
+*Fix:* add `is_prerelease_pair` as a flag; evaluate with and without.
+
+**F18. numpy is absent, and memory will not bring it back.**
+Failed with griffe `CyclicAliasError`, not `BrokenProcessPool`.
+*Fix:* reproduce on the numpy sdist alone; try `griffe` with
+`resolve_aliases=False` / a newer griffe; if unfixable, file it upstream
+and note numpy's absence explicitly in the report.
+
+**F19. The 149 `BrokenProcessPool` packages are retryable.**
+Tail-biased (median rank 426), so head coverage is intact, but 149 is
+149. *Fix:* re-run those packages only, `--workers 1`, on a machine with
+≥ 8 GB free, then re-run §20's pipeline.
+
+### 21.6 Reproducibility
+
+**F20. griffe is pinned with `>=`.**
+The dataset is a function of griffe's diff semantics; a 2.3 release could
+silently change what counts as a breaking change.
+*Fix:* `griffe==2.2.0` in `requirements.txt`; pin lightgbm and pandas
+likewise; commit a `pip freeze` as `requirements.lock`.
+
+**F21. `metrics.py` has no tests.**
+It is correct (read line by line: tie-breaking is seeded, the rankable
+filter is right, nDCG's ideal is computed properly) — but nothing proves
+it stays correct.
+*Fix:* `tests/test_metrics.py` with a 6-row hand-computed case for each
+of the three metrics, plus the constant-score case that bit before.
+
+### 21.6b Gaps against the project book (Day 15, after re-reading it)
+
+Compared the built system against the Project Book, ignoring dates.
+Kill-gate conditions (>= 20,000 rows; beat semver on PR-AUC) are both
+met, and the book's harder bar ("if you can't beat popularity you don't
+have a project") is met 6/6. All eight ML-side components exist. The
+project is AHEAD on ranking (Phase 4) and rolling evaluation (Phase 5).
+What the book asked for that was never built:
+
+**F22. `symbol_age_in_releases` — the third "clever" history feature.**
+Book §4.6: "old, stable symbols have accumulated more users." Never
+built. F4 found old rows have a HIGHER positive rate, which is exactly
+this signal. Likely the strongest feature not yet in the model.
+*Fix:* count releases (in the same chain) in which the symbol existed
+before the current pair; past-only, from griffe, no leak.
+
+**F23. Changelog text features — Phase 3 week 5, component 6.**
+Book §4.6: TF-IDF over the changelog line for a change ("BREAKING" is
+rare and informative), sentence embeddings later. None exist. The
+largest single scheduled item that was skipped.
+*Fix:* fetch CHANGELOG / GitHub release notes per version_to; match a
+line to a symbol by name; TF-IDF (start) → all-MiniLM-L6-v2 (later).
+
+**F24. `days_since_prev_release` — in the book's feature list.** Never
+built. Cheap: diff of consecutive `released_at` within package.
+
+**F25. The classifier → ranker comparison was never made.**
+Book §4.7 sequences LGBMClassifier (weeks 3–6) THEN LGBMRanker (7–8)
+and says compare them. `train.py --objective binary` exists; no
+recorded comparison. *Fix:* run it once, record in NOTES; ship whichever
+wins on nDCG@20. *[Found 2 Oct: it could not have been made. The binary
+objective was scored by its 0/1 class labels, not its probabilities, so
+every classifier number since 5 Sep was wrong; fixed in
+`train.score_with` (§29.1). Item 7's sweep prints the classifier beside
+the ranker at seven dates; the shipping decision stays item 15's.
+Measured 2 Oct (§29.2), for the record: classifier median lift over
+popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
+
+**F26. "One story of a real release it got right" — 30 Oct DoD.**
+*[Done 9 Oct (§31.2): cryptography 46.0.7 -> 47.0.0, the model's top 10
+holding 5 of its 7 used changes against 2.3 by chance. Its #1 is a
+copyright notice: F39. After F39 (§32.3) the rule picks it again, and
+its list starts with x509's RevokedCertificate. After F1's narrowing
+(§33.3) the rule picks redis 7.3.0 -> 7.3.1, and cryptography's
+PBKDF2HMAC becomes the failure.]*
+Not produced. One hour with `features.csv` + the model's scores.
+
+**F27. Provenance error, corrected Day 15:** the deck/report/study
+guide called `prior_breaks_in_module` "added on a hunch / the feature
+nobody bet on." The book lists it explicitly as
+`previous_breakages_in_this_module`, beside `was_deprecated_before`.
+Corrected everywhere to: the book named three history features and bet
+on the wrong one.
+
+**F28. Frontend is a placeholder skeleton (verified live, Day 15).**
+`break-rank.vercel.app` loads over HTTPS with the BreakRank heading, but
+the tab title is the Next.js default "Create Next App", the only metric
+reads "187 changes analysed this week (placeholder)" — 187 being the
+book's own example number — and it hangs on "checking API…". No
+requirements.txt upload, no ranked list, no navigation. Below the book's
+week-4 DoD ("plain HTML page showing the data"), well short of week 6
+("real data from the database") and week 8 ("paste requirements.txt,
+get an ordered list"). Owner: Varad.
+*Fix:* set the title; replace the placeholder with a live count from
+Neon (moves it to week-4 DoD in an hour); then the upload → rank flow.
+
+**F29. API is on Render's free tier — the book's warning §3.6 #2, verbatim.**
+`breakrank.onrender.com` is a real FastAPI service (`/health` → 200,
+`/docs` serves Swagger) but measured cold start was **32.1 s**; the book
+says 30–60 s and "do not use Render's free web service for the model."
+Database is on Neon (correct — avoids warning #1). Owner: Varad.
+*Fix:* move the API to Hugging Face Spaces (Docker SDK, port 7860) per
+book Part 8, or at minimum add the 6-hourly GitHub Actions keep-alive
+ping. Until then: warm `/health` two minutes before any demo.
+*[9 Oct (Varad): Hugging Face's Docker Spaces are now paid, so the API
+stays on Render, with a free uptime monitor calling /health every 10
+minutes.]*
+
+**Direction summary after verifying the web half:** ML track at book
+Phase 4–5; web track at Phase 1–2 with a working but sleeping API. The
+book's second gate ("if the site is not live and working, stop adding
+features") applies to the web half now.
+
+**Previously not assessable from the ML side:** the book's Phase 3 / second gate
+("if the site is not live, stop adding features") and week-6 DoD (a
+public HTTPS link showing real data). Owner: Varad. This is the largest
+open direction risk if it is not met.
+
+### 21.7 What the audits cleared (do not "fix" these)
+
+- Duplicates: a first check without `sub_target` in the key showed 7,221;
+  with it, **1** redundant row. Not a problem.
+- Sampling bias of the crashes runs the RIGHT way (tail, not head).
+- `released_at` is complete (0 missing) and is the correct boundary date.
+- `release_size` is contemporaneous — not a leak.
+- The model generalises to unseen packages at 5× floor. It is not
+  memorising everything.
+- `metrics.py` is correct.
+
+### 21.8 Order of work
+
+The eight-week plan in the deck should be replaced by this, in order.
+Each of the first four both fixes a defect AND raises the headline.
+
+1. F13 — freeze the holdout. Ten minutes; must precede everything else.
+   **Done.** Frozen 25 Sep at 2026-08-04 (commit 7543448); the start moved
+   to **2026-07-28** on 26 Sep (2487eb7), by a counts-only rule committed
+   before it was run (c4f4a50). What is sealed, why it moved, and the
+   post-freeze starting point: §22.
+2. F1 + F5 — drop version strings, leak-free churn. Re-run §20. [better ×2]
+   **Done 26 Sep, 0f7330f; §23.** At fixed dates the lift over
+   popularity FELL (median 3.22x → 2.38x), all of it F1's doing; F5 alone
+   is close to neutral. The [better ×2] did not replicate.
+3. F2 — graded relevance. Re-run.
+   **Done 30 Sep; binary stays (§25.5).** Judged by a rule pushed
+   before the run: graded won nDCG@20 with graded gains at 3 of 7
+   dates, and its worst case rose by exactly the 0.25x tie margin.
+4. F9 + F10 — rewrite both findings honestly against the new numbers.
+   **Measured 30 Sep under rules fixed before the run (§26).**
+   Deprecation turned round under `label_alias`; the U-shape comes down
+   to a small rise at 1–5 and the collapse at 21+. The report and deck
+   wording is §26.4.
+5. F11 + F12 — bootstrap by group; report intervals and the 15,139 count.
+   **Done 1 Oct (§27).** Beats popularity by more than its interval at
+   7/7 cuts; the lift's size is uncertain by a factor of 3 to 5. The
+   report and deck wording is §27.3.
+6. F3 — evaluate the alias label; pick one.
+   **Done 30 Sep, moved ahead of items 3–5; §24.** `label_alias`
+   ships: worst-case lift 2.30x against `label`'s 1.91x.
+7. F7 + F8 — tune the ensemble; add the linear baseline.
+   **F8 done 2 Oct (§29.2): the trees missed the margin fixed in
+   advance by 0.0001, and the U-shape claim is withdrawn; the line is
+   now the strongest baseline. F7 done 2 Oct (§30.2): tuned ships,
+   median lift 5.20x against 4.08x; its single split, sweep and
+   ablation are §30.3.**
+8. F16 + F17 — collapse echoes, flag prereleases; re-run.
+9. F19 + F18 — retry the 149; chase numpy.
+10. F20 + F21 — pin deps; test the metrics.
+11. F6 + F14 — reporting: two regimes, group counts everywhere.
+12. F15 — hand the `all_clear` state to Varad's API. Then integrate.
+   **Decided 9 Oct: the pipeline decides, after F1 is narrowed (§33).**
+13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
+14. F23 — changelog TF-IDF. The book's biggest skipped item.
+15. F25 + F26 — the classifier comparison; one real-release story.
+   *[10 Oct: F25 is now which model ships, if any, against path length
+   alone, which the model did not beat (§34.2). Next, with its own rule.]*
+16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
+
+Items 1–5 are about a week and turn the project from "good student
+work" into something that survives a hostile reader.
+
+Added 25 Sep, for the items in §21.9: F35 now; F30, F31 and F33 before
+the next database load (done: loaded 25 Sep, see the end of §21.9); F32
+with item 12; F34 with item 9; F37 with item 10; F36 to Varad alongside
+item 16.
+
+Added 26 Sep: F38 (§22.5) before item 2, so that item 2 is judged on a
+sweep whose cut points are distinct measurements. **Done 26 Sep,
+deba775; §22.6.**
+
+Added 9 Oct: F39 (§31.2), module metadata ranked as breaking changes,
+before the 30 Oct demo: it puts a copyright notice at the top of the
+demo story's release. Its rule, fixed before the count: §32.1.
+**Done 9 Oct (§32.3).** Found on the way, the same day: F40 (§32.3), a
+cut date's lift can hinge on one release; with item 11.
+
+Added 10 Oct: F1 narrowed at Varad's request (§33.1), before item 12's
+database steps; F41, the path-length baseline (§34), in the same retrain;
+F42, ties in PR-AUC (§35), measured in it, and the report moved to ties
+averaged after it. **Retrained 10 Oct (§33.3).** F41's verdict (§34.2):
+no difference the rule can see from path length alone, on either
+measure, so item 15 (F25) moves up, with a rule of its own before
+anything is fitted. F42 measured (§35.1): the lift over popularity rises
+a little, median 4.44x to 4.73x. Found the same day: F43 (§33.3), a
+retrain that changes a few rows moves a date's lift by up to 1.31x; with
+item 15.
+
+### 21.9 Found 25 Sep: what reaches the database, and which branch is real
+
+A code review of `main` on 25 Sep, checked line by line against
+`ml/db-writer` and against Neon. F30 and F31 were measured on the live
+database the same day, and both were reproduced on a scratch Postgres
+built from migrations 001–006 before anything was changed: same symptoms,
+exactly.
+
+**F30. The loader never loaded release statuses. [fixed 25 Sep, 8a50a2c]**
+Neon, 25 Sep: all 2,236 releases read `analysed`, n_changes 0. §14 built
+`releases.csv` for exactly this, and nothing loaded it. A release that
+changed nothing either said "analysed, 0 changes" or was not in the
+database at all, so the newest release, if clean, answered 404
+`not_tracked`. The loader now writes analysis_status and n_changes: from
+changes.csv for every release with changes, and from releases.csv only
+for packages where the two files agree exactly (same analysed releases,
+same counts). Nothing is ever written as `analysed_clean` by guesswork.
+`pre_release` and `dev_release` have no database value and are skipped;
+the allowed values are read from the database's own CHECK constraint, so
+a schema without migration 006 does not abort the load.
+
+**F31. A re-load only refreshed `detail`. [fixed 25 Sep, 8a50a2c]**
+Neon: **18** breakage rows with inherited_by > 0; changes.csv: **647**.
+Every column computed after a row's first load kept its first value,
+inherited_by above all: the fold (§10) came after the 6 Sep load, and
+migration 005 set every existing row to 0. A re-load now refreshes every
+column the loader writes.
+
+**F32. releases.csv and packages.csv come from one ingest run;
+changes.csv from two.** releases.csv marks **939** releases `analysed`;
+changes.csv has changes in **2,036** upgrades (§20), and there is exactly
+one analysed release per upgrade with changes. The dry run of 25 Sep put
+numbers on it. releases.csv agrees with changes.csv on **183** packages
+(146 with changes, 37 that changed nothing), disagrees on **4** (boto3,
+botocore, filelock, idna, each one release apart: the window moved
+between runs), and has no rows at all for **164** of the 314 packages
+with changes. packages.csv lists **187** packages, very likely the same
+run.
+
+The packages.csv half was the dangerous one. The loader built the package
+table from packages.csv alone and writes releases and breakages only for
+packages in that table, so the load would have written **10,006 of
+23,268** breakage rows, silently. **Fixed 25 Sep:** every package in
+changes.csv gets a row, and the loader says how many came from
+changes.csv alone. Reproduced on the scratch Postgres first: the old
+loader dropped the unlisted packages' rows, the new one wrote them all.
+
+Still open: the statuses of the 164 packages' releases that changed
+nothing. Only the other run's releases.csv can supply them. A fresh
+ingest cannot, because the six-release window has moved since (§15.4)
+and its releases.csv would disagree with the frozen changes.csv. Until
+then those releases get `analysed` and a count where they changed
+something. The **232** releases whose status nothing can establish get
+no status from the loader, so they keep what the database has, and for
+a new row that is the column's default: `analysed`, 0 changes. That is
+the one place the site can still say "no changes" about a release nobody
+compared. An `unknown` status value would end it; that is a migration,
+and migrations are Varad's.
+
+**F33. The API's sentences read `detail` keys the loader never wrote.
+[fixed 25 Sep]** The changed-default sentence needs `old_value` and
+`new_value`; the deprecation sentence needs `was_deprecated_in`. Neither
+was written, so both fell back to "X changed in this release." and the
+deprecation line never appeared. The values were already inside griffe's
+message: `Parameter default was changed: ', ' -> ' -> '`. A default can
+contain " -> " itself (that one is `sep=" -> "`), so every split point is
+tried and kept only if both sides parse as Python expressions; exactly
+one must survive, or nothing is claimed. `was_deprecated_in` is
+version_from, the release that already carried the marker. The
+deprecation itself may be older, so the accurate wording on the API side
+is "already marked deprecated in". Checked end to end: loaded into the
+scratch Postgres and rendered with the API's own `render()`. The
+removed-base sentence was never broken: the API fills `base` from the
+sub_target column.
+
+**F34. run_usage.py's `ScanTimeout` subclasses `Exception`.** The retry
+wrappers in download.py catch it and retry with the alarm already spent.
+That is §2.8's bug, fixed in run_ingest.py with a `BaseException`
+subclass and never carried over to the usage scan. Fix with item 9
+(F19), which also needs failed packages to stop being marked done (§9.6).
+
+**F35. `main` and `ml/db-writer` have diverged.** main's ML code stops at
+6 Sep (merge base af0c059). Every commit since (the fold, the alias
+label, CV stopping, stability, the history features, releases.csv, the
+holdout freeze, these loader fixes) exists only on ml/db-writer, which
+lacks Varad's API, migrations 005–006, tests and CI. The two branches
+touch no file in common, and a trial merge on 25 Sep was clean. Anyone
+reading main, a reviewer included, reads 6 Sep ML code. Fix: a pull
+request from ml/db-writer into main. *[Re-checked 2 Oct: still a clean
+merge; §28.6. Again 9 Oct, at 941ae8c: 52 commits and 47 files, none
+under api/, web/, db/, tests/ or .github/, and still clean.]*
+
+**F36. API, CI and web gaps (owner Varad).** Checked on main, 25 Sep:
+- only 1 of the 4 contract endpoints exists; `POST /analyze`, which the
+  25 Oct milestone needs, is missing;
+- errors come back as `{"detail": ...}`; the contract says
+  `{"error": {"code", "message"}}`;
+- api/db.py and db/engine.py pass DATABASE_URL through unchanged
+  (ml/db.py rewrites it to `+psycopg`), so the API works only while the
+  Render secret already names the driver;
+- a mistyped MODEL_VERSION silently falls back to usage ordering;
+- "1 package in the ecosystem call it";
+- CI runs the tests against the live database, and they depend on the
+  fixture rows decisions.md plans to delete before the demo;
+- pytest and its dependencies ship in api/requirements.txt;
+- an unset NEXT_PUBLIC_API_URL shows up as "no record of X";
+- README (duplicate heading, YOURUSERNAME, the Dockerfile's location),
+  .env.example, the [date] placeholders and decision 7 against contract
+  decision 11 in decisions.md, stale docs, CORS `*`.
+
+**F37. Housekeeping.** A duplicate dict key in scripts/explore.py (line
+54); unused imports in run_usage.py and stability.py; ml/contract.py
+points at a renamed doc and a merged branch; ml/train and ml/eval are
+empty. With item 10.
+
+**F14 and F25, sharpened.** LambdaRank learns the order of changes inside
+one upgrade and is never trained to compare scores across upgrades.
+Pooled PR-AUC grades exactly that comparison, which makes the F25
+classifier comparison matter more. No code change.
+
+**The load, 25 Sep.** With F30, F31, F33 and the packages half of F32
+fixed, the dry run predicted the package, release and breakage counts,
+and the load and a query of Neon afterwards confirmed them:
+
+| | before | after |
+|---|---|---|
+| breakage rows with inherited_by > 0 | 18 | **662** (the 647 in changes.csv, 15 from earlier loads) |
+| release statuses | `analysed` on all 2,236 | analysed 2,915 · analysed_clean 636 · no_baseline 178 · analysis_failed 61 · yanked 37 · no_source 24 |
+| packages written | 187 (first dry run) | 351 |
+| breakage rows written | 10,006 (first dry run) | 23,267 |
+
+The five statuses other than `analysed` match the dry run exactly.
+`analysed` is 2,036 releases with changes, 232 of unknown status (F32),
+and 647 releases from earlier loads that this one did not touch.
+
+The breakage table now holds **27,900** rows: 23,267 from this load and
+4,633 from earlier ones (packages this dataset does not cover, and rows
+a re-analysis would no longer produce). Sorting the superseded from the
+aged-out is what scripts/db_prune.py does (§13); not run yet. No
+predictions were written, so a change loaded for the first time has no
+model score until the next `--scores` load, after item 2's retrain.
+
+## 22. The holdout, sealed, and moved once before anything used it (25–26 Sep)
+
+Item 1 of the fix list (F13). This section records what is sealed, why
+its start moved a week earlier the day after the freeze, a counting bug
+the first post-freeze run exposed, and the numbers every later fix is
+measured against. Everything here is a count or a dev-only score: no
+model has been scored on the holdout, and data/holdout_ledger.csv does
+not exist.
+
+### 22.1 What is sealed
+
+| | |
+|---|---|
+| rule | a version pair is holdout if its version_to was released on or after **2026-07-28** (`ml/holdout.py`) |
+| frozen | 25 Sep at 2026-08-04 (7543448); start moved 26 Sep (2487eb7) |
+| size | **5,240 rows · 351 upgrades · 119 packages**, released 28 Jul – 19 Sep |
+| fingerprint | **21f308721057** (the 25 Sep set was 3726748b8073) |
+| pair list | data/holdout_manifest.csv, 351 pairs; the 25 Sep list is kept as data/holdout_manifest-20260925.csv |
+| dev | 18,028 rows · 1,685 upgrades in features.csv |
+| time order | 10 upgrades diff a release against one published after it; 1 crosses the start (a backport; KNOWN CROSSINGS in ml/holdout.py) |
+
+Can it be measured at the end? The gates are the ones every stability
+cut must pass: 30+ positives, and 10+ upgrades rankable at 10 and at 20.
+Counted as built, and after the two fixes on the list that delete rows
+(F1, item 2; F16, item 8), by `scripts/holdout_boundary.py`:
+
+| label | as built | after F1 + F16 |
+|---|---|---|
+| `label` | 228 / 18 / 12 | 140 / 14 / 10 |
+| `label_scoped` | 347 / 28 / 18 | 206 / 22 / 15 |
+| `label_alias` | 406 / 25 / 16 | 263 / 18 / 13 |
+
+(positives / rankable at 10 / rankable at 20.) Every label clears every
+gate before and after, `label` exactly on the line at 20.
+
+### 22.2 Why the start moved from 4 Aug to 28 Jul
+
+The first build after the freeze sealed 4,671 rows (306 upgrades, 109
+packages) and printed `label` as NOT FULLY MEASURABLE: its nDCG@20 would
+average 8 upgrades. F1, next on the list, makes that worse. Counted after
+F1 at the 4 Aug start:
+
+- `label` falls from **110 positives to 38**. 72 of its 110 holdout
+  positives are version strings: 65%, against 45% across the dataset
+  (F1).
+- **137 of the 306 upgrades** were nothing but a version bump, and vanish.
+
+The start could still move: no model had been scored on the holdout and
+no fix had run. Later, any move would be a choice made with results in
+view. So the rule was written first and committed (c4f4a50) before the
+script that applies it was run:
+
+> Move the start back only as far as it takes for every label to clear
+> every gate, counted after F1 and F16, and never so far that the holdout
+> holds more than 30% of the rows. A label that cannot clear them within
+> that limit does not move the start; its short metrics are reported
+> with their n, flagged.
+
+Every label, because item 6 has not yet picked one, and a rule written
+for one label would lean the exam toward it. After F1 and F16, because
+they are the only fixes that delete rows and both land after the freeze.
+30%, because dev must keep enough rows for the rest of the fix list; the
+usual share for a test set is 20–30%.
+
+The answer was **2026-07-28**, the latest start at which `label` clears
+every gate (140 / 14 / 10). `label_scoped` and `label_alias` already
+cleared them at 4 Aug. After F1 and F16 the holdout is 3,968 rows, 21.5%.
+Run again under the new start, the script answers KEEP.
+
+**One week carries much of the holdout's positives.** Moving the start
+seven days added 45 upgrades and 569 rows as built, and **118 of
+`label`'s 228 holdout positives** (after F1: 102 of 140; `label_scoped`
+112 of 206; `label_alias` 114 of 263). The final PR-AUC under `label`
+will lean on that week. precision@10 and nDCG@20 will lean on it much
+less, because each upgrade counts once.
+
+### 22.3 The first post-freeze sweep counted one split twice
+
+`stability.py` places its seven cut points at quantiles of **rows**. A
+release is many rows with one date, so when a single day holds more rows
+than lie between two cut points, both land on it and produce the same
+split, row for row: the same train half, test half, model and numbers.
+In the first post-freeze sweep (4 Aug start), q=0.75 and q=0.80 both cut
+at 5 Apr with the same 2,902 test rows. It printed "beats popularity at
+7/7, median lift 2.01x" after measuring six splits: 6/6, median 2.04x.
+The same line reached metrics.json.
+
+Fixed in 5d0c1dc. A repeat is detected on the rows themselves, not on
+the printed date (two cut points can differ in time of day and select
+the same rows), kept in the stability file as a skipped row naming the
+split it repeats, and counted by nothing downstream: not the report, not
+train.py's notes, not the label-vs-label table. `scripts/test_stability.py`
+pins it without fitting a model, and was broken five ways to watch it
+fail: no check at all, a check on the printed date, a check on test size
+rounded to ten rows, the repeat not marked skipped, and the header
+counting every row.
+
+At the new start the collisions are worse, and that is the data, not the
+code: **7 cut points give 4 distinct splits.** 5 Apr holds **2,296** dev
+rows (12.7%) and absorbs q=0.75, 0.80 and 0.85; 21 Jan holds **1,313**
+(7.3%) and absorbs q=0.55 and 0.60. Of the four splits left, 23 Feb and
+27 Feb differ by 58 test rows. See F38.
+
+### 22.4 The starting point for the fix list
+
+Dev rows only, `label`, 18 features, CV stopping. This is the "before"
+that item 2 is measured against.
+
+Single split at 5 Apr (train 15,695 rows, 2.99% positive; test 2,333,
+6.94%):
+
+| | PR-AUC | precision@10 (18 upgrades) | nDCG@20 (11 upgrades) |
+|---|---|---|---|
+| **model** | **0.304** | **0.139** | **0.610** |
+| kind_prior (best baseline) | 0.131 | 0.111 | 0.222 |
+| popularity | 0.128 | 0.083 | 0.093 |
+| floor (positive rate) | 0.069 | | |
+| semver (kill-date gate) | 0.056 | 0.083 | 0.093 |
+
+2.3x the best baseline, 2.4x popularity, 4.4x the floor. Semver sits
+**below the floor**: the order it imposes (major, minor, patch) runs
+against the data in this window, because the releases it ranks first
+hold proportionally fewer used changes.
+
+Across the sweep's 4 distinct splits: lift over popularity **median
+2.71x (2.37–2.98x)**, beats popularity 4/4 and semver 4/4, PR-AUC median
+0.271 (0.259–0.304).
+
+The model: CV folds chose [79, 36, 1, 2] trees, so its 20 trees are the
+MIN_TREES clamp, not a choice (F7). is_version_string is 19.4% of gain
+and package_churn 14.9%, the two things item 2 removes;
+was_deprecated_before and bump have zero gain.
+
+**This is not progress on §20.** It is the same model as the first
+post-freeze run: the same 15,695 training rows, the same trees, the same
+gain table to the decimal. Only the test half changed, when the week of
+28 Jul left it. That one week, 569 rows holding 118 of the old test
+half's 280 positives, moved every number:
+
+| split | test rows | popularity PR-AUC | model PR-AUC | lift over popularity |
+|---|---|---|---|---|
+| 21 Jan, with the week → without | 7,734 → 7,165 | 0.124 → 0.095 | 0.291 → 0.259 | 2.34x → 2.73x |
+| 23 Feb | 6,024 → 5,455 | 0.132 → 0.101 | 0.288 → 0.270 | 2.19x → 2.68x |
+| 5 Apr | 2,902 → 2,333 | 0.158 → 0.128 | 0.317 → 0.304 | 2.01x → 2.37x |
+
+Popularity did unusually well that week at every cut, so lift rose by
+0.36–0.49x the moment the week left, and the best single-split baseline
+flipped from popularity (0.158) to kind_prior (0.131). That week is now
+in the holdout. Its scores were seen once, in a dev run with the pre-fix
+model, before the move; it is recorded here so the report can say so,
+and so that nothing is ever tuned toward it.
+
+### 22.5 Still open from this section
+
+**F38. The sweep's cut points follow rows, so the biggest release days
+swallow them. [done 26 Sep, deba775; §22.6]** Two days hold a fifth of dev (§22.3), and seven cut
+points measure about three windows. Which points collide also moves
+whenever the row count does: it changed when 569 rows left dev. *Fix
+(proposed):* place cut points at quantiles of upgrades, one date per
+version pair, instead of rows, so a 2,296-row release counts once when
+choosing where to cut. Decide on that reasoning before running it,
+re-run §22.4 with it, and judge item 2 on the same sweep. Until then,
+say "4 distinct splits", never "7 cut dates".
+
+Also: the header of this file still describes the 14 Sep dataset; §20
+and §22 are current. `artifacts/ranker.txt` is the §22.4 model, committed
+with this section. metrics.json stays local, and nothing new was loaded
+into Neon.
+
+### 22.6 F38 done: the sweep on upgrades, and the starting point for item 2
+
+deba775. The same dev rows, the same model code and the same gates; only
+where the seven cut points fall changed. They are now quantiles of
+upgrades (one date per version pair), and `scripts/test_stability.py`
+case 4 pins the difference: one 600-row release among 200 small ones
+takes all seven cut points over rows and one vote over upgrades.
+
+| cut | test rows | floor | trees | rankable at 10 | PR-AUC | popularity | lift |
+|---|---|---|---|---|---|---|---|
+| 2025-09-29 | 11,006 | 0.028 | 20 | 35 | 0.199 | 0.062 | 3.22x |
+| 2025-11-28 | 10,649 | 0.026 | 20 | 33 | 0.192 | 0.059 | 3.24x |
+| 2026-01-13 | 8,642 | 0.029 | 23 | 28 | 0.257 | 0.062 | 4.18x |
+| 2026-02-27 | 5,397 | 0.038 | 20 | 21 | 0.272 | 0.091 | 2.98x |
+| 2026-03-29 | 4,994 | 0.034 | 32 | 20 | 0.334 | 0.110 | 3.05x |
+| 2026-04-24 | 2,105 | 0.062 | 20 | 17 | 0.356 | 0.108 | 3.31x |
+| 2026-05-18 | 1,576 | 0.072 | 37 | 13 | 0.325 | 0.115 | 2.82x |
+
+- **7 distinct splits**, where the same seven quantiles over rows gave 4.
+  None was skipped; the latest still has 13 rankable upgrades.
+- The cut dates now run 29 Sep 2025 – 18 May 2026 (over rows: 21 Jan –
+  5 Apr 2026). Older releases are smaller, so the early cuts are early in
+  time and train on only 39% of the rows (7,022 at 29 Sep); the latest
+  tests on 9%.
+- Lift over popularity **median 3.22x (2.82–4.18x)**, beats popularity
+  7/7 and semver 7/7. PR-AUC median 0.272 (0.192–0.356).
+- The script warns that the PR-AUC spread exceeds half the median. That
+  spread is mostly the floor moving, 0.026 to 0.072 (2.7x) across the
+  cuts; lift is the number that compares across them.
+
+**3.22x against §22.4's 2.71x is not an improvement.** The same model
+code on the same rows, measured over different windows: seven instead of
+four, five of them earlier than any cut before. Neither number is quoted
+against the other.
+
+**The starting point for item 2**, the numbers item 2 is judged against:
+the sweep above (7/7, median lift 3.22x, 2.82–4.18x), and the single
+split at 5 Apr, unchanged because `build.py` makes it, not the sweep:
+PR-AUC 0.304, 2.3x kind_prior, precision@10 0.139 over 18 upgrades,
+nDCG@20 0.610 over 11.
+
+**For F7, found on the way.** `cv_tree_count` places its four validation
+windows at row quantiles inside train (0.40, 0.55, 0.70, 0.85, 1.00).
+At the 5 Apr split, the newest window (the top 15% of train, about 2,355
+rows) is about 97% the 2,296 rows dated 5 Apr, and chose 2 trees; the
+0.55–0.70 window is about 56% the 1,313 rows dated 21 Jan, and chose 36;
+the window that chose 1 tree has no such day in it. So one crowded day is
+at most part of why the folds disagree ([79, 36, 1, 2]), not the whole
+of it. Spacing the folds by upgrades is F38's fix applied to F7, and it
+waits for item 7, because it changes every model's tree count.
+
+## 23. Item 2: version strings out (F1), churn from the past only (F5) (26 Sep)
+
+0f7330f, with `scripts/test_features.py`. Both fixes are right on their
+own terms: F1 removes rows that are not breaking changes, and F5 removes
+a feature that could see the future. Neither was kept or dropped for what
+it did to the score, and the score went down.
+
+### 23.1 What changed in the data
+
+- F1 dropped 1,769 version-string rows, 383 of them positive under
+  `label` (45% of its positives). **868 of the 2,036 upgrades (43%) held
+  nothing else**, and are gone: in those releases griffe found no
+  breaking change except the version constant. They are clean releases,
+  which is exactly F15's all_clear state; after F1 the site can say so
+  for them (Varad).
+- Dev: 16,628 rows in 977 upgrades. The single split still cuts at 5 Apr:
+  train 14,673 rows (1.87% positive), test 1,955 (3.17%). 100 of that
+  test half's 162 `label` positives had been version strings.
+- Holdout: 4,871 rows, 191 upgrades, 91 packages (fingerprint
+  9b524ece19cf). The frozen list reads 191 of 351 still there, 160
+  emptied by F1, none added, as §22.1 projected, and every label still
+  clears every gate (`label` 140 / 14 / 10). holdout_boundary.py: KEEP.
+- The one backport that crossed the holdout start was a version-bump-only
+  upgrade; time order now reads 7 upgrades, 0 across.
+- package_churn's share of gain fell from 14.9% to 9.3% once it stopped
+  counting later releases.
+
+### 23.2 Before and after, on the same seven windows
+
+§22.6's sweep against the same seven dates after item 2
+(`stability.py --at`, f2c566d):
+
+| cut | lift before → after | floor | model ÷ floor | popularity ÷ floor | rankable at 10 |
+|---|---|---|---|---|---|
+| 2025-09-29 | 3.22x → 2.21x | 0.028 → 0.013 | 7.2 → 5.9 | 2.2 → 2.7 | 35 → 25 |
+| 2025-11-28 | 3.24x → 2.40x | 0.026 → 0.013 | 7.3 → 6.7 | 2.3 → 2.8 | 33 → 23 |
+| 2026-01-13 | 4.18x → 2.13x | 0.029 → 0.014 | 8.8 → 5.6 | 2.1 → 2.7 | 28 → 19 |
+| 2026-02-27 | 2.98x → 3.10x | 0.038 → 0.017 | 7.2 → 8.2 | 2.4 → 2.6 | 21 → 14 |
+| 2026-03-29 | 3.05x → 1.24x | 0.034 → 0.015 | 9.7 → 5.1 | 3.2 → 4.1 | 20 → 13 |
+| 2026-04-24 | 3.31x → 3.18x | 0.062 → 0.030 | 5.7 → 6.6 | 1.7 → 2.1 | 17 → 11 |
+| 2026-05-18 | 2.82x → 2.38x | 0.072 → 0.036 | 4.5 → 4.6 | 1.6 → 1.9 | 13 → 10 |
+
+- Lift over popularity fell at 6 of the 7 dates: **median 3.22x → 2.38x**,
+  worst 2.82x → **1.24x** (29 Mar). It still beats popularity 7/7 and
+  semver 7/7.
+- Two things moved, and the last columns separate them. The model fell
+  relative to chance (median 7.2x → 5.9x the floor), and popularity ROSE
+  relative to chance at all seven dates (median 2.2x → 2.7x). F1's note
+  in §21 read the version strings as propping popularity up; on this
+  data they were diluting it.
+- nDCG@20, median over the cuts, 0.58 → 0.42; precision@10 0.153 → 0.150.
+- The single split, cut at 5 Apr in both runs: PR-AUC 0.304 → 0.161, on
+  a floor of 0.069 → 0.032; lift over popularity 2.37x → 2.36x, over
+  kind_prior 2.32x → 2.16x; 4.4x → 5.1x the floor.
+
+**The audit's prediction did not hold.** §21 marked both fixes [better]:
+F1 1.78x → 2.88x and F5 1.78x → 2.02x, measured on §20's setup (a split
+at 13 Jun, cuts reaching into what is now the holdout, and the leak still
+in every row). On the frozen dev set, at fixed dates, together they lower
+the lift at six dates of seven. Which of the two did it is §23.4.
+
+### 23.3 What is now thin, and where it points
+
+- Under `label` the sweep's test halves hold 48–138 positives and 10–25
+  rankable upgrades per cut; the latest sits exactly on the gate. The
+  single split's nDCG@20 averages 8 upgrades, under the gate, and is not
+  quoted; its precision@10 averages 12.
+- `label_alias` keeps far more: 154 positives in the single split's test
+  half against `label`'s 62. With `label` this thin, item 6 (F3) may need
+  to come before items 3–5.
+- CV chose [11, 2, 7] trees, from three folds rather than four, because
+  the validation slice is now 0.41% positive (12 in 2,909 rows). The
+  model's 20 trees are still the clamp (F7).
+- Gain after item 2: name_length 21.5%, release_size 16.1%, package_rank
+  15.5%, module_depth 11.5%, package_churn 9.3%, kind 8.7%, then the
+  tail; bump at zero.
+
+### 23.4 Which half of item 2 moved the lift: F1
+
+F1 and F5 went in together. `scripts/item2_effects.py` (4f907c7) builds
+the pipeline four ways from the same labelled.csv (neither fix, F1 only,
+F5 only, both) and runs each at the seven dates above. It checks itself,
+and on the real data both checks passed: "neither" reproduced §22.6's
+sweep and "both" the `--at` run, lift for lift. So the two middle
+columns are the real pipeline with one fix each.
+
+| cut | neither | F1 only | F5 only | both |
+|---|---|---|---|---|
+| 2025-09-29 | 3.22x | 1.62x | 3.49x | 2.21x |
+| 2025-11-28 | 3.24x | 2.29x | 3.01x | 2.40x |
+| 2026-01-13 | 4.18x | 1.31x | 3.02x | 2.13x |
+| 2026-02-27 | 2.98x | 3.48x | 3.09x | 3.10x |
+| 2026-03-29 | 3.05x | 2.27x | 3.04x | 1.24x |
+| 2026-04-24 | 3.31x | 3.36x | 3.48x | 3.18x |
+| 2026-05-18 | 2.82x | 2.87x | 3.18x | 2.38x |
+| **median** | **3.22x** | **2.29x** | **3.09x** | **2.38x** |
+| worst | 2.82x | 1.31x | 3.01x | 1.24x |
+
+- **F1 is the drop.** Alone it takes the median from 3.22x to 2.29x and
+  the worst cut to 1.31x, lower at four dates and level or higher at
+  three. It accounts for all of item 2's fall in the median.
+- **F5 is close to neutral.** Alone: median 3.22x → 3.09x, but its worst
+  cut is better (2.82x → 3.01x) and its range much narrower (3.01–3.49x
+  against 2.82–4.18x). A model that no longer sees the future is less
+  often lucky and never as unlucky. That is the direction F5's audit
+  note reported (its minimum lift rose); its median gain did not appear.
+- Single cuts swing hard between variants (29 Mar: 3.04x with F5 alone,
+  2.27x with F1 alone, 1.24x with both), which is §5.6 again: read the
+  medians, never a cut.
+
+**What it means.** The version strings were an easy win the model could
+take and popularity could not. is_version_string was the model's top
+feature, and once those rows left, popularity's multiple of the floor
+rose at every date (§23.2): they had been diluting it. On this dataset
+they were worth about 0.9x of the 3.22x median. Every lift quoted before item 2 included them, §1's and
+§20's among them, and the deck and report still quote §20. On breaking
+changes alone, `label` beats popularity by a **median 2.38x at these
+dates, 1.24x at the worst**. That is the number to build on, and the one
+item 4 rewrites the findings against.
+
+### 23.5 The starting point for item 3
+
+- The sweep after item 2, on its own quantile dates (F1 removed 708 dev
+  upgrades, and every date moved): 2025-08-07, 2025-10-06, 2025-12-03,
+  2026-01-18, 2026-03-02, 2026-04-02, 2026-05-04. Beats popularity 7/7,
+  median lift 2.47x (1.91–3.01x). Item 3 (F2) changes what the ranker
+  trains on, not which rows exist, so these dates should hold; run its
+  sweep with `--at` them to be sure.
+- The single split, 5 Apr: PR-AUC 0.161 against a floor of 0.032,
+  kind_prior 0.075 (best baseline), popularity 0.068, precision@10 0.150
+  over 12 upgrades.
+- `artifacts/ranker.txt` is this model: 17 features.
+
+## 24. Item 6, moved up: `label_alias` ships (29–30 Sep)
+
+Taken ahead of items 3–5 for the reason §23.3 gave. After F1, `label` is
+at the edge of measurable (the single split's nDCG@20 rests on 8
+upgrades), and items 3 and 5 produce numbers for one label; done on
+`label` first, they would have had to be done again.
+
+### 24.1 The rule, fixed before the run
+
+- The contest is `label` against `label_alias`, as F3 frames it.
+  `label_scoped` is measured and reported but cannot ship: a large share
+  of its extra positives have no import statement behind them (§9.3), and
+  its labels can be flipped by holdout rows (KNOWN CROSSINGS in
+  ml/holdout.py).
+- The label with the better worst-case lift over popularity (lift_MIN),
+  on the cut dates both are measured on, ships. That is the rule §1 and
+  §15.1 settled; lift is each label's model over the same label's
+  popularity baseline, because raw PR-AUC is not comparable across labels
+  (each one's floor is its own positive rate).
+- If the two worst cases are within 0.25x, this sweep cannot tell them
+  apart, and `label_alias` ships: its positives are import paths griffe
+  can show, and it has more of them to measure with.
+
+### 24.2 The result
+
+`stability.py --all-labels`, the seven cut dates of §23.5. No label was
+skipped at any cut, so all three sat the same seven exams.
+
+| cut | `label` | `label_scoped` | `label_alias` |
+|---|---|---|---|
+| 2025-08-07 | 2.29x | 4.00x | 4.42x |
+| 2025-10-06 | 2.79x | 4.71x | 4.86x |
+| 2025-12-03 | 2.99x | 3.79x | 5.70x |
+| 2026-01-18 | 2.47x | 4.76x | 4.02x |
+| 2026-03-02 | 1.91x | 2.90x | 3.01x |
+| 2026-04-02 | 1.95x | 2.34x | 4.08x |
+| 2026-05-04 | 3.01x | 2.13x | 2.30x |
+| **worst** | **1.91x** | 2.13x | **2.30x** |
+| median | 2.47x | 3.79x | 4.08x |
+| test positives per cut | 50–146 | 90–355 | 139–310 |
+| rankable at 10 per cut | 10–26 | 12–31 | 15–35 |
+
+**`label_alias` ships.** Its worst case beats `label`'s by 0.39x, more
+than the 0.25x margin, so it wins by the rule itself and not the
+tie-break. Every label beats popularity at 7/7 and semver at 7/7. The
+script's "median lift does NOT separate these" concerns `label_scoped`
+and `label_alias` (3.79x against 4.08x); `label_scoped` was out before
+the run, and its worst case is lower anyway.
+
+### 24.3 The shipped numbers
+
+The sweep, `label_alias`: beats popularity 7/7 and semver 7/7, lift
+median **4.08x (2.30–5.70x)**, PR-AUC median 0.234 (0.170–0.283), floor
+0.028–0.086.
+
+The single split at 5 Apr (train 14,673 rows, 3.11% positive; test 1,955,
+7.88%):
+
+| | PR-AUC | precision@10 (17 upgrades) | nDCG@20 (11 upgrades) |
+|---|---|---|---|
+| **model** | **0.232** | **0.253** | **0.550** |
+| kind_prior (best baseline) | 0.122 | 0.224 | 0.436 |
+| popularity | 0.112 | 0.176 | 0.255 |
+| semver (kill-date gate) | 0.090 | 0.176 | 0.255 |
+| floor (positive rate) | 0.079 | | |
+
+1.9x the best baseline, 2.1x popularity, 2.9x the floor.
+*[2 Oct: the best baseline is now the line, a logistic regression on
+the same features, at PR-AUC 0.191, and the model is 1.22x it (95%
+interval 0.96–1.55). "1.9x the best baseline" is withdrawn; §29.2.]*
+The single split's 2.08x over popularity is **below every cut of the
+sweep** (the
+lowest is 2.30x): one more window, and the reason the sweep's range, not
+a single split, is what gets quoted.
+
+The model: CV folds chose [2, 46, 10] trees, so the 20 is still the
+clamp (F7). public_depth leads the gain table at 18.3%, reachability
+again (§9.4), then release_size 17.2%, name_length 17.0%, package_rank
+10.5% and kind 9.6%; inherited_by and bump at zero.
+
+The holdout can measure it: 263 positives, 19 upgrades rankable at 10 and
+13 at 20 as built (§23.1).
+
+### 24.4 What changed
+
+- train.py, baselines.py and ablate.py default to `label_alias`, as
+  stability.py, final_eval.py, label_blindspot.py and fold_effect.py
+  already did. item2_effects.py keeps `label`: the result it re-measures
+  was about `label`. test_holdout.py now names `label` for the one check
+  whose fixture file is `label`'s, so no test depends on a default.
+- `artifacts/ranker.txt` is the `label_alias` model; metrics.json (local)
+  reads `lambdarank-label_alias`.
+- `label` stays everywhere as a column and an option, and §23 stays as
+  written: it is the record of what the version strings did.
+
+### 24.5 The starting point for item 3
+
+- The sweep above for `label_alias`, on the dates of §23.5: median 4.08x,
+  2.30–5.70x, 7/7.
+- The single split above.
+- Item 3 (F2) grades relevance by how many packages use a change. For
+  `label_alias` that count is alias_user_count, the one the label is
+  built from. It changes what the ranker trains on, not the rows, so it
+  is judged at these same dates.
+
+## 25. Item 3: graded relevance (F2). Binary stays, by a rule fixed before the run (30 Sep)
+
+§25.1–25.4 were written and committed before any graded model was fitted
+on the real data (38ad369, pushed 30 Sep at 20:11, before the run). The
+only graded fits before then were on the synthetic fixtures the tests
+build. The result is §25.5.
+
+### 25.1 What changes, and what does not
+
+- `--relevance graded` (train.py, stability.py, final_eval.py, ablate.py)
+  changes what lambdarank is taught. `binary`: every positive is worth
+  the same, so one package using a change counts as much as forty.
+  `graded`: a positive gets a grade by how many packages use it, read
+  from the count its label is built from (`alias_user_count` for
+  `label_alias`).
+
+  | packages using the change | grade | gain |
+  |---|---|---|
+  | none (a negative) | 0 | 0 |
+  | 1 | 1 | 1 |
+  | 2 to 6 | 2 | 3 |
+  | 7 to 19 | 3 | 7 |
+  | 20 or more | 4 | 15 |
+
+  The grade is ceil(ln(1 + n)), a log scale because one user against
+  five matters more to the ranking than 100 against 104. The gain is
+  2^grade − 1, LightGBM's default and the usual nDCG gain: when the
+  ranker decides what goes first, a change 20 or more packages use
+  counts 15 times one that a single package uses.
+- What stays: the rows, the 17 features, the baselines, the CV scheme
+  and its 20-tree clamp (F7), and the 0/1 label. The label still decides
+  which rows are positive, the skip gates, PR-AUC, precision@10 and
+  nDCG@20, so binary and graded sit the same exams. Under graded, each
+  CV fold stops on graded nDCG@10, the target it is fitting.
+- `binary` stays the default until the rule below says otherwise
+  (`SHIPPED_RELEVANCE` in train.py, which all four scripts read). With
+  `binary`, every output is what it was before item 3, checked on the
+  test fixture against the pushed code: the same stability numbers, the
+  same ranker.txt byte for byte, the same ablation table and the same
+  holdout ledger row. What is added: two columns in the stability file
+  (`relevance`, and the measure below), `relevance=binary` in
+  model_run's notes, and a few printed lines.
+- A graded model is written as its own model_run version,
+  `lambdarank-label_alias-graded`, so loading it never overwrites the
+  binary row. train.py quotes a stability range only from a sweep whose
+  models were taught the same way (each row now says its relevance).
+- One new measure: **nDCG@20 with graded gains**. The same upgrades as
+  nDCG@20 (a positive, and more than 20 changes), with each change's
+  gain 1, 3, 7 or 15 instead of 1. Plain nDCG@20 cannot see the order
+  among positives: "the change 25 packages use, then the one a single
+  package uses" and the reverse score the same. This is what graded
+  training aims at. stability.py records it for every model, binary or
+  graded (`ndcg_20_graded`), and train.py and final_eval.py print it.
+- Tested by `scripts/test_relevance.py` (seven cases, on the synthetic
+  fixture) and a sixth case in `test_stability.py`. Among them: every fit
+  each script makes under `graded` is watched at LightGBM itself, and the
+  rule is tested at each of its edges. Every guard was also broken on
+  purpose, one at a time, 21 breaks in all: the refit, the CV folds, the
+  validation rows, the early check, the grade edges, each script's
+  pass-through under both stopping rules, the row stamp, the version
+  name, the sweep file name, the metric, and both of the rule's
+  thresholds. Each break turned at least one check to FAIL.
+
+### 25.2 How it is judged
+
+`scripts/item3_relevance.py` fits both on `label_alias` at the seven cut
+dates of §23.5, where §24 measured the model that ships, and compares
+them date by date. It checks itself first: the binary run must reproduce
+§24.2's `label_alias` column (4.42, 4.86, 5.70, 4.02, 3.01, 4.08,
+2.30x) exactly, or it prints no verdict.
+
+### 25.3 The rule
+
+Graded ships only if both of these hold:
+
+1. **It loses nothing that matters.** Its worst lift over popularity
+   across the seven dates is at most 0.25x below binary's (at least
+   2.05x, if binary reproduces 2.30x), and it beats popularity at all
+   seven.
+2. **It wins clearly somewhere.** Its worst lift is more than 0.25x
+   above binary's (above 2.55x), or its nDCG@20 with graded gains is
+   higher than binary's at 6 or more of the 7 dates (a tie, to four
+   places, is not higher).
+
+Otherwise binary stays, and graded remains an option in the code.
+
+Why these numbers:
+
+- 0.25x is §24.1's margin: two worst cases closer than that are more
+  than this sweep can tell apart. Graded may cost that much on the ship
+  metric and still ship, because the ship metric cannot see what graded
+  is for. Losing more than that is a real loss.
+- 6 of 7: a coin would come up 5 or more of 7 about one time in four,
+  and 6 or more about one time in sixteen. The seven dates share most of
+  their data, so that is a floor on how often chance could do it, not a
+  p-value.
+- precision@10 and plain nDCG@20 are printed beside the rule and are not
+  in it. Graded training moves weight from "any positive above the
+  negatives" to "the widest positives first", so those two can move
+  either way for reasons that are the point of the change. The ship
+  metric in part 1 already guards the overall ranking.
+
+### 25.4 What each outcome leads to
+
+- **Graded ships.** `SHIPPED_RELEVANCE` becomes `"graded"`, one line.
+  Then `stability.py --relevance graded` for the range train.py quotes,
+  and train.py for the graded ranker.txt. The report quotes nDCG@20 with
+  graded gains beside the three headline numbers.
+- **Binary stays.** Nothing ships. The option and the new measure stay
+  in the code.
+
+Either way the table and the verdict go into §25.5, and item 4 (F9 and
+F10, the two findings rewritten) comes next.
+
+### 25.5 The result: binary stays
+
+`scripts/item3_relevance.py`, run 30 Sep straight after the rule was
+pushed. Self-check passed: the binary sweep reproduced §24.2 lift for
+lift.
+
+The grades, over the 611 dev positives under `label_alias`:
+
+| packages using the change | grade | positives | share |
+|---|---|---|---|
+| 1 | 1 | 272 | 44.5% |
+| 2 to 6 | 2 | 262 | 42.9% |
+| 7 to 19 | 3 | 47 | 7.7% |
+| 20 or more | 4 | 30 | 4.9% |
+
+At the seven dates of §23.5:
+
+| cut | lift, binary | lift, graded | nDCG@20 graded gains, binary | graded | change |
+|---|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 4.01x | 0.5684 | 0.4992 | −0.0692 |
+| 2025-10-06 | 4.86x | 5.64x | 0.5384 | 0.5483 | +0.0099 |
+| 2025-12-03 | 5.70x | 6.01x | 0.5084 | 0.5064 | −0.0020 |
+| 2026-01-18 | 4.02x | 5.03x | 0.5110 | 0.4776 | −0.0334 |
+| 2026-03-02 | 3.01x | 2.95x | 0.4888 | 0.5336 | +0.0448 |
+| 2026-04-02 | 4.08x | 3.91x | 0.5839 | 0.5290 | −0.0549 |
+| 2026-05-04 | 2.30x | 2.55x | 0.5730 | 0.6242 | +0.0512 |
+| **worst** | **2.30x** | **2.55x** | | | |
+| median | 4.08x | 4.01x | 0.5384 | 0.5290 | |
+
+Medians of the other numbers: PR-AUC 0.2344 binary, 0.2491 graded;
+precision@10 0.2800 and 0.2686; nDCG@20 0.5592 and 0.5630. Trees:
+graded's CV chose 49 and 40 at the two earliest dates, where binary sat
+at the 20-tree clamp; at the other five, both chose between 20 and 36.
+
+The rule, part by part:
+
+1. Loses nothing that matters: **yes**. Worst lift 2.55x, above the
+   2.05x floor, and it beats popularity at 7/7.
+2. Wins clearly somewhere: **no**. Its worst lift is 2.55x against a bar
+   of more than 2.55x: exactly the 0.25x margin, which the rule counts
+   as a tie, because §24.1 set 0.25x as the gap this sweep cannot
+   resolve. Its nDCG@20 with graded gains is higher at 3 of 7 dates,
+   and its median on that measure is lower, 0.5290 against 0.5384.
+
+**Binary stays.** `SHIPPED_RELEVANCE` is unchanged, so is ranker.txt, and
+the numbers of §24.3 are still the shipped ones. `--relevance graded`
+stays in the code as an option, and every sweep keeps recording
+`ndcg_20_graded`.
+
+What this says:
+
+- Graded training did not do what it is for. On the one measure it aims
+  at, it won 3 dates and lost 4, by as much as 0.07. On lift it won 4 and
+  lost 3. Two coin-flip patterns are not an improvement.
+- The worst case landed exactly on the line. Had the rule been written
+  after the run, "graded raised the worst case by 0.25x" would have
+  been an easy sentence to write. It was written before, and it says
+  that is a tie.
+- F2 called graded relevance "the single biggest modelling change
+  available". It is the second audit expectation in a row that did not
+  replicate on the frozen dev set, after item 2's [better ×2] (§23).
+  Audit predictions made on §20's setup are hypotheses, not results.
+- Possible reasons, not tested: 87% of positives are grade 1 or 2, so
+  most of the time the only thing graded training can learn is "one
+  package against a handful", and there are 30 grade-4 positives in all
+  of dev. How widely a change is used is a property of downstream code,
+  which none of the 17 features describes.
+
+## 26. Item 4: the report's two findings, measured again (F9, F10)
+
+### 26.1 What is measured, and the wording rules, fixed before the run
+
+Written and committed before `scripts/item4_findings.py` was first run
+on the real data.
+
+The two findings the report and deck carry are §20.2's:
+
+- **Deprecation.** A symbol deprecated before it was removed is used
+  downstream 3.60% of the time, against 3.69% for the rest, over 278
+  rows: "zero signal".
+- **Earlier breaks in the module**, U-shaped: 2.58% with none, 8.21% and
+  8.69% with 1–5 and 6–20, 0.25% with 21 or more. "Middle buckets are
+  3.2–3.4x the quiet bucket."
+
+The audit found both saying more than the data can. F9: 278 rows with
+10 positives cannot tell "no effect" from two points either way. F10:
+the middle peak was mostly version strings; without them the middle
+buckets were 3.92% and 2.76% against 2.30%, and what held was the
+collapse at 21+.
+
+How they are measured now:
+
+- **Dev rows only** (`features.csv`). Version strings are already gone
+  (F1), and the holdout stays sealed: these are descriptive numbers, but
+  they read labels, so the holdout's labels stay out of them too.
+- **Once per change**, a symbol in one upgrade, not once per row. A
+  symbol's parameter rows share its label, so counting rows counts one
+  observation several times (F12).
+- **95% intervals from 2,000 resamples of whole upgrades.** The changes
+  in one release tend to be used or ignored together, so the upgrade is
+  the unit that can be treated as independent. Resampling changes would
+  give intervals narrower than the data supports.
+- **Both labels**: `label_alias`, which ships and which the rewritten
+  findings quote, and `label`, which §19 and §20 used, so each old
+  number has a like-for-like successor.
+- §19.2's buckets: 0 | 1–5 | 6–20 | 21+. The gain shares come from the
+  shipped model's `artifacts/importance.csv`, checked against
+  `metrics.json` to be `lambdarank-label_alias`.
+
+The wording rules:
+
+1. **Deprecation.** If the interval for the difference (deprecated minus
+   the rest) contains 0, the finding is "no detectable difference",
+   stated with the range of differences the data cannot rule out. If it
+   excludes 0, the finding says which way and by how much, with the
+   interval.
+2. **The middle peak** ("moderate churn raises the rate") is claimed
+   only if 1–5 or 6–20 is above the 0 bucket with an interval that
+   excludes 0.
+3. **The collapse** ("modules with 21+ earlier breaks are almost never
+   used") is claimed only if 21+ is below all other changes with an
+   interval that excludes 0.
+
+The report and deck say only what these rules allow, with each rate's
+interval and its count of changes beside it.
+
+Tested by `scripts/test_findings.py`, five cases, among them that the
+intervals come out wide when one release decides a rate, against a
+control that resamples changes. Each guard in the script was broken on
+purpose, eight breaks in all, and each turned a check to FAIL.
+
+### 26.2 The result
+
+`scripts/item4_findings.py`, run 30 Sep straight after the rules were
+pushed (2ddc8ee). The 16,628 dev rows are 9,946 changes in 977 upgrades.
+
+**Deprecated before it was removed**
+
+| | changes | used | rate | 95% interval |
+|---|---|---|---|---|
+| `label_alias`, deprecated | 215 | 22 | 10.23% | 5.04–18.98% |
+| `label_alias`, not deprecated | 9,731 | 434 | 4.46% | 3.53–5.56% |
+| **difference** | | | **+5.77 points** | **+0.58 to +14.33** |
+| `label`, deprecated | 215 | 8 | 3.72% | 0.63–9.57% |
+| `label`, not deprecated | 9,731 | 287 | 2.95% | 2.20–3.87% |
+| difference | | | +0.77 points | −2.49 to +6.38 |
+
+Rule 1: under `label_alias` the interval excludes 0, so the finding
+says which way: deprecated changes are used downstream **more** often,
+not less. Under `label` there is no detectable difference.
+
+**Earlier breaks in the same module**, `label_alias`
+
+| earlier breaks | changes | used | rate | 95% interval | against 0 earlier breaks |
+|---|---|---|---|---|---|
+| 0 | 7,018 | 306 | 4.36% | 3.30–5.53% | |
+| 1–5 | 1,504 | 108 | 7.18% | 5.04–9.62% | 1.65x (1.10–2.45) |
+| 6–20 | 930 | 41 | 4.41% | 2.09–9.27% | 1.01x (0.45–2.21) |
+| 21+ | 494 | 1 | 0.20% | 0.00–1.14% | 0.05x (0.00–0.26) |
+
+Under `label`: 2.59%, then 5.19% (2.00x, 1.19–3.23), 3.66% (1.41x,
+0.58–3.32) and 0.20% (0.08x, 0.00–0.46).
+
+Rule 2, the middle peak: supported under both labels, by 1–5 alone.
+Rule 3, the collapse: supported under both. Under `label_alias`, 21+
+sits 4.61 points below all other changes (−5.74 to −3.44).
+
+Gain shares in the shipped model (`lambdarank-label_alias`):
+`was_deprecated_before` 0.1%, rank 14 of 17; `prior_breaks_in_module`
+5.0%, rank 8.
+
+### 26.3 What changed, and why
+
+**Deprecation turned round.** §19.1 and §20.2 called it a dud: 3.60%
+against 3.69%. Three things moved it.
+
+1. **Version strings.** §20.2's "not deprecated" group held the version
+   strings: 1,769 rows in that file, 21.65% positive, when everything
+   else was 2.21% (F1). That is what lifted it to 3.69%. Counted per row
+   today, without them, it is 3.58% under `label_alias` and 2.00% under
+   `label`.
+2. **The label.** 14 of the 22 used deprecated changes are found only
+   through an alias path (22 under `label_alias`, 8 under `label`).
+   Under the exact join they looked unused.
+3. **The counting.** Per change, with upgrades resampled, the interval
+   is as wide as 215 changes with 22 used can support. Its lower end,
+   +0.58 points, is close to 0. The direction is the finding; the size
+   is known only to lie somewhere between half a point and fourteen.
+
+A possible reason, not tested: maintainers deprecate what people use
+and simply delete what nobody does, so a deprecation marks a used API.
+
+The model gives the feature 0.1% of its gain. A difference in the data
+and a feature the model can use are different things: 215 of 9,946
+changes carry the flag (2.2%).
+
+**The U-shape mostly goes; the collapse holds.** The rise with moderate
+churn is at 1–5 earlier breaks only, 1.65x the quiet modules, not
+§20.2's 3.2–3.4x, and at 6–20 there is no detectable rise. Per row,
+6–20 reads 8.42%; per change, 4.41%: a few used symbols with many
+parameter rows made that bucket (F12). The collapse is the robust part:
+of 494 changes in modules with 21 or more earlier breaks, one is used.
+
+### 26.4 The two findings, as the report and deck should now say them
+
+The report and deck quote §20.2 today. These replace it, in
+`label_alias`'s numbers, per the rules of §26.1.
+
+**Finding 1, deprecation.**
+
+> A deprecation warning did not make the break safer. Under the label
+> BreakRank ships, breaking changes to symbols that had been deprecated
+> were used downstream more often than other breaking changes: 10.2% of
+> 215 deprecated changes (95% interval 5.0–19.0%) against 4.5% of 9,731
+> others (3.5–5.6%), a difference of +5.8 points (+0.6 to +14.3). The
+> interval is wide, so the size is uncertain; the direction is the
+> opposite of the expectation that a warning lets users migrate first.
+> Under the stricter exact-path label the difference is not detectable
+> (+0.8 points, −2.5 to +6.4). Each symbol counts once per upgrade, and
+> the intervals resample whole upgrades.
+
+**Finding 2, earlier breaks in the module.**
+
+> Breaking changes in modules that had already broken 21 or more times
+> are almost never used downstream: 1 of 494 (0.2%, 95% interval
+> 0.0–1.1%), against 4.4% (3.3–5.5%) in modules with no earlier breaks.
+> Modules that break this often are most likely being refactored
+> wholesale. Moderate churn raises the rate only a little: 7.2% with 1
+> to 5 earlier breaks, 1.65 times the quiet modules (1.10–2.45); with 6
+> to 20 there is no detectable difference.
+
+For a slide:
+
+- Deprecated before the break: used **more** downstream, not less. 10.2%
+  against 4.5%; +5.8 points (95% CI +0.6 to +14.3), 215 changes.
+- Modules with 21+ earlier breaks: 1 of 494 changes used (0.2%).
+  1–5 earlier breaks: 1.65x the quiet modules (1.10–2.45).
+
+## 27. Item 5: intervals on the headline numbers, and changes counted (F11, F12)
+
+### 27.1 What is added, and how it is read, fixed before the run
+
+Written and committed before the scripts below were run on the real data
+with intervals.
+
+- **Every headline number gets a 95% interval**: PR-AUC for the model
+  and for popularity, the lift over popularity, precision@10 and
+  nDCG@20. From 2,000 resamples of the test half's upgrades (version
+  pairs), every row of an upgrade kept together (`metrics.intervals`).
+- **What an interval is here**: how far the number would move on
+  another draw of upgrades to test on, with the models held fixed. It is
+  not how far it moves with another training set, and not the spread
+  across cut dates, which stability.py's range already shows. The two
+  are different questions, and the report names which it quotes.
+- **Upgrades, not rows** (F12). A symbol's parameter rows share one
+  label, and a release's changes tend to be used or ignored together,
+  so resampling rows would make every interval narrower than the data
+  supports. On the test fixture, with how well the model does decided
+  upgrade by upgrade, resampling rows gave an interval a third as wide.
+- **Where**: train.py prints them for the single split and writes
+  `pr_auc_95` and `lift_95` into model_run's notes. stability.py writes
+  each cut's `lift_lo`, `lift_hi` and PR-AUC interval, and counts the
+  cuts where the lift's interval clears 1.0x; train.py quotes that
+  count. final_eval.py prints them for the holdout and puts them in its
+  NOTES block, not in the ledger, whose columns stay as they are.
+- **Counts** (F12). train.py, stability.py and final_eval.py now say how
+  many distinct changes (a symbol in one upgrade) and upgrades their rows
+  are. Today's dev set: 16,628 rows, 9,946 changes, 977 upgrades
+  (§26.2).
+- **The reading rule.** "Beats popularity" at a cut stays what it was,
+  the point comparison. "Clearly beats popularity" is said only where
+  the lift's 95% interval has its lower end above 1.0x, and the report
+  quotes that count beside the other.
+- **Nothing a model is trained on changes.** Checked on the test fixture
+  against the pushed code: the same ranker.txt byte for byte, the same
+  stability numbers in every column the file already had, the same
+  PR-AUC, precision@10 and nDCG@20. What is added: six columns in the
+  stability file, five fields in model_run's notes and the count of
+  cuts clear of 1.0x in its quoted range, and printed lines.
+- Tested by `scripts/test_intervals.py`, six cases. Among them: one
+  resample is recomputed by hand for all five numbers, and "clear of
+  1.0x" is shown to read each cut's lower bound and not its lift. Every
+  guard was broken on purpose, ten breaks in all, and each turned a
+  check to FAIL.
+
+### 27.2 The result
+
+`stability.py` and `train.py`, run 1 Oct after the rule was pushed
+(44179c7). Both check out: the sweep's seven lifts are §24.2's exactly,
+and `git status` was empty afterwards, so ranker.txt came out byte for
+byte the same.
+
+**The sweep**, `label_alias`, each cut's lift with its own 95% interval:
+
+| cut | lift over popularity | 95% interval | PR-AUC | floor |
+|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 1.69–8.00 | 0.2109 | 0.0281 |
+| 2025-10-06 | 4.86x | 1.87–8.32 | 0.2344 | 0.0289 |
+| 2025-12-03 | 5.70x | 2.13–9.50 | 0.2680 | 0.0288 |
+| 2026-01-18 | 4.02x | 1.84–6.87 | 0.1990 | 0.0324 |
+| 2026-03-02 | 3.01x | 1.27–5.71 | 0.1704 | 0.0360 |
+| 2026-04-02 | 4.08x | 1.78–7.23 | 0.2554 | 0.0362 |
+| 2026-05-04 | 2.30x | 1.55–4.72 | 0.2828 | 0.0857 |
+
+Beats popularity at 7/7, and clearly, with the interval's lower end
+above 1.0x, at 7/7. The lowest lower end is 1.27x.
+
+**The single split**: test is 1,955 rows, which are 1,511 changes in
+191 upgrades.
+
+| | value | 95% interval |
+|---|---|---|
+| PR-AUC | 0.232 | 0.186–0.331 |
+| popularity PR-AUC | 0.111 | 0.069–0.176 |
+| lift over popularity | 2.08x | 1.33–4.08x |
+| precision@10, 17 upgrades | 0.253 | 0.165–0.344 |
+| nDCG@20, 11 upgrades | 0.550 | 0.397–0.706 |
+
+What this says:
+
+- **"Beats popularity" is now a measured claim** at every cut and on
+  the single split, not only a point comparison: no interval reaches
+  1.0x.
+- **The size of the lift is much less certain than its point.** Each
+  cut's interval runs over a factor of 3 to 5 from end to end (1.69 to
+  8.00 at the first). "About 4x" is the honest reading of the 4.08x
+  median; at the first cut alone, another draw of test upgrades could
+  have given anything from 1.7x to 8.0x.
+- **The per-upgrade numbers are the least certain**, resting on 17 and
+  11 upgrades: precision@10 could be anywhere from 0.17 to 0.34. F14
+  said so in words; this is the number.
+- 1,955 test rows are 191 upgrades, and only 17 of those can be ranked
+  at 10. That, more than the row count, is the size of this exam.
+
+### 27.3 For the report and deck
+
+*[2 Oct: these are the fixed model's numbers. The tuned model ships
+(§30.2), and §30.3 replaces them for the report.]*
+
+> On the held-back test window (1,955 rows: 1,511 distinct changes in
+> 191 upgrades), the ranker reaches PR-AUC 0.232 (95% interval
+> 0.186–0.331) against a floor of 0.079, 2.1 times the popularity
+> baseline (1.3–4.1). Across seven cut dates its lift over popularity
+> has a median of 4.1x (2.3x to 5.7x across the dates), and at every
+> date the lower end of its own 95% interval stays above 1.0x; the
+> lowest is 1.27x. The size of the lift is uncertain: at one date,
+> another draw of test upgrades could move it by a factor of three to
+> five. Precision@10 is 0.253 (0.165–0.344) over 17 upgrades and
+> nDCG@20 0.550 (0.397–0.706) over 11. Intervals come from 2,000
+> resamples of whole upgrades, the model held fixed.
+
+For a slide:
+
+- PR-AUC 0.232 (95% CI 0.186–0.331); floor 0.079.
+- 2.1x popularity (1.3–4.1x). Median 4.1x across 7 cut dates; every
+  date's interval stays above 1.0x.
+- precision@10 0.253 (0.165–0.344, 17 upgrades); nDCG@20 0.550
+  (0.397–0.706, 11 upgrades).
+
+The strongest baseline on this split, kind_prior (PR-AUC 0.122), has no
+interval of its own yet; the report quotes the lift over popularity,
+the comparison every cut uses. *[2 Oct: the strongest baseline is now
+the line, a logistic regression on the same features (PR-AUC 0.191),
+and train.py prints its paired interval: 1.22x (0.96–1.55). The report
+quotes it beside popularity; §29.3.]*
+
+## 28. The site's scores: one model's, loaded 1 Oct (1–2 Oct)
+
+### 28.1 The load
+
+`python ml/db.py --scores` on 1 Oct, with the model §24 ships:
+`lambdarank-label_alias`, the ranker.txt §27.2 re-ran byte for byte.
+
+| | |
+|---|---|
+| breakage rows sent | 23,267, of 27,900 in the table |
+| scored | **21,498**: every row sent except the 1,769 version-string rows F1 took out of the model (§23.1) |
+| no score from this model | those 1,769, and the 4,633 rows from earlier loads (§21.9) |
+| model_run | positive_rate 0.078772, §24.3's floor; trained_at still 2026-09-12 |
+
+trained_at is the day the name was first loaded, and a re-load never
+moves it (§13.5). It is still the newest model_run row, ahead of
+`lambdarank-label_scoped` (6 Sep, 19,134 scores) and the fixture's
+`v0-fake` (2020, 6), so it is the model the API picks.
+
+On the site a release's rows sort by score. Rows with no score come
+after every scored row, by how many packages use them (the API's
+`NULLS LAST`, then user_count).
+
+### 28.2 Found the same day: two models' scores under one name
+
+The first check after the load (`scripts/db_model_check.py`, 96f3782)
+counted **27,184** scores under `lambdarank-label_alias`. The load had
+written 21,498.
+
+The loader's insert reached only the rows it scored, so a row that an
+earlier load of the same name had scored, and this one did not, kept
+the earlier score. 5,686 rows did, out of the 6,402 this model does not
+score (27,900 − 21,498). The name was first loaded on 12 Sep, two weeks
+before F1, when every model still scored version strings.
+
+The API ranks a release's rows by score, so for those rows the site put
+an older model's score in one list with the new model's, and two
+models' scores are not on one scale. How many of the 5,686 were
+version-string rows was never counted: the check that counts them came
+with the fix, and first ran after the fix had deleted them.
+
+### 28.3 The fix: a load replaces the version's scores, whole
+
+f62e8c3, 1 Oct. `ml/db.py` deletes the version's scores and writes the
+run's in one transaction, so a reader sees the old set or the new one,
+never a mix and never none. Before writing anything it refuses two
+runs: one whose scores match no breakage row, and one with under half
+the scores the version holds. The second is a smaller dataset loaded
+under a name the site already serves, which would wipe the rest of its
+scores; it needs a name of its own (`train.py --version <name>`).
+`scripts/test_db_loader.py` case 8 checks each of these, and the count
+of replaced scores the load prints.
+
+`scripts/db_model_check.py` (570b80c) now also lists the day each of a
+version's scores was written, and counts version-string rows with a
+score. After any load the first should read one day and the second 0.
+
+### 28.4 Checked
+
+The fixed loader has run twice. The first run, right after f62e8c3 on
+1 Oct, deleted all 27,184 and wrote 21,498. That is inferred, not
+printed: by the second run the check already read 21,498 from one day,
+and the only other code that deletes a score, `scripts/db_prune.py`,
+has not been run (the table still holds 27,900 rows, as on 25 Sep).
+
+The second run, just after 570b80c (01:23 on 2 Oct, India time),
+printed `prediction 21,498 (replacing 21,498 from earlier loads of this
+version)`. db_model_check.py read the same before and after it. The
+database dates in UTC, so a load in the early hours of 2 Oct in India
+reads 2026-10-01:
+
+```
+version                    trained_at            pr_auc  predictions
+lambdarank-label_alias     2026-09-12 06:55:27   0.2317       21,498
+lambdarank-label_scoped    2026-09-06 09:35:06   0.3465       19,134
+v0-fake                    2020-01-01 00:00:00   0.0000            6
+
+lambdarank-label_alias's scores, by the day they were written:
+  2026-10-01     21,498
+version-string rows with a score: 0
+```
+
+### 28.5 Which model the site serves: no restart needed
+
+The API picks its model once, when it starts (`resolve_model`,
+api/config.py on main: MODEL_VERSION if set, else the newest
+trained_at), and reads that model's scores on every request.
+`lambdarank-label_alias` has been the newest row since 12 Sep. The API
+that picks a model went up on 18 Sep (4265517), and every start since,
+each deploy and each wake from the free tier's sleep (F29), resolves to
+it unless MODEL_VERSION pins another. So each load's scores were live
+the moment it committed: the new scores, and from the first 1 Oct load
+until the fix, the leftovers beside them. A restart is needed only
+after a load that adds a new name.
+
+To see the model it serves: `curl -s https://breakrank.onrender.com/health`
+returns `model_version`. If that names another model, restart the API.
+If it still does, MODEL_VERSION is pinning it: set it to
+`lambdarank-label_alias` on Render, or remove it. A mistyped pin serves
+no model at all (`model_version` null, every list in usage order; F36).
+db_model_check.py says this from 2 Oct; on 1 Oct it asked for a restart,
+which a re-load under the served name never needs.
+
+### 28.6 Still open
+
+- **The 4,633 rows from earlier loads** have no score from the served
+  model, so on the site they sort after every scored row of their
+  release. db_prune.py (§13) sorts
+  the superseded, which it deletes, from the aged-out, which it keeps.
+  Not run yet, and its 5% guard stands.
+- **The 1,769 version-string rows** stay in the breakage table,
+  unscored. In 868 upgrades they were the only change (§23.1): clean
+  releases, F15's all_clear, for which the API still lists the version
+  constant as a breaking change. Either the API reports those releases
+  as all clear, or the loader stops writing version strings and
+  db_prune removes the ones in the table. Varad's call, with item 12.
+  *[Varad's call, 9 Oct: the loader, once F1 is narrowed, and a deletion
+  step of its own rather than db_prune (§33.1).]*
+- **F35, the pull request** from ml/db-writer into main. Re-checked 2
+  Oct: main (c02ad2a) and the branch (570b80c) still change no file in
+  common, and a trial merge is clean. It brings every commit since
+  af0c059 (6 Sep) and touches nothing under api/, web/, db/, tests/ or
+  .github/.
+
+## 29. Item 7, first half: the linear baseline (F8). The rule, fixed before the run (2 Oct)
+
+§29.1 was written and committed before the line was fitted on the real
+data. The only fits before then were on the fixtures the tests build.
+The result is §29.2. F7, the tuning, is the second half and gets its own
+rule after this one has an answer, because tuning changes the trees and
+the comparison below is with the trees as they ship (§24).
+
+### 29.1 What is compared, how it is judged, and what each outcome means
+
+**The claim under test.** The report says the trees exploit a U-shape a
+linear model cannot (`prior_breaks_in_module`, §19.2, §26). F8: that was
+asserted, never measured. The honest form of the question is whether a
+straight line through the same 17 features does as well as the trees.
+
+**The line.** A logistic regression (`baselines.linear_scores`) on the
+ranker's feature list exactly: the 8 numbers, 7 booleans and 2
+categories train.py uses. Numbers are median-imputed and standardised;
+`inherited_by`, `prior_breaks_in_module`, `package_rank`, `release_size`
+and `package_churn` are log1p'd first, because one transformers release
+with inherited_by 3,242 would otherwise set the scale for every other
+row. log1p is monotone, so it gives the line nothing a line could not
+already express; a U-shape stays out of its reach. `kind` and `bump` are
+one-hot, a value unseen in training scoring as all zeros. Classes are
+weighted to balance. Nothing is tuned: it is a baseline, and the trees'
+settings are constants too (F7). It is fitted on train only, on exactly
+the rows the ranker is refitted on, and it joins `add_baseline_scores`,
+so every script that prints the baselines prints it.
+
+**Three models at the seven cut dates of §23.5**, by
+`scripts/item7_linear.py`, each fitted on everything before a date and
+scored on what follows:
+
+| | what it is | why it is here |
+|---|---|---|
+| line | the logistic regression above | F8 |
+| classifier | LightGBM, binary objective, same features, tree count by the same CV | trees, pointwise: the like-for-like test |
+| ranker | LightGBM lambdarank, the model that ships | what the report describes |
+
+The like-for-like test is **classifier against line**. Both score each
+change on its own, so the only difference between them is trees against
+a line. The ranker is trained to order changes inside one upgrade and
+never to compare them across upgrades, and pooled PR-AUC grades exactly
+that comparison (F14 and F25, §21.9), so ranker-against-line mixes two
+questions. The ranker is printed beside the other on PR-AUC and on
+nDCG@20, the within-upgrade measure it is fitted for, and read, not
+ruled on.
+
+**The rule**, for the classifier against the line, on PR-AUC. At each
+date r = classifier PR-AUC / line PR-AUC.
+
+1. **The trees win**: r > 1 at 6 or more of the 7 dates, and the median
+   r is 1.25 or more. The claim stays in the report, as a measurement:
+   the line's number beside the trees'.
+2. **The line wins**: r < 1 at 6 or more of the 7 dates, and the median
+   r is 0.80 or less. The claim is withdrawn, and whether the line
+   should ship becomes a question, item 15's (F25), with a rule of its
+   own.
+3. **No difference the rule can see**: anything else. The claim is
+   withdrawn; the result is in the features, not the model class, and
+   the report says so.
+
+Why these numbers:
+
+- A ratio, not a difference. PR-AUC's floor is the positive rate, and
+  the floors differ across the seven dates (0.028 to 0.086, §27.2). On
+  one date's test half the two models share a floor, so their ratio is
+  on one scale, and the median of seven ratios is comparable where the
+  median of seven differences is not.
+- 1.25 is a quarter, §24.1's and §25.3's margin, as a ratio. §27.2's
+  intervals say a single date's PR-AUC is uncertain by far more than a
+  quarter, but the comparison here is paired: both models are scored on
+  the same test half at each date, and the question is whether one is
+  consistently ahead. The count of dates carries the consistency; the
+  margin says the gap is worth a sentence.
+- 6 of 7, as in §25.3: a coin comes up 6 or more of 7 about one time in
+  sixteen, and the dates share most of their data, so that is a floor on
+  how often chance could do it, not a p-value.
+- A tie at four places is neither a win nor a loss.
+
+**It checks itself.** The lambdarank sweep must reproduce §24.2's
+`label_alias` column lift for lift (4.42, 4.86, 5.70, 4.02, 3.01, 4.08,
+2.30x), as §27.2 did on 1 Oct; otherwise the ranker is not the one that
+ships and no verdict is printed. The line is fitted twice, once in each
+sweep, on the same rows, and must agree at every date.
+
+**Also on the single split.** train.py prints the line in its table and
+the paired 95% interval of the ranker's lift over it (each resample of
+test upgrades scores both), and writes `linear`, `lift_vs_linear` and
+`lift_vs_linear_95` into model_run's notes. Where the best baseline on
+the split is neither popularity nor the line, its lift gets an interval
+too, which closes §27.3's open line about kind_prior.
+
+**Found on the way, fixed first.** `train.score_with` scored a
+classifier by `predict()`, which for LightGBM's classifier returns the
+class, 0 or 1, not a probability. A column of 0s and 1s ranks nothing,
+so every `--objective binary` number since 5 Sep was wrong, and F25's
+comparison could not have been made. On the test fixture a 20-tree
+classifier scores PR-AUC 0.150 by its probabilities and 0.097 by its
+labels, floor 0.084. The ranker has no `predict_proba` and its
+`predict()` is already a score, so nothing the shipped model reports
+changes. And `stability.py --objective binary` wrote over the lambdarank
+sweep file; another objective now gets its own name
+(`train.stability_name`, `stability_label_alias_cv_binary.csv`), and the
+shipped sweep keeps the name it always had.
+
+**Nothing a model is trained on changes.** Checked on the test fixture:
+the four earlier baselines come out of `add_baseline_scores` as the
+formulas they were, the ranker's scores are its `predict()` as before,
+and a sweep's existing columns are unchanged. What is added: `linear`,
+`linear_ndcg_20`, `lift_vs_linear` and `beats_linear` in each sweep row,
+three fields in model_run's notes, and printed lines. Tested by
+`scripts/test_linear.py`, eight cases: the line is fitted on train only
+(flipping every test label moves no score), learns a straight signal
+(3.5x the floor on a fixture built to have one) and not a middle bump
+(1.06x the floor where twenty trees reach 4.5x), scores values training
+never showed, and the rule at every edge. Nine guards were broken on
+purpose and each turned a check to FAIL.
+
+**What each outcome leads to.** Whatever the verdict, the table goes
+into §29.2, the report's F8 sentence follows the rule above, and F7 (the
+tuning) comes next with its own rule. If the line wins, item 15 moves up,
+as item 6 did.
+
+### 29.2 The result: no difference the rule can see, by 0.0001
+
+`scripts/item7_linear.py`, run 2 Oct after the rule was pushed (5205ce2,
+11:29). Both self-checks passed: the ranker reproduced §24.2 lift for
+lift, and the line fitted in each sweep agreed at every date. `git
+status` was clean afterwards, so ranker.txt is byte for byte the same.
+
+PR-AUC at each date, every model fitted on the same rows:
+
+| cut | floor | line | classifier | ranker | classifier / line | ranker / line |
+|---|---|---|---|---|---|---|
+| 2025-08-07 | 0.0281 | 0.1983 | 0.1946 | 0.2109 | 0.981 | 1.064 |
+| 2025-10-06 | 0.0289 | 0.1988 | 0.2104 | 0.2344 | 1.058 | 1.179 |
+| 2025-12-03 | 0.0288 | 0.2069 | 0.2586 | 0.2680 | **1.2499** | 1.295 |
+| 2026-01-18 | 0.0324 | 0.1823 | 0.2374 | 0.1990 | 1.302 | 1.092 |
+| 2026-03-02 | 0.0360 | 0.1853 | 0.2161 | 0.1704 | 1.166 | 0.920 |
+| 2026-04-02 | 0.0362 | 0.1920 | 0.2596 | 0.2554 | 1.352 | 1.330 |
+| 2026-05-04 | 0.0857 | 0.1941 | 0.2494 | 0.2828 | 1.285 | 1.457 |
+| **median** | | 0.1941 | 0.2374 | 0.2344 | **1.2499** | 1.179 |
+
+**Verdict: no difference the rule can see.** The classifier was ahead
+of the line at 6 of 7 dates, which meets the first half of the bar. Its
+median ratio is 1.2499 (2025-12-03, 0.2586 / 0.2069), and the second
+half needs 1.25: it misses by 0.0001. The script printed the median as
+"1.25x", to two places, above the verdict; it prints four places from
+2 Oct. The rule read the value.
+
+That is the closest any rule here has come to its edge, and it is read
+as written, as §25.5 was when graded relevance landed exactly on its
+margin. A bar set in advance has to be allowed to fall on the wrong
+side of a hair; deciding again after seeing which side would undo the
+reason it was set. Nor is the hair hiding a clear result. On the
+single split, the paired 95% interval of the ranker's lift over the
+line is 0.96–1.55x (train.py, below): it includes 1.
+
+What the line shows:
+
+- **It gets most of the result.** It beats popularity at every date,
+  median lift 3.68x (1.58–4.39x), against the ranker's 4.08x
+  (2.30–5.70x): a straight line through the same 17 features carries
+  90% of the ranker's median lift. Its PR-AUC is 5.6x its floor at the
+  median, the ranker's 7.1x.
+- **It ranks inside an upgrade as well as the ranker does.** nDCG@20:
+  the ranker is ahead at 3 of 7 dates, medians 0.565 (line) and 0.559
+  (ranker). On the single split the line's precision@10 is 0.259
+  against 0.253 and its nDCG@20 0.573 against 0.550. Those rest on 17
+  and 11 upgrades (§27.2), so they say "no better", not "worse".
+- **Where the trees are ahead is pooled PR-AUC**, the comparison across
+  upgrades, which the classifier is fitted for and the ranker is not
+  (F14, F25).
+- **A likely reason, not measured.** Of §26's two shapes in
+  `prior_breaks_in_module`, the collapse at 21+ is a fall at one end,
+  which a line through log1p(breaks) can draw; only the small rise at
+  1–5 needs a bend. The line doing nearly as well suggests the bend
+  carries little.
+
+**The single split** (train.py, 2 Oct): the line is now the strongest
+baseline, PR-AUC 0.191 (kind_prior 0.122). The ranker's 0.232 is 1.22x
+it, 95% interval 0.96–1.55x. §24.3's "1.9x the best baseline" is
+withdrawn. Every other number train.py printed is §27.2's, unchanged.
+
+**Classifier against ranker, for the record** (not a decision: F25 is
+item 15's, with its own rule). With the classifier scored by its
+probabilities (§29.1), its median lift over popularity is 4.14x and its
+worst 2.03x, against the ranker's 4.08x and 2.30x; it is ahead of the
+ranker on PR-AUC at 3 of 7 dates. CV chose it 35–144 trees, and the
+ranker 20–36, a range that starts at the 20-tree clamp (F7).
+
+**What changes**, by §29.1:
+
+- "Trees exploit a U-shape a linear model can't" leaves the report and
+  the deck (§19.2 marked). The shapes themselves (§26) are still
+  measured facts about the data; what is withdrawn is that the model's
+  edge comes from them.
+- The best baseline in the report becomes the line (§29.3).
+- Item 15 does not move up: the line did not win. Its question is
+  sharper, though: on the within-upgrade measures the ranker is fitted
+  for, it shows no advantage over the line.
+- F7, the tuning, is next, and its rule should judge a tuned model
+  against the line as well as popularity, since the line is now the
+  baseline to beat.
+- model_run in the database still carries 1 Oct's notes
+  (best_baseline=kind_prior). metrics.json now says linear; the next
+  `--scores` load writes it. Nothing on the site reads that field.
+
+### 29.3 For the report and deck
+
+*[2 Oct: the withdrawn claim stands, but the ranker's numbers below are
+the fixed model's; §30.3 gives the tuned model's.]*
+
+> To test whether the trees matter, we fitted a logistic regression on
+> the same 17 features, on the same rows. It beats the popularity
+> baseline at all seven cut dates as well, by a median of 3.7x against
+> the ranker's 4.1x, and on the within-upgrade measures (precision@10,
+> nDCG@20) it does as well as the ranker. Gradient-boosted trees were
+> ahead of it on PR-AUC at 6 of 7 dates, by a median factor of 1.2499,
+> just under the 1.25 we fixed before running the comparison, so we do
+> not claim the trees capture structure a linear model cannot: most of
+> the result comes from the features. On the held-back test window the
+> ranker's PR-AUC is 1.22 times the logistic regression's (95% interval
+> 0.96–1.55).
+
+For a slide:
+
+- A logistic regression on the same 17 features: 3.7x popularity
+  (median, 7 dates). The ranker: 4.1x.
+- Trees ahead of it at 6/7 dates, median 1.2499x, under the 1.25x bar
+  set in advance. "Trees exploit a U-shape": withdrawn.
+- Strongest baseline is now the line: the ranker is 1.22x it (95% CI
+  0.96–1.55).
+
+Replaces, wherever it appears: "1.9x the best baseline", and any
+sentence crediting the trees with the U-shape.
+
+### 29.4 Still open from item 7
+
+- **F7, the tuning.** A rule first, judged against the line and
+  popularity at the seven dates, then the run. The CV tree counts above
+  are its starting point: the ranker's 20–36 starts at the clamp, the
+  classifier chose 35–144.
+
+## 30. Item 7, second half: the trees sized by the data (F7). The rule, fixed before the run (2 Oct)
+
+§30.1 was written and committed before any tuned model was fitted on the
+real data. The only tuned fits before then were on the fixtures the
+tests build. The result is §30.2.
+
+### 30.1 What changes, how it is judged, and what each outcome means
+
+**The defect (F7).** The shipped ranker's size is a constant. Its tree
+count is the median of four CV folds inside train, the folds disagree
+widely ([2, 46, 10] on the single split, §24.3), and when the median
+falls below 20 the clamp `MIN_TREES = 20` decides. Its setting (31
+leaves, learning rate 0.05, smallest leaf 30) was set by hand on 5 Sep
+and never chosen by the data.
+
+**Why the folds disagree, found 2 Oct.** Each fold stops when
+LightGBM's nDCG@10 on its window stops improving, and LightGBM scores an
+upgrade with no positive at nDCG 1.0 whatever the model does to it (on
+a toy fit, an all-negative group's implied score is exactly 1.0). Most
+upgrades have no positive, so the number the folds stop on is mostly a
+constant, moved by the few upgrades that have one. item7_tuning.py
+prints, for the four folds of all dev rows, how many validation upgrades
+have no positive.
+
+**What `--tuning cv` does** (`train.cv_tune`):
+
+- The same four expanding folds inside train (`train.cv_folds`, which
+  the shipped path now uses too, unchanged).
+- 18 settings (`train.GRID`): 7, 15 or 31 leaves; smallest leaf 100, 30
+  or 10; learning rate 0.05 or 0.02. The shipped setting is one of them,
+  so tuning can keep it and change only the tree count.
+- Each fold grows up to 1,000 trees and stops when PR-AUC on its window
+  has not improved for 60 rounds. LightGBM's `average_precision` is used
+  for speed; it equals scikit-learn's (checked 2 Oct).
+- A fold's score is its PR-AUC over its window's floor, so folds with
+  different floors count alike; a setting's score is the median over its
+  folds. The best wins, and a tie goes to the simpler setting.
+- Its tree count is the median of its folds' stopping points. No clamp.
+- Then the refit on all of train, as now. No test row and no holdout row
+  is seen by any choice.
+- Binary relevance and CV stopping only: PR-AUC is a 0/1 measure, and
+  the choice is made on the folds. Anything else is refused.
+
+**The comparison.** `scripts/item7_tuning.py` fits fixed and tuned at
+the seven dates of §23.5. It checks itself first: fixed must reproduce
+§24.2's lifts (4.42, 4.86, 5.70, 4.02, 3.01, 4.08, 2.30x), or no verdict
+is printed.
+
+**The rule.** Tuned ships only if all three hold:
+
+1. It beats popularity at all 7 dates.
+2. Its worst lift over popularity is at most 0.25x below fixed's (at
+   least 2.05x, if fixed reproduces 2.30x).
+3. Its median lift is at most 0.50x below fixed's (at least 3.58x, if
+   fixed reproduces 4.08x).
+
+Otherwise fixed stays. Exactly at a margin holds: lifts are stored to
+two places.
+
+Why these numbers, and why tuned does not have to win:
+
+- 0.25x is §24.1's margin for worst cases, and 0.50x is stability.py's
+  for medians ("median lift does NOT separate these" inside 0.5x). Two
+  models closer than that are more than the sweep can tell apart.
+- What F7 fixes is not a score. The shipped model's size is set by a
+  constant and its setting by hand; a model whose size and setting the
+  data chose is the one to defend in a viva. So tuned only has to cost
+  nothing the sweep can see. That is §24.1's tie-break: within the
+  margin, the choice with the better reason wins (there, the label built
+  from facts).
+
+**Printed beside the rule, not in it:** the share of validation upgrades
+with no positive; each date's chosen setting, and how often it sat at
+the grid's simplest corner (7 leaves, smallest leaf 100) or its most
+flexible (31 leaves, smallest leaf 10), which would say the best setting
+may lie beyond the grid; nDCG@20 and precision@10; and the tuned model
+against the line. F8 (§29.2) judged the shipped trees and is not
+reopened: whatever the tuned model does against the line is recorded,
+and the report's F8 sentence stays as §29.3 has it.
+
+**Nothing the shipped model does changes.** `--tuning fixed` is the
+default everywhere and fits byte for byte the model it did, checked
+against a LightGBM ranker built from the literal setting. What is added:
+`--tuning` in train.py, stability.py and final_eval.py; a `_tuned`
+stability file; `tuning` and `setting` columns in each sweep row;
+`tuning=` in model_run's notes, and train.py quotes a sweep only for a
+model sized the same way; a tuned model named apart
+(`lambdarank-label_alias-tuned`); "+tuned" and the setting in the
+holdout ledger. Tested by `scripts/test_tuning.py`, seven cases: among
+them, a hand-checked choice where the winning setting's folds stop at
+3, 9, 4 and 5 trees and the refit has 4, not 20. Twelve guards were
+broken on purpose and each turned a check to FAIL. test_stability.py
+gains a case 7.
+
+**What each outcome leads to.**
+
+- **Tuned ships.** `SHIPPED_TUNING` becomes `"cv"`, one line. Then
+  `stability.py --tuning cv` for the range train.py quotes, `train.py
+  --tuning cv` for ranker.txt, and a `--scores` load under the new name.
+  A new name needs one API restart to be served (§28.5), so Varad is
+  told. Then F7's other half: the ablation re-run on the tuned setting,
+  where the noise floor of §19.4 and §20.3 should drop (ablate.py gets
+  `--tuning` then).
+- **Fixed stays.** Tuning remains an option, and §19.4's and §20.3's
+  ablation notes stand.
+
+Either way the table and the verdict go into §30.2.
+
+### 30.2 The result: tuned ships
+
+`scripts/item7_tuning.py`, run 2 Oct after the rule was pushed (0ecbfcb).
+The self-check passed: fixed reproduced §24.2 lift for lift. `git status`
+was clean afterwards. The fixed sweep took 0.8 minutes, the tuned one 4.2.
+
+**The diagnosis, measured.** In the four CV folds of all dev rows, 76% to
+88% of validation upgrades have no positive (45 of 58, 30 of 34, 48 of
+59, 145 of 191). Each of those scored nDCG 1.0 in the number the shipped
+model's folds stopped on.
+
+| cut | lift, fixed | lift, tuned | trees, fixed | trees, tuned | tuned setting | nDCG@20, fixed | nDCG@20, tuned | tuned / line |
+|---|---|---|---|---|---|---|---|---|
+| 2025-08-07 | 4.42x | 5.80x | 20 | 80 | 15/0.02/10 | 0.6039 | 0.5798 | 1.40x |
+| 2025-10-06 | 4.86x | 5.43x | 20 | 18 | 31/0.05/100 | 0.5592 | 0.6089 | 1.32x |
+| 2025-12-03 | 5.70x | 6.04x | 28 | 22 | 31/0.05/100 | 0.5449 | 0.5535 | 1.37x |
+| 2026-01-18 | 4.02x | 5.20x | 20 | 87 | 31/0.05/100 | 0.5248 | 0.5869 | 1.41x |
+| 2026-03-02 | 3.01x | 3.07x | 23 | 78 | 7/0.05/10 | 0.5119 | 0.5279 | 0.94x |
+| 2026-04-02 | 4.08x | 4.39x | 36 | 17 | 7/0.05/10 | 0.6093 | 0.6118 | 1.43x |
+| 2026-05-04 | 2.30x | 2.20x | 20 | 93 | 7/0.05/30 | 0.5963 | 0.5893 | 1.39x |
+| **worst** | 2.30x | 2.20x | | | | | | |
+| **median** | 4.08x | **5.20x** | | | | 0.5592 | 0.5869 | 1.39x |
+
+Settings are leaves/learning rate/smallest leaf. Medians of the other
+numbers: PR-AUC 0.2344 (fixed) and 0.2697 (tuned), precision@10 0.2800
+and 0.2853.
+
+**Verdict: tuned ships.** All three parts of §30.1 hold: it beats
+popularity at 7 of 7 dates; its worst lift, 2.20x, is above the 2.05x
+floor; its median, 5.20x, is above 3.58x.
+
+What it says:
+
+- **The shipped model's size was the clamp's, not the data's.** It sat
+  at exactly 20 trees at 4 of the 7 dates. Tuned, the counts run from
+  17 to 93.
+- **Tuned is ahead at 6 of the 7 dates** on lift over popularity, and
+  its median is 1.12x higher (4.08x to 5.20x). It is behind at the last
+  date, 2.20x against 2.30x, inside the 0.25x the sweep cannot resolve.
+  nDCG@20 is higher at 5 of 7.
+- **No single setting won.** 31/0.05/100 at three dates, 7/0.05/10 at
+  two, 15/0.02/10 and 7/0.05/30 once each, and neither corner of the grid
+  at any. The choice moves with the training window, so no one setting
+  is "the" answer; what tuning changes is that each date's size and
+  setting are the data's choice.
+- **Against the line, for the record.** The tuned ranker's PR-AUC is a
+  median 1.39x the line's, ahead at 6 of 7 dates (behind at 2026-03-02,
+  0.94x). By §30.1 this is recorded and not ruled on. F8's test was the
+  pointwise classifier against the line, fixed before its run, and its
+  verdict (§29.2) stands: the report does not claim the trees capture
+  structure a line cannot. §30.3 says how to give the number without
+  that claim.
+
+**What follows**, by §30.1:
+
+- `SHIPPED_TUNING` is `"cv"` from the next commit, and train.py,
+  stability.py, final_eval.py and ablate.py default to it. `--tuning
+  fixed` keeps the 5 Sep model; the tests of other things are pinned to
+  it, so their fixtures still mean what they did. `--relevance graded`
+  now needs `--tuning fixed`.
+- Then three runs: `stability.py` for the tuned range train.py quotes,
+  `train.py` for the tuned ranker.txt (`lambdarank-label_alias-tuned`),
+  and `ablate.py`, F7's other half. Their numbers go into §30.3, which
+  replaces §27.3's and §29.3's model numbers for the report.
+- Then the database: a `--scores` load under the new name, served after
+  the API's next start (§28.5), and Varad told, with §30.3's page copy.
+- §24.3, §27 and §29 stay as the record of the fixed model.
+
+### 30.3 The tuned model's numbers, and what the report says now
+
+Run 5 Oct on the code of 2cb354b: `stability.py`, `train.py` and
+`ablate.py`, all tuned by default. The sweep reproduced §30.2's tuned
+column lift for lift (5.80, 5.43, 6.04, 5.20, 3.07, 4.39, 2.20x).
+`git status` showed only `artifacts/ranker.txt`, the new model.
+
+**The sweep**, `label_alias`, tuned, each cut's lift with its own 95%
+interval:
+
+| cut | lift over popularity | 95% interval | PR-AUC | the line | trees | setting |
+|---|---|---|---|---|---|---|
+| 2025-08-07 | 5.80x | 2.15–9.55 | 0.2772 | 0.1983 | 80 | 15/0.02/10 |
+| 2025-10-06 | 5.43x | 2.31–9.21 | 0.2620 | 0.1988 | 18 | 31/0.05/100 |
+| 2025-12-03 | 6.04x | 2.39–9.64 | 0.2842 | 0.2069 | 22 | 31/0.05/100 |
+| 2026-01-18 | 5.20x | 1.77–9.54 | 0.2576 | 0.1823 | 87 | 31/0.05/100 |
+| 2026-03-02 | 3.07x | 1.20–6.20 | 0.1734 | 0.1853 | 78 | 7/0.05/10 |
+| 2026-04-02 | 4.39x | 1.78–7.93 | 0.2750 | 0.1920 | 17 | 7/0.05/10 |
+| 2026-05-04 | 2.20x | 1.33–5.04 | 0.2697 | 0.1941 | 93 | 7/0.05/30 |
+
+Beats popularity at 7/7, and by more than its interval at 7/7 (lowest
+lower end 1.20x); beats semver 7/7; beats the line 6/7, median ratio
+1.39x. Median lift 5.20x (2.20–6.04x). Each date's interval spans a
+factor of 4 to 5.
+
+**The single split** (5 Apr; test 1,955 rows, 1,511 changes, 191
+upgrades). CV chose 7/0.05/10, its folds stopping at [6, 28, 35]: 28
+trees.
+
+| | tuned | 95% interval | fixed (§27.2) |
+|---|---|---|---|
+| PR-AUC (floor 0.079) | **0.283** | 0.223–0.399 | 0.232 |
+| lift over popularity | **2.53x** | 1.65–5.10x | 2.08x |
+| lift over the line (0.191) | **1.48x** | 1.14–1.86x | 1.22x (0.96–1.55) |
+| precision@10, 17 upgrades | 0.271 | 0.186–0.367 | 0.253 |
+| nDCG@20, 11 upgrades | 0.575 | 0.391–0.735 | 0.550 |
+
+3.6x the floor. Gain shares: public_depth 32.0%, kind 19.9%,
+name_length 15.5%, module_depth 8.2%, release_size 8.0%, the rest under
+5%; six features at zero (has_export_path, was_deprecated_before,
+is_private, is_top_level, inherited_by, bump).
+
+**The ablation, tuned** (one setting and 28 trees for every run, as
+§30.1 required):
+
+- **Noise floor 9.7%** (dropping is_top_level, zero gain, moved PR-AUC
+  by 9.7%). The fixed model on the same data and split, `ablate.py
+  --tuning fixed` run the same day: **16.7%** (dropping inherited_by),
+  at 20 trees. So tuning cut the floor from 16.7% to 9.7%, as F7
+  expected, and the fixed table showed why it was unreadable: dropping
+  popularity "improved" PR-AUC by 39%, dropping history by 24%.
+- **One group clears it: reachability** (public_depth,
+  has_export_path). Removing it costs 28.3% of PR-AUC (2.9x the floor),
+  path shape and reachability together 30.8%. Path shape, blast radius,
+  history and popularity each move less than the floor.
+- **Reachability alone scores as well as all 17 features**: 0.288
+  against 0.283 (102%), with the same precision@10 (0.271) and nDCG@20
+  0.540 against 0.575. On this split the model is largely "how short is
+  this symbol's public name". That carries the circularity ablate.py
+  names: downstream code imports by short public names, and label_alias
+  matches export paths, so a short-named symbol also has more ways to
+  be counted as used.
+- **Pooled PR-AUC is largely "which upgrades are risky"** (F14). The
+  three popularity features are constant inside an upgrade, so they rank
+  nothing inside one (precision@10 and nDCG@20 equal the popularity
+  baseline's, 0.176 and 0.255), yet a model on them alone reaches 78% of
+  the full PR-AUC, 1.97x the popularity baseline's. History alone reaches
+  83%, again with almost no within-upgrade ranking (nDCG@20 0.338). What
+  separates the model from those is the within-upgrade numbers.
+
+What this changes:
+
+- **The report quotes the tuned model.** The paragraph and slide below
+  replace §27.3's numbers and §29.3's model figures. §27.2, §29.2 and the
+  fixed rows above stay as the record.
+- **The report states the reachability result and its circularity** as
+  a limitation, beside the label's blindness to methods (§11.6: the
+  usage index sees imports, not attribute access). It is one split, and
+  102% against 100% is inside the floor: "as well as", not "better
+  than".
+- **Item 11 (F6 + F14) gets sharper**: lead with precision@10 and
+  nDCG@20 beside PR-AUC, because PR-AUC alone credits a model for
+  telling risky upgrades from quiet ones, which package-level features
+  do without ranking any change.
+
+**For the report**, replacing §27.3:
+*[Superseded 9 Oct: after F39 the numbers and the wording are §32.3's.]*
+
+> On the held-back test window (1,955 rows: 1,511 distinct changes in
+> 191 upgrades), the ranker reaches PR-AUC 0.283 (95% interval
+> 0.223–0.399) against a floor of 0.079: 2.5 times the popularity
+> baseline (1.65–5.10) and 1.5 times the strongest baseline, a logistic
+> regression on the same features (1.14–1.86). Across seven cut dates
+> its lift over popularity has a median of 5.2x (2.2x to 6.0x across the
+> dates), and at every date the lower end of its own 95% interval stays
+> above 1.0x; the lowest is 1.20x. Each date's interval spans a factor of
+> four to five, so the size of the lift is much less certain than the
+> fact of it. Inside an upgrade, precision@10 is 0.271 (0.186–0.367)
+> over 17 upgrades and nDCG@20 0.575 (0.391–0.735) over 11. The model's
+> size and settings are chosen by time-ordered cross-validation inside
+> each training window; intervals come from 2,000 resamples of whole
+> upgrades, the model held fixed.
+
+And replacing §29.3's model figures (the withdrawn claim stays
+withdrawn):
+
+> A logistic regression on the same 17 features also beats popularity
+> at every cut date, by a median of 3.7x against the ranker's 5.2x. We
+> tested in advance whether boosted trees capture structure a linear
+> model cannot: a tree classifier was ahead of the regression at 6 of 7
+> dates by a median factor of 1.2499, just under the 1.25 we had fixed,
+> so we make no such claim. The shipped ranker, tuned afterwards, scores
+> 1.48 times the regression on the held-back window (1.14–1.86).
+
+And the ablation, which the report can now quote in part:
+
+> With the model's size chosen by cross-validation, removing a feature
+> the model never uses moves PR-AUC by up to 9.7% (16.7% at the old
+> fixed size of 20 trees), so smaller effects are not interpreted. One
+> group clears that floor: the two reachability features, how short a
+> symbol's public import path is and whether it is
+> re-exported under a shorter name. Removing them costs 28% of PR-AUC,
+> and on their own they score as well as all 17 features. We state the
+> circularity this carries: code imports symbols by their shortest
+> public names, so a symbol with a short public path also has more ways
+> to be matched by the usage label.
+
+For a slide:
+
+- PR-AUC 0.283 (95% CI 0.223–0.399); floor 0.079.
+- 2.5x popularity (1.65–5.10x); 1.5x a logistic regression on the same
+  features (1.14–1.86x).
+- Median 5.2x popularity across 7 cut dates; every date's interval
+  above 1.0x (lowest 1.20x).
+- precision@10 0.271 (17 upgrades); nDCG@20 0.575 (11 upgrades).
+- What it rests on: reachability (how short the public import path is).
+
+**For the site** (the page copy Varad has is 16 Sep's):
+*[Superseded 9 Oct by §32.3's copy, which quotes no median (F40).]*
+
+> Beats a popularity baseline at all 7 evaluation cut dates, by a median
+> of 5.2x (2.2x to 6.0x), and at every date the lower end of its 95%
+> interval stays above 1x. Measured on releases published before 28 July
+> 2026; later releases are held back, unseen, for the final evaluation.
+
+model_run's notes for `lambdarank-label_alias-tuned` carry the same
+range ("across 7 cut dates: beats popularity 7/7, lift vs popularity
+median 5.20x min 2.20x max 6.04x, lift's 95% interval above 1.0x at
+7/7").
+
+### 30.4 Still open from item 7
+
+- **Commit ranker.txt and load it.** *[Done 5 Oct, §30.5.]*
+- **`ablate.py --tuning fixed` on today's data**, for the fair
+  comparison of the noise floor. *[Done 5 Oct: 16.7%, against 9.7%
+  tuned; §30.3.]*
+- Item 7 is otherwise done. Next on the list: item 8 (F16, F17), item 11
+  (F6, F14) with the measurement above, and F26's real-release story for
+  the 30 Oct demo.
+
+### 30.5 Loaded and served (5 Oct)
+
+ae24497 commits the tuned ranker.txt. `python ml/db.py --scores` the same
+day wrote `lambdarank-label_alias-tuned` (positive_rate 0.078772) and
+21,498 scores, all written 2026-10-05, none on a version-string row
+(db_model_check.py). It is the newest model_run row (trained_at
+2026-10-05 08:36 UTC), ahead of `lambdarank-label_alias` (1 Oct's scores,
+kept as the fallback), `lambdarank-label_scoped` and `v0-fake`.
+
+`curl -s https://breakrank.onrender.com/health` right after the load
+answered `{"ok":true,"model_version":"lambdarank-label_alias-tuned"}`:
+the API had started since the load (it sleeps when idle, §28.5), so the
+site serves the tuned model now. `MODEL_VERSION=lambdarank-label_alias`
+on Render rolls it back without touching data.
+
+The other numbers the load printed are the 1 Oct load's, unchanged:
+23,267 breakage rows sent, 27,900 in the table, the same release
+statuses (§21.9), 232 releases with no status the files can establish.
+
+## 31. F26: one release the model got right, and one it got wrong (5 Oct)
+
+§31.1 was written and committed before `scripts/stories.py` read the
+real data. The stories are §31.2.
+
+### 31.1 Where the stories come from, and how they are chosen
+
+The project book asks for two (§11.9): "a real release your model
+ranked correctly, with the GitHub issues that followed", and "a case it
+got wrong, and why you think it did". It adds that the failure story
+matters more. F26 makes the first part of the 30 Oct definition of done.
+
+- **Only releases the model never trained on.** The test half of the
+  development data: upgrades released after the single split's cut
+  (5 Apr) and before the holdout (28 Jul). ranker.txt was fitted on the
+  train half, and the site ranks these releases with that same model, so
+  each story can be shown live. The holdout is not read: choosing a
+  story from it would mean looking at its labels.
+- **The list the site shows.** One release's changes, private symbols
+  left out as the API does by default, ranked by the model's score.
+- **Candidates:** releases with at least one used change and at least 20
+  changes, so ranking has something to do.
+- **The success story:** the most used changes in the model's top 10
+  above what a random order would put there (used x 10 / changes).
+  Popularity and semver score every change of one release alike, so
+  inside a release they are a random order. A tie goes to the release
+  whose found changes more packages use.
+- **The failure story:** the most-used change the model put in the
+  bottom half of its list, the change people most needed to see,
+  buried. With none in a bottom half, the used change ranked lowest
+  relative to its list. Its features are printed, for the why.
+- **Printed with them:** how the model did on every candidate, so the
+  two are read against the rest; the site's address for each release;
+  and a GitHub issue search for the change, for "the issues that
+  followed".
+- Tested by `scripts/test_stories.py`, five cases. Seven rules were
+  broken on purpose (the tie-break, the bottom-half rule both ways, the
+  train half, private symbols, the random expectation, the size filter)
+  and each turned a check to FAIL.
+
+A story shows what the numbers mean; it is not more evidence than they
+are. The report quotes the summary line beside it.
+
+### 31.2 The stories (9 Oct)
+
+`scripts/stories.py`, run 9 Oct after its rules were pushed (941ae8c),
+on the tuned model the site serves.
+
+**The summary, quoted beside any story.** 9 releases in the test half
+have a used change and 20 or more public changes. At all 9 the model's
+top 10 holds more used changes than a random order would. Across them it
+finds 29 of 85 used changes in the top 10, where a random order would
+find 13.0. (Inside one release, popularity and semver are a random
+order.)
+
+**The success story: cryptography 46.0.7 -> 47.0.0** (released 24 Apr
+2026). 31 public changes, 7 used downstream. The model's top 10 holds 5
+of the 7, against 2.3 by chance:
+
+| rank | used by | change |
+|---|---|---|
+| 1 | - | `__about__.__copyright__`, value changed |
+| 2 | 1 package | `x509.base.RevokedCertificate`, kind changed |
+| 3 | - | `utils.DeprecatedIn46`, removed |
+| 4 | 6 | `hazmat.primitives.asymmetric.types.PrivateKeyTypes`, value changed |
+| 5 | 3 | `...asymmetric.types.PublicKeyTypes`, value changed |
+| 6 | **10** | `hazmat.primitives.kdf.pbkdf2.PBKDF2HMAC`, kind changed |
+| 8 | 3 | `hazmat.primitives.kdf.concatkdf.ConcatKDFHash`, kind changed |
+| 20 | 1 | `hazmat.primitives.asymmetric.ec.SECT163R2`, removed |
+| 30 | 1 | `hazmat.primitives.kdf.kbkdf.KBKDFHMAC`, kind changed |
+
+Ranks 7, 9 and 10 are unused (`ConcatKDFHMAC`; two `EllipticCurveOID`
+binary-curve entries). The four most-used changes (10, 6, 3 and 3
+packages) are all in the top 8.
+
+**The failure story, by the rule:** `KBKDFHMAC`, used by 1 package,
+ranked 30 of 31 (public_depth 5, module_depth 5, not in `__all__`, no
+shorter export path: everything about it reads "obscure"). It is the
+same release, and it is a mild failure: across all 9 releases, every
+used change the model put in the bottom half of its list is used by a
+single package. Its misses are the long tail.
+
+**What the changelog says**, read after the run (cryptography.io,
+changelog for 47.0.0). Its backwards-incompatible list names the removal
+of binary elliptic curves (the `SECT*` classes), the end of OpenSSL
+1.1.x support, and errors that changed type. The key-derivation classes
+the model ranked high appear only as gaining `derive_into` methods. So
+their "kind changed" is most likely the classes being reimplemented,
+which griffe sees as a change of kind, rather than a break for the 10
+packages that use PBKDF2HMAC. The label says "used", not "broken"
+(F2), and this release shows the gap: the documented break, the binary
+curves, sits at ranks 9, 10 and 20, used by one package between them.
+
+**The failure a viewer sees first, outside the rule.** Rank 1 is
+`cryptography.__about__.__copyright__`: a copyright notice whose text
+changed, used by nobody. That is F1's kind of row, module metadata,
+under a name `VERSION_LEAVES` does not list. Recorded as found, not as
+the rule's pick.
+
+**F39. Module metadata is ranked as breaking changes.**
+`__copyright__`, and by the same reasoning `__author__`, `__license__`,
+`__email__`, `__title__`, `__summary__`, `__uri__`, `__url__`,
+`__maintainer__`, `__credits__` and `__status__`, are what `__version__`
+is: package metadata, not API anyone calls. F1 took version strings out
+of the model because they are not breaking changes; these are not
+either. *Fix:* count them, then treat them as F1 treats version strings
+(out of the model, sorting last, and in the all-clear of F15), decided
+on what the rows are and not on the score, then measured before and
+after at the same seven dates, as item 2 was. Before the demo: the demo
+story's list starts with one. *[Rule fixed 9 Oct, before the count:
+§32.1. Fifteen names, a changed value only. Done 9 Oct (§32.3): 58 rows,
+two names added after the count.]*
+
+**For the demo and the report**, once F39 is done and the list no
+longer starts with the copyright notice:
+*[F39 is done, and the retrained model reordered the list. The wording
+is now §32.3's.]*
+
+> cryptography 46.0.7 -> 47.0.0 changed 31 public names. Downstream
+> code uses 7 of them. BreakRank's top 10 holds 5 of those 7, and its
+> top 8 holds the four that the most packages use; reading the list in
+> any fixed order would find 2.3 of them in the first 10. Across the 9
+> comparable releases the model never trained on, its top 10 beats that
+> random order at every one.
+
+And the honest coda, for the viva: the label measures use, not
+breakage. The changelog's real break, the binary curves, is used by
+almost nobody, and the widely used classes the model ranked high were
+probably reimplemented rather than broken. Telling those apart needs
+what griffe cannot see, which is why the book's February hand-audit of
+200 labels is the table a panel will remember.
+
+## 32. F39: package metadata out of the model (9 Oct)
+
+§32.1 was written and pushed before `scripts/metadata_count.py` read the
+real data. The count goes in §32.2, and the fix with its before and
+after in §32.3.
+
+### 32.1 The rule, fixed before the count
+
+**Which rows.** A row is package metadata when the last part of its
+symbol is one of these 15 names and griffe reports that its value
+changed (`ATTRIBUTE_CHANGED_VALUE`). The names are `METADATA_LEAVES` in
+`ml/features/build.py`, taken from the places that define them, not
+from the data:
+
+| where the names come from | names |
+|---|---|
+| pydoc, which prints a module's DATE, AUTHOR and CREDITS | `__author__`, `__credits__`, `__date__` |
+| the `__about__.py` convention (pypa's packaging 21.3; cryptography today) | `__title__`, `__summary__`, `__uri__`, `__email__`, `__license__`, `__copyright__` |
+| requests' `__version__.py`, the same idea under other names | `__description__`, `__url__`, `__build__`, `__author_email__` |
+| the module-header fields §31.2 named | `__maintainer__`, `__status__` |
+
+`__version__` is F1's and stays there. `__build__` is requests' version
+number written in hexadecimal, so it changes with every release, as a
+version string does.
+
+**Only a changed value.** A changed string breaks nobody. A removed one
+can: code that reads `pkg.__author__` would fail. So a removal, or any
+other kind of change to these names, stays in the model, and the count
+says how many there are. F1 went by name alone; it is left as it is.
+*[10 Oct: a value changed to `unset`, a removal in effect, stays too;
+and F1 now works this way (§33.1).]*
+
+**Where the rows go: where F1 sends version strings.** Out in build.py
+before any feature is computed, so release_size and package_churn do not
+count them; from features.csv and holdout.csv alike; with no score, so
+they sort last on the site; and into the all-clear beside the version
+strings (F15, Varad's decision). labelled.csv keeps them, as it keeps
+version strings.
+
+**A name the count turns up** joins only if it is package metadata by the
+same test: it describes the package (who made it, its licence, its
+links, its release) and no code calls it. §32.2 marks any such name as
+added after the count. The count lists those candidates by name, row
+count and one example, with no labels, so their labels cannot steer the
+choice.
+
+**What the count reports** (read only, nothing fitted or scored): the
+rows each name loses in dev and in the holdout, and how many of the dev
+ones are used; the other changes to those names, which stay; the
+upgrades F39 empties; where the dev rows sit (the single split's test
+half, and §31.1's story candidates); their reachability features against
+every row's; and whether each label still clears the holdout's gates.
+The holdout is counted, never scored, which ml/holdout.py allows.
+
+**What follows, whatever the count says** (§32.3): the drop in build.py;
+the seven cut dates before and after (`stability.py --at`, as item 2 was
+measured, §23) and the single split; then the tuned model retrained and
+reloaded. The fix ships either way, as F1 did: it corrects what counts as
+a change, and is not a model choice. Then stories.py runs again under
+§31.1's rules. If a release other than cryptography 46.0.7 -> 47.0.0
+wins, that release is the demo story, and §31.2's demo wording follows
+it.
+
+Tested by `scripts/test_metadata.py`, three cases. Twelve guards were
+broken on purpose (the kind test, a name dropped from the list, used
+rows counted from the holdout, the emptied upgrades, section 6 filtered
+on labels, the holdout tripwire, the F1 check, private rows among the
+story candidates, the gates' "more than", the test half, the used count,
+a file written) and each turned a check to FAIL.
+
+### 32.2 The count, and two names added after it (9 Oct)
+
+`scripts/metadata_count.py`, run 9 Oct after §32.1 was pushed (5e061a4),
+on the files the tuned model was built from.
+
+| | rows F39 takes out | of them used (`label_alias`) |
+|---|---|---|
+| dev | **31** of 16,628 (0.19%) | **0** (dev has 611 used rows) |
+| holdout | **0** of 4,871 | |
+
+- By name, all in dev: `__copyright__` 10 (6 packages, packaging 23.1
+  -> 23.2 among them), `__date__` 7 (one package, deprecated),
+  `__credits__` 6 (pathspec), `__license__` 4 (dill), `__author__` 3
+  (3 packages), `__url__` 1. The other nine never changed value here.
+- 25 other changes to these names stay, all removals: `__url__` 17,
+  `__author__` 2, `__license__` 2, and one each of `__copyright__`,
+  `__email__`, `__summary__` and `__title__`.
+- **16 dev upgrades held nothing else.** After F39 they changed nothing
+  anyone could feel, and they join the all-clear (F15).
+- The single split's test half holds 2 of the rows, neither used. The
+  story candidates stay at 9, and one of them holds a metadata row:
+  cryptography 46.0.7 -> 47.0.0, its `__copyright__`.
+- The holdout's gates do not move: `label` 140/14/10, `label_scoped`
+  206/23/15, `label_alias` 263/19/13.
+
+**Why the model put one first.** Against every dev row, these rows sit at
+the top of their packages: median public_depth 1 against 3, top level
+54.8% against 3.1%, in `__all__` 41.9% against 2.9%. That is what the
+model reads as important (reachability, §30.3), and a package's metadata
+always sits there. So the copyright notice at #1 is not a random miss: it
+is the model's main signal applied to a row it should never have been
+shown.
+
+**Added after the count**, by §32.1's test, from what each name is.
+Section 6 showed no labels, and its counts take dev and the holdout
+together:
+
+| name | rows | why it is package metadata |
+|---|---|---|
+| `__version_info__` | 18 | the version as a tuple: F1's `__version_tuple__` under another name |
+| `__version_time__` | 9 | when the release was built, as `__date__` is |
+
+**Not added**, because code uses each of these, or because it describes
+something other than the package: `__slots__` (142, a class's
+attributes), `__protobuf__` (37, proto-plus's module manifest, read at
+import), `__all__` (7, what a module exports), `__array_api_version__`
+(4, the array-API standard a namespace implements, which callers check),
+`__tabversion__` (2, PLY's table format, which PLY checks), and the
+class-level `__str__`, `__bound__`, `__contains__`, `__elements__` and
+`__match_args__`. `__doc__` (9) is a docstring set as an attribute: a
+changed one breaks nobody either, but it describes an object, not the
+package, so it is not F39's. Noted for the hand audit.
+
+**F39 is small.** 31 rows plus the added names' 27, none of the 31 used,
+against 611 used rows in dev. It matters for what a viewer sees first
+more than for the headline: the demo story's list starts with one of
+them. The model's numbers are expected to move little.
+
+**Step 2, and how it is read**, fixed here before it runs. build.py drops
+these rows where F1 drops version strings (`drop_metadata`, after
+`drop_version_strings` and before `add_features`, so release_size and
+package_churn never count them). Then:
+
+1. The seven cut dates again (`stability.py --at` them), set beside the
+   5 Oct sweep by `scripts/compare_sweeps.py`: the lift before -> after at
+   each date, a date counting as moved only by more than 0.25x (§24.1).
+2. The sweep at its own dates, which train.py quotes, and train.py for
+   the single split and ranker.txt, read beside §30.3's numbers.
+3. stories.py again, under §31.1's rules. Whichever release it picks is
+   the demo story.
+4. The load, under the same name. It replaces the model's scores whole
+   (§28.3), so the metadata rows lose theirs and sort last.
+   `db_model_check.py` counts metadata rows with a score; after the load
+   it should read 0.
+
+Tested by `scripts/test_metadata.py`, four cases now (the rule; build.py's
+drop, before the features; the count on files built before step 2; what
+the count refuses), and `scripts/test_compare_sweeps.py`, three cases.
+Sixteen guards in the first and five in the second were broken on
+purpose, and each turned a check to FAIL. db_model_check.py's new count
+was run against a scratch Postgres built from migrations 001-006: it
+counted the two metadata value changes among six rows (not a removed
+`__author__`, a version string or `__slots__`), and read 0 once their
+scores were gone.
+
+### 32.3 Step 2: the drop, before and after, and F40 (9 Oct)
+
+Run 9 Oct after §32.2 was pushed (5b164e3). ranker.txt committed in
+5eab8e9 and loaded the same evening.
+
+**What went.** build.py printed F1's 1,769 rows and 868 upgrades as
+before, then **F39: 58 rows and 29 more upgrades**, all in dev. The two
+names added after the count brought 27 of the rows, and `__version_info__`
+brought **9 used ones** (docutils among its 2 packages): code reads it as
+it reads `__version__`, and a new value breaks nobody. Dev is now 16,570
+rows in 948 upgrades, with 602 used rows. The single split's test half
+is 1,952 rows (1,508 changes, 190 upgrades), floor 0.0784. The holdout
+is untouched: 4,871 rows, 191 pairs, fingerprint 9b524ece19cf.
+metadata_count.py on the rebuilt files: "F39 finds no rows".
+
+**At the seven reference dates (§23.5), before and after**
+(`scripts/compare_sweeps.py`):
+
+| cut | lift over popularity | PR-AUC | test rows | nDCG@20 |
+|---|---|---|---|---|
+| 2025-08-07 | 5.80x -> 5.67x | 0.2772 -> 0.2730 | 11,043 -> 11,023 | 0.5798 -> 0.5876 |
+| 2025-10-06 | 5.43x -> 5.85x (up) | 0.2620 -> 0.2841 | 10,284 -> 10,268 | 0.6089 -> 0.5925 |
+| 2025-12-03 | 6.04x -> 5.19x (down) | 0.2842 -> 0.2452 | 9,677 -> 9,663 | 0.5535 -> 0.5553 |
+| 2026-01-18 | 5.20x -> 5.23x | 0.2576 -> 0.2599 | 7,963 -> 7,956 | 0.5869 -> 0.6283 |
+| 2026-03-02 | 3.07x -> 3.11x | 0.1734 -> 0.1764 | 4,915 -> 4,911 | 0.5279 -> 0.4904 |
+| 2026-04-02 | 4.39x -> 4.34x | 0.2750 -> 0.2737 | 4,254 -> 4,251 | 0.6118 -> 0.6180 |
+| 2026-05-04 | 2.20x -> 2.27x | 0.2697 -> 0.2783 | 1,622 -> 1,621 | 0.5893 -> 0.6464 |
+
+Median lift 5.20x -> 5.19x, worst 2.20x -> 2.27x. Beats popularity 7/7,
+and by more than its interval 7/7, before and after; beats the line 6/7
+-> 7/7 (median 1.44x). Two dates moved by more than 0.25x, one each way,
+and the median did not: **F39 left the sweep where it was.** *[10 Oct,
+F43 (§33.3): a median is no longer read as a fix's effect. What still
+says F39 left the sweep where it was is the two counts the report rests
+on, beats popularity and interval above 1.0x, at 7/7 before and
+after.]* At
+2025-12-03 CV chose another setting than on 5 Oct (31/0.05/10 and 83
+trees, against 31/0.05/100 and 22).
+
+**The sweep at its own dates.** The quantile dates (F38) moved 1 to 5
+days when 29 upgrades left, and there the median lift is **3.23x**
+(2.25x–5.96x): beats popularity 7/7, interval above 1.0x at 7/7, beats
+the line 6/7 (median 1.31x). train.py quotes this sweep, so model_run's
+notes now read "median 3.23x min 2.25x max 5.96x".
+
+| reference date | lift | moved date | lift | what left the test half |
+|---|---|---|---|---|
+| 2025-08-07 | 5.67x | 2025-08-08 | 5.26x | 7 rows |
+| 2025-10-06 | 5.85x | 2025-10-11 | 5.96x | 65 rows |
+| 2025-12-03 | 5.19x | 2025-12-07 | 5.28x | 4 rows |
+| 2026-01-18 | 5.23x | 2026-01-21 | 2.55x | 1,319 rows, 59 used: pandas 3.0.0 (974, 48 used), pycparser 3.0 (309, 4), pyparsing 3.3.2 (15, 6) and five small ones |
+| 2026-03-02 | 3.11x | 2026-03-06 | 3.23x | 51 rows |
+| 2026-04-02 | 4.34x | 2026-04-07 | 2.25x | 2,299 rows, none used: sglang 0.5.10 (2,296) and three one-row releases |
+| 2026-05-04 | 2.27x | 2026-05-06 | 2.34x | 120 rows |
+
+Two releases halve the lift at their dates, for opposite reasons:
+
+- **pandas 3.0.0** (21 Jan 2026; 974 changes, 48 used), which the model
+  ranks well. With it in the test half the model's PR-AUC is 0.260;
+  without it and the rest of those three days, 0.146, and the line beats
+  the model there (0.164).
+- **sglang 0.5.10** (5 Apr 2026; 2,296 changes, none used), which drags
+  the baseline down. Popularity scores every change of a release alike,
+  so it puts all 2,296 at sglang's place in its list: its PR-AUC is
+  0.063 with them in the test half and 0.112 without. The model's barely
+  moves (0.274 -> 0.252). The lift halves because the baseline recovers.
+
+And with neither involved, a one-day shift that moved 7 rows changed a
+date's lift by 0.41x under the same setting and tree count (2025-08-07 ->
+08-08). A single date's lift moves by more than §24.1's 0.25x with no
+fix at all.
+
+**F40. A cut date's lift can hinge on one release.** The median over
+seven dates is 5.19x at the reference dates and 3.23x four days later,
+on the same data, the same model and the same code. Every claim that
+held at all 14 dates: the model beats popularity, and the lower end of
+each date's 95% interval is above 1.0x (it beats the line at 13).
+*Fix:* report the lift as its range across dates with the count of
+dates that clear 1.0x, never as a median alone; name the two releases
+when the range is given (*[10 Oct, §33.3: after the retrain pandas
+3.0.0 moves its date far less, so the report names sglang 0.5.10
+alone]*); and lead with the within-upgrade numbers
+(item 11, F14), where each upgrade counts once and one release cannot
+outweigh the rest by its size. Done in the wording below; item 11
+measures the rest.
+
+**The single split** (5 Apr, both releases on the train side): PR-AUC
+**0.252** (0.192–0.397), floor 0.078; lift over popularity **2.25x**
+(1.30–4.85); over the line **1.38x** (1.08–1.83); precision@10 0.247
+(0.155–0.347) over 17 upgrades; nDCG@20 0.576 (0.425–0.726) over 11.
+Against 5 Oct's 0.283, 2.53x and 1.48x, each inside the other's interval.
+CV chose 7/0.05/30 and 20 trees (folds [8, 22, 20]), against 7/0.05/10
+and 28: most of the move is that choice, not the 55 training rows F39
+took out. Gain: public_depth 34.7%, kind 19.8%, name_length 13.8%,
+release_size 8.6%, module_depth 7.0%; the same six features at zero.
+
+**The ablation, again** (one setting and 20 trees for every run): the
+**noise floor is 21.2%** (dropping inherited_by, zero gain), against
+9.7% on 5 Oct at 28 trees. Removing reachability costs 21.9%, now at the
+floor, so **no group clears it**. Reachability alone scores 0.290, **115%
+of the full model**; on 5 Oct it scored 0.288 and 102%. The full model
+moved between the two runs (0.283 -> 0.252) and the two-feature model did
+not. So §30.3's "one group clears the floor" was one run's; "the two
+reachability features alone do as well as all 17" has held in both. On
+this split they also match it inside an upgrade: precision@10 0.282
+against 0.247, nDCG@20 0.584 against 0.576. Whether a two-feature model
+should ship is item 15's question (F25). A sweep of it across the seven
+dates would answer it; none has been run.
+
+**The stories again** (§31.1's rules, the retrained model). Still 9
+candidates; the top 10 beats a random order at 8 of them (was 9), and
+finds 25 of 85 used changes against 13.1. The rule picks **cryptography
+46.0.7 -> 47.0.0** again: 30 public changes now, 7 used, 5 of them in
+the top 10 against 2.3 by chance. The list starts with
+`x509.base.RevokedCertificate` (1 package); `PrivateKeyTypes` (6) is
+4th, `PublicKeyTypes` (3) 5th, `PBKDF2HMAC` (10) 8th, and the binary
+curves are still 9th, 10th and 20th. The failure story is sharper:
+`kdf.concatkdf.ConcatKDFHash`, used by 3 packages, is **last of 30** (it
+was 8th): public_depth 5, not in `__all__`, no shorter export path.
+
+**The load**, 9 Oct, from 5eab8e9: `lambdarank-label_alias-tuned`
+re-loaded under its own name, 21,440 scores (replacing 21,498), all
+written 2026-10-09; version-string rows with a score 0, package-metadata
+rows with a score 0. trained_at is unchanged (2026-10-05), so the API
+needed no restart, and /health named the model. model_run's pr_auc now
+reads 0.2520.
+
+**For the report**, replacing §30.3's paragraph:
+*[Superseded 10 Oct, with the slide, the site copy and the demo below:
+§35.2. "1.38 times the strongest baseline" is withdrawn; path length
+alone is the strongest (§34.2).]*
+
+> On the held-back test window (1,952 rows: 1,508 distinct changes in
+> 190 upgrades), the ranker reaches PR-AUC 0.252 (95% interval
+> 0.192–0.397) against a floor of 0.078: 2.25 times the popularity
+> baseline (1.30–4.85) and 1.38 times the strongest baseline, a logistic
+> regression on the same features (1.08–1.83). Across fourteen cut
+> dates, seven fixed in advance and seven placed a few days later by the
+> same procedure, it beats popularity at every one, and at every one the
+> lower end of its own 95% interval stays above 1.0x. How large the lift
+> is depends on where a cut falls, from 2.25x to 5.96x: a date's lift
+> halves when one large release leaves its test half, whether a release
+> the model ranks well (pandas 3.0.0) or one whose 2,296 unused changes
+> pull the popularity baseline down (sglang 0.5.10). Inside an upgrade,
+> precision@10 is 0.247 (0.155–0.347) over 17 upgrades and nDCG@20 0.576
+> (0.425–0.726) over 11. The model's size and settings are chosen by
+> time-ordered cross-validation inside each training window; intervals
+> come from 2,000 resamples of whole upgrades, the model held fixed.
+
+And the ablation, replacing §30.3's:
+
+> With the model's size chosen by cross-validation, removing a feature
+> the model never uses moves PR-AUC by up to 21% (10% in an earlier run
+> that chose more trees), so no feature group's effect can be read from
+> the table. One result held in both runs: the two reachability features,
+> how short a symbol's public import path is and whether it is
+> re-exported under a shorter name, score as well as all 17 on their own
+> (102% and 115%). We state the circularity this carries: code imports
+> symbols by their shortest public names, so a symbol with a short public
+> path also has more ways to be matched by the usage label.
+
+For a slide:
+
+- PR-AUC 0.252 (95% CI 0.192–0.397); floor 0.078.
+- 2.25x popularity (1.30–4.85x); 1.38x a logistic regression on the same
+  features (1.08–1.83x).
+- Beats popularity at all 14 cut dates, every date's interval above
+  1.0x; the lift runs 2.25x–5.96x with the date.
+- precision@10 0.247 (17 upgrades); nDCG@20 0.576 (11 upgrades).
+- What it rests on: reachability. Two features alone match all 17.
+
+**For the site**, replacing §30.3's (no median, F40):
+
+> Beats a popularity baseline at every evaluation cut date, by 2.2x to
+> 6.0x depending on the date, and at every date the lower end of its 95%
+> interval stays above 1x. Measured on releases published before 28 July
+> 2026; later releases are held back, unseen, for the final evaluation.
+
+**For the demo**, replacing §31.2's:
+
+> cryptography 46.0.7 -> 47.0.0 changed 30 public names. Downstream code
+> uses 7 of them. BreakRank's top 10 holds 5 of those 7, the one ten
+> packages use among them; reading the list in any fixed order would
+> find 2.3 of them in the first 10. Across the 9 comparable releases the
+> model never trained on, its top 10 beats that random order at 8.
+
+And the failure, from the same list: `ConcatKDFHash`, used by 3
+packages, is ranked last. Its path is deep, it is not exported and it
+has no shorter name; everything the model reads says "obscure", and the
+model trusts how short a name is above everything else. §31.2's coda
+stands: the label measures use, not breakage, and the changelog's real
+break, the binary curves, is used by almost nobody.
+
+## 33. F1 narrowed, and the all-clear moves into the pipeline (10 Oct)
+
+Varad answered on 9 Oct. The all-clear (F15, item 12) is decided by the
+pipeline, his option (b), once F1 has been changed in two ways. §33.1 was
+written and pushed before `scripts/version_count.py` read the real data.
+The count goes in §33.2, and the retrain in §33.3.
+
+### 33.1 The rule, fixed before the count
+
+**What changes.** F1 (§23) took out any change to six names, judged by
+the last part of the symbol alone: `__version__`, `__VERSION__`,
+`__version_tuple__`, `version`, `VERSION` and `version_tuple`. The two
+changes are to WHERE those names count, not WHICH names:
+
+1. **Only a changed value**, as F39 does (§32.1). A removed `__version__`
+   breaks every line that reads `pkg.__version__`. Flask and Werkzeug
+   have both deprecated theirs, and it is one of the most imported names
+   there is, so it is the last change the site should hide. A removal,
+   or any other kind of change to these names, stays in the model. So
+   does one more case, found in review before the count: griffe reports
+   `__version__ = "1.0"` turned into the bare annotation
+   `__version__: str` as a changed value, `'1.0' -> unset`. The value is
+   gone and code that reads it fails, as after a removal, so a value
+   changed to `unset` stays. For F39's own reason (§32.1, a removal stays
+   a change) the same holds for its names from today.
+2. **The bare names only directly in a module.** `version`, `VERSION`
+   and `version_tuple` are also a submodule (`packaging.version`), a
+   method, or a class's own attribute. setuptools-scm writes `version` and
+   `version_tuple` beside the dunders in a package's `_version.py`, and
+   there they are the package's version, so they go; anywhere else they
+   stay. The dunders go wherever they sit. Varad named `version` and
+   `VERSION`; `version_tuple` is the same case and follows them.
+
+**How "directly in a module" is judged: by griffe's own words.** griffe
+names the changed object by its path inside its module, just before its
+sentence for the kind:
+
+    .../pkg/_version.py:5: version: Attribute value was changed: ...
+    .../requests/adapters.py:193: HTTPAdapter.max_retries: Attribute ...
+
+A bare name there is an attribute of the module itself. That is griffe's
+statement, not a guess from the spelling: a rule that took CapWords for a
+class would call `PIL.Image` one, and it is a module. griffe resolves an
+alias to its target before it reports a changed value, so the symbol is
+always the module's path and that name. An explanation that is empty or
+cannot be read leaves the row in the model. When in doubt the row stays,
+because hiding a real change is the worse mistake for a tool whose job is
+to warn. The database keeps the same text as `detail.griffe_message`,
+usually with the file and line taken off (ml/db.py), and the rule reads
+either form. build.py and `db_model_check.py` decide with one function,
+`version_strings()` in build.py, and the loader and the deletion step
+will use it too (step 3 below).
+
+**What the count reports** (`scripts/version_count.py`, read only, from
+labelled.csv):
+
+- F1's and F39's rules until 10 Oct and from it, side by side: rows in
+  dev and in the holdout, the used ones (dev only), and the upgrades
+  each leaves with nothing in it;
+- what comes back into the model, by name and by why, with an example;
+- what still goes, by name, and every symbol behind the bare names (up
+  to 40, most downloaded first), so anyone can check that each is the
+  package's own version;
+- the all-clear before and after: releases with nothing left once F1 and
+  F39 have run, the ones that leave it, and the most downloaded
+  packages' all-clear releases, for the site's analysed_clean preset
+  (Varad asked for one);
+- what the loader will stop writing;
+- the holdout, counts only: the rows and pairs that come back, its
+  fingerprint before and after, how it stands against the frozen list,
+  and whether each label still clears the gates.
+
+**What follows, whatever the count says.** The narrowing ships: it
+corrects what counts as a change, and the all-clear is the API owner's
+call (item 12). It is not a model choice. No name is added or removed
+after the count. If a module-level `version` turns out to be something
+other than the package's version, a file format's say, §33.2 lists it
+for the hand audit and the rule stands. Then:
+
+1. **One retrain**, measured as F39 was (§32.3): build.py; the seven
+   reference dates (`stability.py --at`) set beside 9 Oct's by
+   `compare_sweeps.py`; the sweep at its own dates; train.py; stories.py;
+   the load under the same name. The path-length baseline Varad asked
+   about (§30.3) rides the same retrain, by its own rule fixed before it
+   runs (§34).
+2. **The holdout.** Rows coming back into it change its pair set and its
+   fingerprint. ml/holdout.py allows that, on condition that the fix is
+   named wherever the numbers are quoted; §33.2 names it.
+3. **The database**, after Varad applies migration 007 (10 Oct). The
+   loader stops writing F1 and F39 rows, and writes a release with
+   nothing else as analysed_clean with n_changes 0. A deletion step of
+   its own, not db_prune, removes the rows already there, so db_prune's
+   5% guard stands: its dry run prints the count, and it deletes only
+   when given that count as `--expect`, in one transaction, after a Neon
+   branch has been made as a restore point. db_prune then runs on what
+   is left, after its dry run and Varad's OK. Nothing writes the status
+   'unknown' before 007 is on Neon, or its CHECK rejects it.
+4. **The second all-clear**, a release none of whose changes is imported
+   by a scanned package, is Varad's, in the API, and is not called all
+   clear. It reads: "None of these N changes is imported by any of the
+   ~1,500 packages we scanned." Zero imports is not zero use: the usage
+   index is built from import statements and is close to blind to
+   methods (§11.6).
+
+Tested by `scripts/test_version_count.py`, four cases: the rule, written
+out again in the test; build.py's drop; the count, checked against counts
+made in the test, including a holdout fingerprint equal to the one
+build.py's holdout.csv has; and what the count refuses. Twenty-eight
+guards were broken on purpose, ten in build.py's rules and eighteen in
+the count, and each turned a check to FAIL. An independent review before
+the count found the `unset` case, and a title spelled in letters the
+first pattern missed; both are in the rule above and in the test.
+`test_features.py`'s version rows now carry griffe's explanation, as
+changes.csv's do. `db_model_check.py` counts version-string and
+metadata rows with a score by build.py's two functions. On a scratch
+Postgres built from migrations 001-006, with eleven scored rows, it
+counted the two version strings (a changed `__version__` and a module's
+`version`; not a removed `__version__`, one changed to `unset`, a removed
+submodule, a class's `VERSION`, or a `VERSION` with no griffe message)
+and the two metadata changes (`__copyright__` and `__version_info__`; not
+an `__author__` changed to `unset`), and read 0 for each once those
+scores were gone.
+
+### 33.2 The count (10 Oct)
+
+`scripts/version_count.py`, run 10 Oct after §33.1 was pushed (868bd34),
+on the labelled.csv the 9 Oct model was built from.
+
+| | rows | dev (used) | holdout | upgrades emptied |
+|---|---|---|---|---|
+| F1 until 10 Oct | 1,769 | 1,400 (378) | 369 | 868 |
+| F1 from 10 Oct | **1,757** | 1,390 (375) | 367 | 866 |
+| F39, unchanged by today's rule | 58 | 58 (9) | 0 | 29 more, with F1 |
+
+**12 rows come back into the model**, 10 in dev (3 used) and 2 in the
+holdout:
+
+- 5 removed `__version__`, 1 of them used (iniconfig 0.1 -> 1.0.0 among
+  them), and 1 whose kind changed (aioitertools 0.7.0 -> 0.7.1);
+- prompt_toolkit 3.0.52 -> 3.0.53's `__version__` and `VERSION`, both
+  changed to `unset` and both used: the case the review found, in a
+  package downstream code reads;
+- 3 removed objects named `version` (the submodule `mcp.shared.version`
+  in mcp 1.30.0 -> 2.0.0 among them), 1 in dev and 2 in the holdout;
+- 1 class attribute, babel's `CommandLineInterface.version` (2.11.0 ->
+  2.12.0).
+
+**What F1 still takes**: `__version__` 1,459 rows (167 packages),
+`version` 118, `VERSION` 99, `version_tuple` 45, `__version_tuple__` 36.
+The bare names come from 33 symbols, all listed by the count. Each sits
+in a version or metadata module (`_version`, `version`, `consts`,
+`__about__`) or at the top of its package, and each reads as that
+package's own version; pydantic.v1's is the bundled v1's.
+`kubernetes.aio.setup.VERSION`, the one in a setup module, is for the
+hand audit to confirm. No name was added or removed.
+
+**The all-clear**: 897 releases before, **895** now (735 in dev, 160 in
+the holdout). Two leave it, each because its only change now stays:
+iniconfig 0.1 -> 1.0.0 (`__version__` removed) and aioitertools 0.7.0 ->
+0.7.1 (`__version__` changed kind).
+
+**The holdout** takes back 2 rows and no pair: still 191 pairs,
+fingerprint 9b524ece19cf, 191 of the 351 frozen pairs, 160 gone (F1), 0
+added. The gates do not move: `label` 140/14/10, `label_scoped`
+206/23/15, `label_alias` 263/19/13.
+
+**What the loader will stop writing**: 1,815 rows of labelled.csv, where
+the old rules gave Varad's 1,827. Against the 27,900 rows he counted in
+the database that is still 6.5%, over db_prune's 5%, so the deletion
+step of its own (§33.1, step 3) stands. It counts again in the database
+itself, which also holds rows from earlier loads.
+
+**The analysed_clean preset** sent to Varad (his item h): cryptography
+50.0.0 -> 50.0.1 (25 Aug 2026), whose only change is `__version__`. It is
+the same package as the first preset, 46.0.7 -> 47.0.0, with nothing to
+fix. Others on the list: boto3 1.43.95 -> 1.43.96, packaging 26.1 ->
+26.2, idna 3.18 -> 3.19.
+
+10 dev rows come back, 3 of them used, among 16,570. The retrain (§33.3)
+measures what that does, at the seven reference dates, with the
+path-length baseline beside it (§34).
+
+### 33.3 The retrain (10 Oct)
+
+Run 10 Oct on the code of 9dacf60, which pushed §34.1 and §35 before
+anything was scored. `git status` afterwards showed only
+`artifacts/ranker.txt`.
+
+**What went.** build.py printed F1's **1,757 rows** (380 positive under
+`label`) and **866 upgrades**, then F39's 58 rows and 29 more upgrades,
+as §33.2 counted. Dev is 16,580 rows, 10 more. The single split still
+cuts at 5 Apr: train 14,626 rows (3.08% used), test 1,954 (1,510
+changes, 190 upgrades), 2 rows more than 9 Oct's and 2 used ones more
+(155 against 153), floor 0.0793. The holdout is 4,873 rows, 2 more: 191
+pairs, fingerprint 9b524ece19cf, every label clearing its gates as
+before.
+
+**At the seven reference dates, before and after**
+(`compare_sweeps.py`, 9 Oct's sweep against today's, PR-AUC by
+scikit-learn's convention, as §35 kept it for this comparison):
+
+| cut | lift over popularity | PR-AUC | test rows | nDCG@20 | CV's choice today |
+|---|---|---|---|---|---|
+| 2025-08-07 | 5.67x -> 4.80x (down) | 0.2730 -> 0.2308 | 11,023 -> 11,027 | 0.5876 -> 0.5611 | 15/0.02/100, 17 trees |
+| 2025-10-06 | 5.85x -> 5.38x (down) | 0.2841 -> 0.2607 | 10,268 -> 10,271 | 0.5925 -> 0.5796 | 15/0.02/10, 11 |
+| 2025-12-03 | 5.19x -> 6.50x (up) | 0.2452 -> 0.3068 | 9,663 -> 9,666 | 0.5553 -> 0.5817 | 15/0.02/10, 236 |
+| 2026-01-18 | 5.23x -> 4.19x (down) | 0.2599 -> 0.2080 | 7,956 -> 7,959 | 0.6283 -> 0.6094 | 31/0.05/100, 7 |
+| 2026-03-02 | 3.11x -> 3.05x | 0.1764 -> 0.1728 | 4,911 -> 4,914 | 0.4904 -> 0.5352 | 15/0.05/10, 80 |
+| 2026-04-02 | 4.34x -> 4.44x | 0.2737 -> 0.2788 | 4,251 -> 4,253 | 0.6180 -> 0.6748 | 15/0.05/30, 18 |
+| 2026-05-04 | 2.27x -> 2.03x | 0.2783 -> 0.2509 | 1,621 -> 1,623 | 0.6464 -> 0.6691 | 31/0.05/10, 36 |
+
+Median lift 5.19x -> 4.44x, worst 2.27x -> 2.03x; four dates moved by
+more than 0.25x, three down and one up. Before and after, the model
+beats popularity at 7/7, by more than its interval at 7/7, and the line
+at 7/7 (median 1.33x today). precision@10's median is 0.277 both times.
+
+**What it says about F1's narrowing: nothing that can be read.** 12 rows
+came back, 10 of them in dev and 3 of those used; 2 to 4 sit in each
+test half, and the holdout's 2 enter no sweep. Across the two retrains
+since 5 Oct (F39's on 9 Oct, and this one), CV has picked another
+setting at six of the seven dates, and at the seventh (2026-01-18) the
+same setting with 7 trees instead of 87 (§30.3). At 2025-12-03, where
+the lift rose by 1.31x today, it picked 31/0.05/100 with 22 trees on
+5 Oct, 31/0.05/10 with 83 on 9 Oct and 15/0.02/10 with 236 today. The
+narrowing ships by §33.1 whatever the sweep did: it corrects what counts
+as a change.
+
+**F43. A retrain that changes a few rows moves a date's lift by more
+than the fix being measured.** Each date's model is refitted, its
+setting and size chosen again by CV (F7, §30.1), on training data a fix
+changes by a few rows. Today 10 dev rows moved a date by up to 1.31x; on
+9 Oct F39's 58 moved one by 0.85x; and in §32.3 a one-day shift of 7
+rows moved one by 0.41x under the same setting and tree count. The 95%
+intervals resample upgrades with the model held fixed, so none of this
+is in them. What held through every retrain is the two counts the
+report rests on: the model beats popularity, and its interval stays
+above 1.0x, at 7/7 (against the line the count went from 6/7 to 7/7).
+*Fix:* a fix's effect on the tuned model is read from counts at every
+date, never from one date's move or from a median (F40's rule, now for
+fixes too), and compare_sweeps.py's "moved by more than 0.25x" line says
+how far the sweep moved, not what the fix did; the report says the
+intervals leave refits out, with today's 5.2x to 6.5x (§35.2); and item
+15 (F25) weighs it, since path length alone has nothing to refit.
+
+**The sweep at its own dates**, which train.py quotes: 2025-08-07,
+2025-10-10, 2025-12-05, 2026-01-21, 2026-03-05, 2026-04-05, 2026-05-06.
+The first falls on a reference date and repeats its numbers, so the two
+sweeps hold thirteen distinct dates. Five of the seven moved a day or two
+from 9 Oct's (§32.3), so these are not a before and after. Median lift
+3.53x (2.28x–6.29x); beats popularity 7/7, interval above 1.0x at 7/7,
+the line 7/7 (median 1.29x). model_run's notes read "median 3.53x min
+2.28x max 6.29x".
+
+F40's two releases still sit between the two sets of dates (numbers in
+this paragraph by the old convention, the only one 9 Oct has). sglang
+0.5.10 leaves the test half between 2026-04-02 and 04-05, and the lift
+falls from 4.44x to 2.61x, as on 9 Oct (4.34x to 2.25x). pandas 3.0.0
+leaves it between 2026-01-18 and 01-21, with pycparser 3.0, pyparsing
+3.3.2 and five small releases (1,319 rows in all, §32.3), and the lift
+now falls only from 4.19x to 3.53x, against 5.23x to 2.55x on 9 Oct. The
+model's PR-AUC moved at both dates since 9 Oct: 0.260 to 0.208 at
+2026-01-18, and 0.146 to 0.201 at 2026-01-21. F43 again: the refit moved
+both, so how much of 9 Oct's halving was pandas's own cannot be read.
+
+**The single split** (5 Apr). CV chose 7/0.05/30 as on 9 Oct, its folds
+stopping at [28, 30, 62]: 30 trees against 20.
+
+| | today | 95% interval | 9 Oct (§32.3) |
+|---|---|---|---|
+| PR-AUC (floor 0.079) | 0.294 | 0.239–0.427 | 0.252 |
+| lift over popularity | 2.61x | 1.65–5.22 | 2.25x |
+| lift over the line | 1.59x | 1.25–2.04 | 1.38x |
+| precision@10, 17 upgrades | 0.282 | 0.190–0.380 | 0.247 |
+| nDCG@20, 11 upgrades | 0.595 | 0.439–0.746 | 0.576 |
+
+Each number is inside the other's interval, and F43 says how to read the
+move. With ties averaged (§35.1): PR-AUC 0.289, lift over popularity
+2.79x (1.73–5.41), path length alone 0.265 (§34.2). Gain: public_depth
+34.1%, kind 19.8%, name_length 15.2%, release_size 7.9%, module_depth
+5.5%; four features at zero (was_deprecated_before, is_private,
+inherited_by, bump).
+
+**The stories again** (§31.1's rules, today's model). Still 9
+candidates; the top 10 beats a random order at all 9 (8 on 9 Oct),
+finding 28 of 85 used changes against 13.1. **The rule picks redis 7.3.0
+-> 7.3.1** (5 Jun 2026): 42 public changes, 3 used, and the model's top
+3 are those 3, where a random order would put 0.7 in the top 10. All
+three are new
+default values for parameters of one constructor,
+`redis.client.Redis.__init__` (`driver_info`, `lib_name`,
+`lib_version`), each "used by 2 packages" because 2 scanned packages
+import `Redis`. The label cannot see whether either passes those
+arguments, so the story is one symbol found three times, and it is told
+that way (§35.2). By §32.1 the demo story follows the rule.
+
+**The failure is sharper.** In cryptography 46.0.7 -> 47.0.0,
+`PBKDF2HMAC`, the change the most packages use (10), is 27th of 30 (8th
+on 9 Oct): public_depth 5, module_depth 5, not in `__all__`, no shorter
+export path, everything the model reads saying "obscure". The list now
+starts with x509's `RevokedCertificate` (1 package), `DeprecatedIn46`
+(none), `PublicKeyTypes` (3) and `PrivateKeyTypes` (6). Ranks 5 to 10
+are six `EllipticCurveOID` entries for binary curves, part of the
+removal the changelog names, which no scanned package uses; the one
+binary-curve class among the ranks printed, `SECT163R2`, used by 1
+package, is 16th.
+§31.2's coda stands: the label measures use, not breakage, and
+PBKDF2HMAC's change of kind is probably a reimplementation.
+
+## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
+
+**F41. No baseline ranks by path length alone, and the model leans on
+it most.** Varad, 9 Oct: "since the model leans mostly on import-path
+length (§30.3), have you measured a baseline that ranks by path length
+alone? An examiner who reads §30.3 will ask whether we beat that, not
+just popularity." It has not been measured. The closest result is the
+ablation's: a LightGBM given only the two reachability features scored
+102% of the full model on 5 Oct and 115% on 9 Oct (§32.3). That is a
+model fitted on two features, not a rule anyone could write down.
+*Fix:* the baseline and the rule below. §34.1 was written and pushed
+before the baseline was scored on the real data. The verdict is §34.2:
+no difference the rule can see, on either measure.
+
+### 34.1 What is compared, how it is judged, and what each outcome means
+
+**The baseline, `path`.** Each change scores minus its `public_depth`:
+the number of dots in the shortest public name a user can write for the
+symbol, from the package's own alias graph (labels.py; `pandas.read_csv`
+is 1, though griffe reports it at depth 4). Shortest import path first.
+Nothing is fitted, so it needs no training rows. A row with no depth
+scores as the deepest in its test half. Most rows tie, since the depth
+takes a handful of values, and within one depth the order means nothing,
+which is what "path length alone" means. So ties are averaged out:
+precision@10 and nDCG@20 break them by metrics.py's fixed random order,
+as for every baseline, and PR-AUC is the average precision expected over
+every order of the ties, computed exactly (F42, §35), for path and for
+the model it is set against. It is a strong baseline and partly
+circular, like the feature: code imports a symbol by its shortest public
+name, so a short path also gives the usage label more ways to match
+(§32.3). That is why it is the one to beat.
+
+**Where it is measured.**
+
+- At the seven reference dates of §23.5, in the retrain's
+  `stability.py --at` run (§33.1, step 1): at each date the model that
+  ships (lambdarank, `label_alias`, binary relevance, tuned by CV) and
+  `path` are scored on the same test half, and each row carries the
+  model's lift over path with its 95% interval (`lift_vs_path`,
+  `lift_vs_path_lo`, `lift_vs_path_hi`). `scripts/path_verdict.py` reads
+  that file and applies the rule. Nothing is refitted for it.
+- On the single split: train.py prints `path` in its block of
+  tie-averaged numbers, with the paired 95% interval of the model's lift
+  over it and path's precision@10 and nDCG@20, and writes `path`,
+  `lift_vs_path` and `lift_vs_path_95` into model_run's notes. Read, not
+  ruled on.
+- On the holdout, once, when it is opened: final_eval.py puts path's
+  PR-AUC, the model's lift over it with its interval, and path's nDCG@20
+  in the NOTES block, beside the tie-averaged lift over popularity (§35).
+  The ledger's columns stay as they were.
+
+**Two questions, two verdicts.** The report makes two kinds of claim, and
+path length could match the model on one and not the other.
+
+1. **Across releases**, PR-AUC over the pooled test half: does the model
+   put the used changes of every upgrade above the unused ones better
+   than path length does? At each date, r = model PR-AUC / path PR-AUC,
+   both with ties averaged (`pr_auc_ties` and `path` in the sweep).
+   - The model wins: r > 1 at 6 or more of the 7 dates, and the median r
+     is 1.25 or more.
+   - Path length wins: r < 1 at 6 or more, and the median r is 0.80 or
+     less.
+   - No difference the rule can see: anything else.
+2. **Within an upgrade**, nDCG@20 over the upgrades rankable at 20, which
+   is the product's own question: does the model order one upgrade's
+   changes better?
+   - The model wins: its nDCG@20 is higher at 6 or more of the 7 dates.
+   - Path length wins: path's is higher at 6 or more.
+   - No difference the rule can see: anything else.
+
+Values are compared as the sweep stores them, PR-AUC and nDCG@20 to four
+places, and each ratio is read to four places, as the sweep stores
+`lift_vs_path` and its report prints the median: a tie at four places is
+higher for neither, and a median that reads exactly 1.25x or 0.80x
+counts. precision@10 is printed beside the second verdict and not ruled
+on, as in §25.3.
+
+Why these numbers: §29.1's, for its reasons. PR-AUC's floor moves from
+date to date, and the ratio puts one date's two numbers on one scale;
+1.25 is §24.1's quarter, as a ratio. nDCG@20 already runs from 0 to 1 at
+every date with no floor of its own, so it is judged by the count alone,
+as §25.3 judged graded relevance. 6 of 7 because a coin does that about
+one time in sixteen, and the dates share most of their data, so that is
+a floor on chance, not a p-value.
+
+**It checks itself.** path_verdict.py gives no verdict unless every row
+is stamped as the shipped model is run (`label_alias`, lambdarank, tuning
+cv, binary relevance, holdout from 2026-07-28; sweep rows carry the label
+and objective from today), the file holds exactly the seven dates of
+§23.5, none skipped, and the path and tie-averaged columns are there: a
+sweep written before this change has none.
+
+**What each outcome leads to.** The report's wording follows the two
+verdicts, whatever they are.
+
+- Across releases, the model wins: the report adds the ratio, its median
+  and range over the seven dates, beside the lift over popularity.
+- Across releases, path length wins, or no difference: the report says
+  that ranking by the shortest import path does as well across releases,
+  so the lift over popularity is path length's, not the model's; item 15
+  (F25), whether a simpler model should ship, moves up and gets its own
+  rule.
+- Within an upgrade, the model wins: the report says the model orders an
+  upgrade's changes better than path length at that many of 7 dates.
+- Within an upgrade, path length wins, or no difference: the report says
+  that inside one upgrade the shortest path first does as well, and does
+  not claim the model's ordering adds to it. What the project adds is then
+  the pipeline around the ordering: griffe's diff, the usage-checked
+  label, the all-clear, and the fixer.
+
+Tested by `scripts/test_path_baseline.py`, six cases: average precision
+with ties averaged (§35), against every order of the ties on small
+cases, against sklearn where nothing ties, with weights as copies, and
+through one resample of the intervals worked by hand; the baseline
+(minus public_depth, nothing fitted, so flipping every training label
+moves no score; a row with no depth scored as the deepest);
+`metrics.tie_averaged`, the one place every tie-averaged number comes
+from, against the same numbers worked out in the test on a test half
+whose model scores tie, then the sweep's row, its stamps and its report;
+train.py and final_eval.py on a fixture where a symbol's parameter rows
+tie; the rule at every edge on both measures, ratios read to four
+places; and the verdict on files, with its refusals, its table printing
+each ratio as the rule reads it. Thirty-nine guards were broken on
+purpose, across metrics.py, baselines.py, stability.py, train.py,
+final_eval.py and the verdict, and each turned the test to FAIL. An
+independent review of the code before the run found F42 (§35) and two
+smaller gaps, both closed: the verdict did not check a sweep's label and
+objective, and the report and the verdict read the ratio at different
+precision. Then a sweep that `stability.py --at` wrote on the test
+fixture was read by the verdict, end to end: its stamps and columns
+passed, and its table printed each date's ratio to two places, so a date
+the rule counts as lost (0.9985) read 1.00x. It prints four places now.
+Nothing was scored on the real data before this was pushed.
+
+### 34.2 The verdict: no difference the rule can see, on either measure (10 Oct)
+
+`scripts/path_verdict.py`, run 10 Oct after §34.1 was pushed (9dacf60),
+on the sweep the retrain wrote at the seven dates (§33.3). Its checks
+passed: every row stamped as the shipped model is run, the seven dates,
+none skipped, every column there. PR-AUC with ties averaged on both
+sides (§35).
+
+| cut | floor | PR-AUC, model | PR-AUC, path | model / path | nDCG@20, model | nDCG@20, path | precision@10, model | precision@10, path |
+|---|---|---|---|---|---|---|---|---|
+| 2025-08-07 | 0.0278 | 0.2298 | 0.1880 | 1.2223x | 0.5611 | 0.6037 | 0.2829 | 0.2914 |
+| 2025-10-06 | 0.0288 | 0.2571 | 0.1956 | 1.3144x | 0.5796 | 0.6037 | 0.2676 | 0.2941 |
+| 2025-12-03 | 0.0289 | 0.3054 | 0.2232 | 1.3683x | 0.5817 | 0.5855 | 0.2767 | 0.3067 |
+| 2026-01-18 | 0.0325 | 0.2033 | 0.2289 | 0.8882x | 0.6094 | 0.6028 | 0.2962 | 0.3192 |
+| 2026-03-02 | 0.0362 | 0.1698 | 0.2088 | 0.8132x | 0.5352 | 0.5758 | 0.2238 | 0.2952 |
+| 2026-04-02 | 0.0364 | 0.2721 | 0.2537 | 1.0725x | 0.6748 | 0.5490 | 0.2706 | 0.2941 |
+| 2026-05-04 | 0.0863 | 0.2446 | 0.2928 | 0.8354x | 0.6691 | 0.5720 | 0.3000 | 0.3133 |
+| **median** | | 0.2446 | 0.2232 | **1.0725x** | 0.5817 | 0.5855 | 0.2767 | 0.2952 |
+
+1. **Across releases: no difference the rule can see.** The model is
+   ahead at 4 dates and behind at 3, by a median of 1.07x (0.81x to
+   1.37x). Winning needed 6 dates and 1.25x; losing, 6 and 0.80x.
+2. **Within an upgrade: no difference the rule can see.** The model's
+   nDCG@20 is higher at 3 dates and path length's at 4, by a median
+   difference of -0.0038.
+
+**precision@10, which §34.1 set aside: path length is higher at all 7
+dates** (median 0.2952 against 0.2767). It stays out of the verdict, as
+§25.3's did, and is recorded because it points the same way. The report
+says it.
+
+**Read beside it, not ruled on.**
+
+- At the sweep's own dates (§33.3) the model is ahead on PR-AUC at 5 of
+  7 (median 1.10x, 0.85x to 1.33x) and higher on nDCG@20 at 4 of 7.
+- On the single split, path length scores 0.265 against the model's
+  0.289, a lift of 1.09x (0.78–1.74), with precision@10 0.294 against
+  0.282 and nDCG@20 0.549 against 0.595.
+- Path length alone beats popularity by 2.5x to 4.8x at the seven dates
+  (median 4.1x), where the model does by 2.1x to 6.6x (median 4.7x).
+- Against the line, the logistic regression on all 17 features, path
+  length's PR-AUC is higher at 5 of 7 dates and 0.0006 lower at a sixth
+  (2025-10-06), with medians of 0.223 and 0.187. The line's number is
+  still on the old convention (§35 point 2), which read the model up to
+  2.6% high at these dates, so the sixth date cannot be called either
+  way. The strongest baseline is path length, not the line.
+
+**What follows, by §34.1, both verdicts being "no difference".**
+
+1. The report says that ranking by the shortest import path does as
+   well across releases, so the lift over popularity is path length's,
+   not the model's.
+2. It says that inside one upgrade the shortest path first does as
+   well, and does not claim the model's ordering adds to it. What the
+   project adds is the pipeline around the ordering: griffe's diff, the
+   usage-checked label, the all-clear, and the fixer. §35.2 has the
+   wording.
+3. Item 15 (F25), whether a simpler model should ship, moves up and gets
+   its own rule, fixed before anything is fitted for it. F43 is part of
+   that question.
+
+This is the ablation's finding (§30.3, §32.3) again, now with nothing
+fitted and judged at seven dates fixed in advance: the rule cannot tell
+the model apart from how short a symbol's public name is. It answers
+Varad's question of 9 Oct.
+
+## 35. F42: a run of tied scores counted as one threshold (10 Oct). What follows was fixed before any number
+
+**F42. PR-AUC counts a run of tied scores as one threshold, which
+misstates every ranking with ties.** Every PR-AUC so far comes from
+sklearn's `average_precision_score`, which treats a run of tied scores as
+one threshold: each positive in the run is credited with the precision at
+the run's end. A score that says nothing about the order inside its ties
+should be scored as if every order of them were equally likely, which is
+how precision@10 and nDCG@20 already treat ties (metrics.py breaks them
+by one fixed random order). The two disagree. With labels 1, 0, 1, 0
+scored as two tied pairs, sklearn reads 0.5 where the average over the
+four orders is 0.667; on synthetic test halves, path length alone read
+8-16% below its expectation. Popularity ties every change of a package,
+semver every change of a bump, kind_prior every change of a kind, and
+griffe_all every row; the model's and the line's scores tie too, wherever
+rows share every feature, as a symbol's parameter rows do. So every lift
+over popularity quoted so far rests on a convention that misstates both
+of its sides, by an amount nobody has measured. Found 10 Oct by an
+independent review of F41's code, before F41 ran. *[Measured the same
+day, §35.1: across the thirteen dates the old convention read popularity
+up to 10.2% high and the model up to 3.4%. With ties averaged the lift
+over popularity rises a little: median 4.44x to 4.73x at the seven
+reference dates.]*
+
+*Fix:* `metrics.average_precision_ties` computes the expectation exactly
+(McSherry and Najork, ECIR 2008). In a run of n rows holding r positives,
+with s rows and c positives above it, the row at position p of the run is
+a positive with probability r/n, and then has on average
+c + 1 + (p - 1)(r - 1)/(n - 1) positives at or above it; summed over the
+run and divided by all positives, that is the expected average precision.
+With no ties it is sklearn's number, and a row of weight k counts as k
+copies of itself, the way the intervals resample. It matched the average
+over every order on 200 small cases (`scripts/test_path_baseline.py`).
+
+**What follows, fixed now, before any real number exists:**
+
+1. F41's path baseline uses it from its first run, for path and for the
+   model it is set against (§34.1).
+2. The retrain measures the rest at no extra cost. Every sweep row
+   carries the model's and popularity's PR-AUC with ties averaged
+   (`pr_auc_ties`, `popularity_ties`), the lift between them with its 95%
+   interval (`lift_vs_pop_ties`, `lift_lo_ties`, `lift_hi_ties`) and
+   `beats_pop_ties`. train.py prints and notes the same for the single
+   split, and final_eval.py puts them in its NOTES block. Everything
+   else keeps the old convention for this retrain, compare_sweeps.py's
+   before and after included, so F1's narrowing is measured on its own.
+3. Then the report moves to ties averaged, for every number, whatever
+   the measurement shows: it corrects a measurement and is not a model
+   choice, as F1 was not. The old convention's numbers are given once
+   beside the new, as the before; §32.3's claims ("beats popularity at
+   every date", "2.25x to 5.96x") are restated from the new columns; and
+   the site copy follows (Varad). evaluate()'s default changes with it.
+4. If, with ties averaged, the model no longer beats popularity at some
+   date, or a date's interval reaches 1.0x, the report says so at that
+   date. Nothing about the model is changed because of it.
+
+### 35.1 Measured (10 Oct)
+
+The retrain (§33.3) carried both conventions, as point 2 set out. At
+every date the old convention read both sides high, against their
+averages over every order of the ties: the model by 0.4% to 2.6% at the
+seven dates, popularity by 1.1% to 10.1% (by 3.4% and 10.2% at most
+across all thirteen). So with ties averaged the lift over popularity is
+level or higher at six of the seven dates, and 0.01x lower at the
+seventh:
+
+| cut | lift, scikit-learn's convention | lift, ties averaged |
+|---|---|---|
+| 2025-08-07 | 4.80x | 4.84x |
+| 2025-10-06 | 5.38x | 5.37x |
+| 2025-12-03 | 6.50x | 6.59x |
+| 2026-01-18 | 4.19x | 4.19x |
+| 2026-03-02 | 3.05x | 3.30x |
+| 2026-04-02 | 4.44x | 4.73x |
+| 2026-05-04 | 2.03x | 2.11x |
+| **median** | 4.44x | **4.73x** |
+
+At the sweep's own dates the median goes from 3.53x to 3.80x (2.34x to
+6.37x), and on the single split from 2.61x (1.65–5.22) to 2.79x
+(1.73–5.41). Either way the model beats popularity at 7/7, and by more
+than its interval at 7/7, at both sets of dates, so point 4 does not
+arise.
+
+**Which way the old convention errs depends on the data.** It credits
+every positive in a run of ties with the precision at the run's end.
+That is below the average over the run's orders when precision falls
+through the run, as on the synthetic halves where path read low, and
+above it when precision rises through the run, which it does when the
+run holds used changes more densely than everything ranked above it.
+Popularity's runs are whole packages, and on the real data the old
+convention read popularity high at every date, by up to a tenth. The
+model's ties are rows that share every feature, as a symbol's parameter
+rows do, far fewer, and it read the model high by under 4% at all
+thirteen dates.
+
+**What follows.** As §35 fixed before the run: the report moves to ties
+averaged for every number, in the wording of §35.2 (two numbers that
+exist only on the old convention are named as such there); the old
+convention's numbers appear once, as the before, in the table above;
+§32.3's claims are restated in §35.2; the site copy follows (Varad); and
+evaluate()'s default changes. Decided today, on timing only: the
+default changes, with intervals()', in item 15's code, the next to touch
+metrics.py, so that every number after it comes from one convention,
+PR-AUC's own interval and the line's PR-AUC included, and ablate.py
+measures on it when it next runs. Until then the report quotes PR-AUC
+without an interval.
+
+### 35.2 What the report says now (10 Oct)
+
+Replacing §32.3's paragraph, slide, site copy and demo, until item 15
+(F25) decides what ships. PR-AUC with ties averaged throughout (§35.1),
+with two exceptions, each named as such where it appears: §32.3's
+ablation paragraph, which stands as measured until ablate.py runs again,
+since it already says what §34.2 confirms; and the refit example, which
+compares with a run that has only the old convention. precision@10 and
+nDCG@20 break ties by one fixed
+random order, as before. The paragraph on the line (§29.3, §30.3) is
+rewritten with item 15's result.
+
+**For the report:**
+
+> On the held-back test window (1,954 rows: 1,510 distinct changes in
+> 190 upgrades), the ranker reaches PR-AUC 0.289 against a floor of
+> 0.079, 2.8 times the popularity baseline (95% interval 1.73–5.41).
+> Across thirteen cut dates, seven fixed in advance and six more placed
+> by the same procedure on the current data, it beats popularity at
+> every one, and at every one the lower end of its own 95% interval
+> stays above 1.0x. How large the lift is depends on the date, from 2.1x
+> to 6.6x, and one release can move it: when sglang 0.5.10, whose 2,296
+> changes no scanned package uses, leaves the test half, the popularity
+> baseline recovers and the lift falls from 4.7x to 2.8x.
+>
+> A rule with nothing learned does as well. Listing a release's changes
+> by how short their public import path is, shortest first, beats
+> popularity by 2.5x to 4.8x at the seven dates fixed in advance. Before
+> measuring it we fixed what would count as the model beating it: across
+> releases, a higher PR-AUC at six of the seven dates, by a median factor
+> of at least 1.25; inside an upgrade, a higher nDCG@20 at six of seven.
+> The model's PR-AUC is higher at four dates and lower at three, a
+> median factor of 1.07 over the seven; its nDCG@20 is higher at three;
+> and the rule's precision@10 is higher at all seven. So the lift over
+> popularity is path length's, not the model's, and we do not claim the
+> model orders an upgrade's changes better than the shortest path
+> first. What the project adds is the
+> pipeline around that ordering: the API diff, a label checked against
+> real downstream imports, the all-clear for releases with nothing to
+> fix, and the fixer.
+>
+> Inside an upgrade, the model's precision@10 is 0.282 (0.190–0.380)
+> over 17 upgrades and its nDCG@20 0.595 (0.439–0.746) over 11. PR-AUC
+> is the average precision expected over every order of tied scores
+> (McSherry and Najork, 2008); scikit-learn's convention, which counts a
+> run of ties as one threshold, read popularity 1% to 10% higher and the
+> model under 4% higher. The model's size and settings are chosen by
+> time-ordered cross-validation inside each training window. Intervals
+> come from 2,000 resamples of whole upgrades with the model held fixed,
+> so they leave out how far a refit moves the result: retrained after
+> ten rows came back into the data, the model's lift at one date went
+> from 5.2x to 6.5x (both by scikit-learn's convention, the only one the
+> earlier run has).
+
+For a slide:
+
+- Beats popularity at all 13 cut dates, 2.1x–6.6x with the date; every
+  date's interval above 1.0x.
+- A rule with nothing learned, shortest import path first, beats
+  popularity too, by 2.5x–4.8x. The model does not beat the rule:
+  PR-AUC higher at 4 of 7 dates fixed in advance (median ratio 1.07x
+  over all 7), nDCG@20 higher at 3 of 7.
+- PR-AUC 0.289, floor 0.079; precision@10 0.282 (17 upgrades), nDCG@20
+  0.595 (11).
+- What the project adds: the API diff, the usage-checked label, the
+  all-clear, the fixer.
+
+**For the site**, replacing §32.3's:
+
+> Beats a popularity baseline at every evaluation cut date, by 2.1x to
+> 6.6x depending on the date, and at every date the lower end of its 95%
+> interval stays above 1x. A simpler rule does as well: listing changes
+> by how short their import path is, shortest first. Measured on
+> releases published before 28 July 2026; later releases are held back,
+> unseen, for the final evaluation.
+
+**For the demo**, replacing §32.3's, since §31.1's rule now picks redis
+(§33.3):
+
+> redis 7.3.0 -> 7.3.1 changed 42 public names. Downstream code uses 3
+> of them, and BreakRank lists those 3 first; a random order would put
+> 0.7 of them in the first 10, on average. Across the 9
+> comparable releases the model never trained on, its top 10 beats that
+> random order at every one, finding 28 used changes where a random
+> order would find 13.1.
+
+Told with it, before anyone asks: the 3 are new default values for
+three parameters of one constructor, `redis.Redis(...)`, and they count
+as used because 2 scanned packages import `Redis`; whether either passes
+those arguments, the label cannot see. The demo shows the ordering, not
+that the model beats a simple rule (§34.2). And the failure, from
+cryptography 46.0.7 -> 47.0.0: `PBKDF2HMAC`, used by 10 packages, the
+most in its release, is ranked 27th of 30. Its path is deep, it is not
+exported and it has no shorter name, and the model trusts how short a
+name is above everything else. §31.2's coda stands: the label measures
+use, not breakage.
