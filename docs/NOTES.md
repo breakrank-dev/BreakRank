@@ -2890,7 +2890,9 @@ popularity 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x.]*
 *[Done 9 Oct (§31.2): cryptography 46.0.7 -> 47.0.0, the model's top 10
 holding 5 of its 7 used changes against 2.3 by chance. Its #1 is a
 copyright notice: F39. After F39 (§32.3) the rule picks it again, and
-its list starts with x509's RevokedCertificate.]*
+its list starts with x509's RevokedCertificate. After F1's narrowing
+(§33.3) the rule picks redis 7.3.0 -> 7.3.1, and cryptography's
+PBKDF2HMAC becomes the failure.]*
 Not produced. One hour with `features.csv` + the model's scores.
 
 **F27. Provenance error, corrected Day 15:** the deck/report/study
@@ -2990,6 +2992,8 @@ Each of the first four both fixes a defect AND raises the headline.
 13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
+   *[10 Oct: F25 is now which model ships, if any, against path length
+   alone, which the model did not beat (§34.2). Next, with its own rule.]*
 16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
 
 Items 1–5 are about a week and turn the project from "good student
@@ -3013,7 +3017,13 @@ cut date's lift can hinge on one release; with item 11.
 Added 10 Oct: F1 narrowed at Varad's request (§33.1), before item 12's
 database steps; F41, the path-length baseline (§34), in the same retrain;
 F42, ties in PR-AUC (§35), measured in it, and the report moved to ties
-averaged after it.
+averaged after it. **Retrained 10 Oct (§33.3).** F41's verdict (§34.2):
+no difference the rule can see from path length alone, on either
+measure, so item 15 (F25) moves up, with a rule of its own before
+anything is fitted. F42 measured (§35.1): the lift over popularity rises
+a little, median 4.44x to 4.73x. Found the same day: F43 (§33.3), a
+retrain that changes a few rows moves a date's lift by up to 1.31x; with
+item 15.
 
 ### 21.9 Found 25 Sep: what reaches the database, and which branch is real
 
@@ -5137,7 +5147,11 @@ metadata_count.py on the rebuilt files: "F39 finds no rows".
 Median lift 5.20x -> 5.19x, worst 2.20x -> 2.27x. Beats popularity 7/7,
 and by more than its interval 7/7, before and after; beats the line 6/7
 -> 7/7 (median 1.44x). Two dates moved by more than 0.25x, one each way,
-and the median did not: **F39 left the sweep where it was.** At
+and the median did not: **F39 left the sweep where it was.** *[10 Oct,
+F43 (§33.3): a median is no longer read as a fix's effect. What still
+says F39 left the sweep where it was is the two counts the report rests
+on, beats popularity and interval above 1.0x, at 7/7 before and
+after.]* At
 2025-12-03 CV chose another setting than on 5 Oct (31/0.05/10 and 83
 trees, against 31/0.05/100 and 22).
 
@@ -5181,7 +5195,9 @@ held at all 14 dates: the model beats popularity, and the lower end of
 each date's 95% interval is above 1.0x (it beats the line at 13).
 *Fix:* report the lift as its range across dates with the count of
 dates that clear 1.0x, never as a median alone; name the two releases
-when the range is given; and lead with the within-upgrade numbers
+when the range is given (*[10 Oct, §33.3: after the retrain pandas
+3.0.0 moves its date far less, so the report names sglang 0.5.10
+alone]*); and lead with the within-upgrade numbers
 (item 11, F14), where each upgrade counts once and one release cannot
 outweigh the rest by its size. Done in the wording below; item 11
 measures the rest.
@@ -5228,6 +5244,9 @@ needed no restart, and /health named the model. model_run's pr_auc now
 reads 0.2520.
 
 **For the report**, replacing §30.3's paragraph:
+*[Superseded 10 Oct, with the slide, the site copy and the demo below:
+§35.2. "1.38 times the strongest baseline" is withdrawn; path length
+alone is the strongest (§34.2).]*
 
 > On the held-back test window (1,952 rows: 1,508 distinct changes in
 > 190 upgrades), the ranker reaches PR-AUC 0.252 (95% interval
@@ -5472,6 +5491,132 @@ fix. Others on the list: boto3 1.43.95 -> 1.43.96, packaging 26.1 ->
 measures what that does, at the seven reference dates, with the
 path-length baseline beside it (§34).
 
+### 33.3 The retrain (10 Oct)
+
+Run 10 Oct on the code of 9dacf60, which pushed §34.1 and §35 before
+anything was scored. `git status` afterwards showed only
+`artifacts/ranker.txt`.
+
+**What went.** build.py printed F1's **1,757 rows** (380 positive under
+`label`) and **866 upgrades**, then F39's 58 rows and 29 more upgrades,
+as §33.2 counted. Dev is 16,580 rows, 10 more. The single split still
+cuts at 5 Apr: train 14,626 rows (3.08% used), test 1,954 (1,510
+changes, 190 upgrades), 2 rows more than 9 Oct's and 2 used ones more
+(155 against 153), floor 0.0793. The holdout is 4,873 rows, 2 more: 191
+pairs, fingerprint 9b524ece19cf, every label clearing its gates as
+before.
+
+**At the seven reference dates, before and after**
+(`compare_sweeps.py`, 9 Oct's sweep against today's, PR-AUC by
+scikit-learn's convention, as §35 kept it for this comparison):
+
+| cut | lift over popularity | PR-AUC | test rows | nDCG@20 | CV's choice today |
+|---|---|---|---|---|---|
+| 2025-08-07 | 5.67x -> 4.80x (down) | 0.2730 -> 0.2308 | 11,023 -> 11,027 | 0.5876 -> 0.5611 | 15/0.02/100, 17 trees |
+| 2025-10-06 | 5.85x -> 5.38x (down) | 0.2841 -> 0.2607 | 10,268 -> 10,271 | 0.5925 -> 0.5796 | 15/0.02/10, 11 |
+| 2025-12-03 | 5.19x -> 6.50x (up) | 0.2452 -> 0.3068 | 9,663 -> 9,666 | 0.5553 -> 0.5817 | 15/0.02/10, 236 |
+| 2026-01-18 | 5.23x -> 4.19x (down) | 0.2599 -> 0.2080 | 7,956 -> 7,959 | 0.6283 -> 0.6094 | 31/0.05/100, 7 |
+| 2026-03-02 | 3.11x -> 3.05x | 0.1764 -> 0.1728 | 4,911 -> 4,914 | 0.4904 -> 0.5352 | 15/0.05/10, 80 |
+| 2026-04-02 | 4.34x -> 4.44x | 0.2737 -> 0.2788 | 4,251 -> 4,253 | 0.6180 -> 0.6748 | 15/0.05/30, 18 |
+| 2026-05-04 | 2.27x -> 2.03x | 0.2783 -> 0.2509 | 1,621 -> 1,623 | 0.6464 -> 0.6691 | 31/0.05/10, 36 |
+
+Median lift 5.19x -> 4.44x, worst 2.27x -> 2.03x; four dates moved by
+more than 0.25x, three down and one up. Before and after, the model
+beats popularity at 7/7, by more than its interval at 7/7, and the line
+at 7/7 (median 1.33x today). precision@10's median is 0.277 both times.
+
+**What it says about F1's narrowing: nothing that can be read.** 12 rows
+came back, 10 of them in dev and 3 of those used; 2 to 4 sit in each
+test half, and the holdout's 2 enter no sweep. Across the two retrains
+since 5 Oct (F39's on 9 Oct, and this one), CV has picked another
+setting at six of the seven dates, and at the seventh (2026-01-18) the
+same setting with 7 trees instead of 87 (§30.3). At 2025-12-03, where
+the lift rose by 1.31x today, it picked 31/0.05/100 with 22 trees on
+5 Oct, 31/0.05/10 with 83 on 9 Oct and 15/0.02/10 with 236 today. The
+narrowing ships by §33.1 whatever the sweep did: it corrects what counts
+as a change.
+
+**F43. A retrain that changes a few rows moves a date's lift by more
+than the fix being measured.** Each date's model is refitted, its
+setting and size chosen again by CV (F7, §30.1), on training data a fix
+changes by a few rows. Today 10 dev rows moved a date by up to 1.31x; on
+9 Oct F39's 58 moved one by 0.85x; and in §32.3 a one-day shift of 7
+rows moved one by 0.41x under the same setting and tree count. The 95%
+intervals resample upgrades with the model held fixed, so none of this
+is in them. What held through every retrain is the two counts the
+report rests on: the model beats popularity, and its interval stays
+above 1.0x, at 7/7 (against the line the count went from 6/7 to 7/7).
+*Fix:* a fix's effect on the tuned model is read from counts at every
+date, never from one date's move or from a median (F40's rule, now for
+fixes too), and compare_sweeps.py's "moved by more than 0.25x" line says
+how far the sweep moved, not what the fix did; the report says the
+intervals leave refits out, with today's 5.2x to 6.5x (§35.2); and item
+15 (F25) weighs it, since path length alone has nothing to refit.
+
+**The sweep at its own dates**, which train.py quotes: 2025-08-07,
+2025-10-10, 2025-12-05, 2026-01-21, 2026-03-05, 2026-04-05, 2026-05-06.
+The first falls on a reference date and repeats its numbers, so the two
+sweeps hold thirteen distinct dates. Five of the seven moved a day or two
+from 9 Oct's (§32.3), so these are not a before and after. Median lift
+3.53x (2.28x–6.29x); beats popularity 7/7, interval above 1.0x at 7/7,
+the line 7/7 (median 1.29x). model_run's notes read "median 3.53x min
+2.28x max 6.29x".
+
+F40's two releases still sit between the two sets of dates (numbers in
+this paragraph by the old convention, the only one 9 Oct has). sglang
+0.5.10 leaves the test half between 2026-04-02 and 04-05, and the lift
+falls from 4.44x to 2.61x, as on 9 Oct (4.34x to 2.25x). pandas 3.0.0
+leaves it between 2026-01-18 and 01-21, with pycparser 3.0, pyparsing
+3.3.2 and five small releases (1,319 rows in all, §32.3), and the lift
+now falls only from 4.19x to 3.53x, against 5.23x to 2.55x on 9 Oct. The
+model's PR-AUC moved at both dates since 9 Oct: 0.260 to 0.208 at
+2026-01-18, and 0.146 to 0.201 at 2026-01-21. F43 again: the refit moved
+both, so how much of 9 Oct's halving was pandas's own cannot be read.
+
+**The single split** (5 Apr). CV chose 7/0.05/30 as on 9 Oct, its folds
+stopping at [28, 30, 62]: 30 trees against 20.
+
+| | today | 95% interval | 9 Oct (§32.3) |
+|---|---|---|---|
+| PR-AUC (floor 0.079) | 0.294 | 0.239–0.427 | 0.252 |
+| lift over popularity | 2.61x | 1.65–5.22 | 2.25x |
+| lift over the line | 1.59x | 1.25–2.04 | 1.38x |
+| precision@10, 17 upgrades | 0.282 | 0.190–0.380 | 0.247 |
+| nDCG@20, 11 upgrades | 0.595 | 0.439–0.746 | 0.576 |
+
+Each number is inside the other's interval, and F43 says how to read the
+move. With ties averaged (§35.1): PR-AUC 0.289, lift over popularity
+2.79x (1.73–5.41), path length alone 0.265 (§34.2). Gain: public_depth
+34.1%, kind 19.8%, name_length 15.2%, release_size 7.9%, module_depth
+5.5%; four features at zero (was_deprecated_before, is_private,
+inherited_by, bump).
+
+**The stories again** (§31.1's rules, today's model). Still 9
+candidates; the top 10 beats a random order at all 9 (8 on 9 Oct),
+finding 28 of 85 used changes against 13.1. **The rule picks redis 7.3.0
+-> 7.3.1** (5 Jun 2026): 42 public changes, 3 used, and the model's top
+3 are those 3, where a random order would put 0.7 in the top 10. All
+three are new
+default values for parameters of one constructor,
+`redis.client.Redis.__init__` (`driver_info`, `lib_name`,
+`lib_version`), each "used by 2 packages" because 2 scanned packages
+import `Redis`. The label cannot see whether either passes those
+arguments, so the story is one symbol found three times, and it is told
+that way (§35.2). By §32.1 the demo story follows the rule.
+
+**The failure is sharper.** In cryptography 46.0.7 -> 47.0.0,
+`PBKDF2HMAC`, the change the most packages use (10), is 27th of 30 (8th
+on 9 Oct): public_depth 5, module_depth 5, not in `__all__`, no shorter
+export path, everything the model reads saying "obscure". The list now
+starts with x509's `RevokedCertificate` (1 package), `DeprecatedIn46`
+(none), `PublicKeyTypes` (3) and `PrivateKeyTypes` (6). Ranks 5 to 10
+are six `EllipticCurveOID` entries for binary curves, part of the
+removal the changelog names, which no scanned package uses; the one
+binary-curve class among the ranks printed, `SECT163R2`, used by 1
+package, is 16th.
+§31.2's coda stands: the label measures use, not breakage, and
+PBKDF2HMAC's change of kind is probably a reimplementation.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
@@ -5483,7 +5628,8 @@ ablation's: a LightGBM given only the two reachability features scored
 102% of the full model on 5 Oct and 115% on 9 Oct (§32.3). That is a
 model fitted on two features, not a rule anyone could write down.
 *Fix:* the baseline and the rule below. §34.1 was written and pushed
-before the baseline was scored on the real data.
+before the baseline was scored on the real data. The verdict is §34.2:
+no difference the rule can see, on either measure.
 
 ### 34.1 What is compared, how it is judged, and what each outcome means
 
@@ -5605,6 +5751,72 @@ passed, and its table printed each date's ratio to two places, so a date
 the rule counts as lost (0.9985) read 1.00x. It prints four places now.
 Nothing was scored on the real data before this was pushed.
 
+### 34.2 The verdict: no difference the rule can see, on either measure (10 Oct)
+
+`scripts/path_verdict.py`, run 10 Oct after §34.1 was pushed (9dacf60),
+on the sweep the retrain wrote at the seven dates (§33.3). Its checks
+passed: every row stamped as the shipped model is run, the seven dates,
+none skipped, every column there. PR-AUC with ties averaged on both
+sides (§35).
+
+| cut | floor | PR-AUC, model | PR-AUC, path | model / path | nDCG@20, model | nDCG@20, path | precision@10, model | precision@10, path |
+|---|---|---|---|---|---|---|---|---|
+| 2025-08-07 | 0.0278 | 0.2298 | 0.1880 | 1.2223x | 0.5611 | 0.6037 | 0.2829 | 0.2914 |
+| 2025-10-06 | 0.0288 | 0.2571 | 0.1956 | 1.3144x | 0.5796 | 0.6037 | 0.2676 | 0.2941 |
+| 2025-12-03 | 0.0289 | 0.3054 | 0.2232 | 1.3683x | 0.5817 | 0.5855 | 0.2767 | 0.3067 |
+| 2026-01-18 | 0.0325 | 0.2033 | 0.2289 | 0.8882x | 0.6094 | 0.6028 | 0.2962 | 0.3192 |
+| 2026-03-02 | 0.0362 | 0.1698 | 0.2088 | 0.8132x | 0.5352 | 0.5758 | 0.2238 | 0.2952 |
+| 2026-04-02 | 0.0364 | 0.2721 | 0.2537 | 1.0725x | 0.6748 | 0.5490 | 0.2706 | 0.2941 |
+| 2026-05-04 | 0.0863 | 0.2446 | 0.2928 | 0.8354x | 0.6691 | 0.5720 | 0.3000 | 0.3133 |
+| **median** | | 0.2446 | 0.2232 | **1.0725x** | 0.5817 | 0.5855 | 0.2767 | 0.2952 |
+
+1. **Across releases: no difference the rule can see.** The model is
+   ahead at 4 dates and behind at 3, by a median of 1.07x (0.81x to
+   1.37x). Winning needed 6 dates and 1.25x; losing, 6 and 0.80x.
+2. **Within an upgrade: no difference the rule can see.** The model's
+   nDCG@20 is higher at 3 dates and path length's at 4, by a median
+   difference of -0.0038.
+
+**precision@10, which §34.1 set aside: path length is higher at all 7
+dates** (median 0.2952 against 0.2767). It stays out of the verdict, as
+§25.3's did, and is recorded because it points the same way. The report
+says it.
+
+**Read beside it, not ruled on.**
+
+- At the sweep's own dates (§33.3) the model is ahead on PR-AUC at 5 of
+  7 (median 1.10x, 0.85x to 1.33x) and higher on nDCG@20 at 4 of 7.
+- On the single split, path length scores 0.265 against the model's
+  0.289, a lift of 1.09x (0.78–1.74), with precision@10 0.294 against
+  0.282 and nDCG@20 0.549 against 0.595.
+- Path length alone beats popularity by 2.5x to 4.8x at the seven dates
+  (median 4.1x), where the model does by 2.1x to 6.6x (median 4.7x).
+- Against the line, the logistic regression on all 17 features, path
+  length's PR-AUC is higher at 5 of 7 dates and 0.0006 lower at a sixth
+  (2025-10-06), with medians of 0.223 and 0.187. The line's number is
+  still on the old convention (§35 point 2), which read the model up to
+  2.6% high at these dates, so the sixth date cannot be called either
+  way. The strongest baseline is path length, not the line.
+
+**What follows, by §34.1, both verdicts being "no difference".**
+
+1. The report says that ranking by the shortest import path does as
+   well across releases, so the lift over popularity is path length's,
+   not the model's.
+2. It says that inside one upgrade the shortest path first does as
+   well, and does not claim the model's ordering adds to it. What the
+   project adds is the pipeline around the ordering: griffe's diff, the
+   usage-checked label, the all-clear, and the fixer. §35.2 has the
+   wording.
+3. Item 15 (F25), whether a simpler model should ship, moves up and gets
+   its own rule, fixed before anything is fitted for it. F43 is part of
+   that question.
+
+This is the ablation's finding (§30.3, §32.3) again, now with nothing
+fitted and judged at seven dates fixed in advance: the rule cannot tell
+the model apart from how short a symbol's public name is. It answers
+Varad's question of 9 Oct.
+
 ## 35. F42: a run of tied scores counted as one threshold (10 Oct). What follows was fixed before any number
 
 **F42. PR-AUC counts a run of tied scores as one threshold, which
@@ -5623,7 +5835,11 @@ griffe_all every row; the model's and the line's scores tie too, wherever
 rows share every feature, as a symbol's parameter rows do. So every lift
 over popularity quoted so far rests on a convention that misstates both
 of its sides, by an amount nobody has measured. Found 10 Oct by an
-independent review of F41's code, before F41 ran.
+independent review of F41's code, before F41 ran. *[Measured the same
+day, §35.1: across the thirteen dates the old convention read popularity
+up to 10.2% high and the model up to 3.4%. With ties averaged the lift
+over popularity rises a little: median 4.44x to 4.73x at the seven
+reference dates.]*
 
 *Fix:* `metrics.average_precision_ties` computes the expectation exactly
 (McSherry and Najork, ECIR 2008). In a run of n rows holding r positives,
@@ -5656,3 +5872,151 @@ over every order on 200 small cases (`scripts/test_path_baseline.py`).
 4. If, with ties averaged, the model no longer beats popularity at some
    date, or a date's interval reaches 1.0x, the report says so at that
    date. Nothing about the model is changed because of it.
+
+### 35.1 Measured (10 Oct)
+
+The retrain (§33.3) carried both conventions, as point 2 set out. At
+every date the old convention read both sides high, against their
+averages over every order of the ties: the model by 0.4% to 2.6% at the
+seven dates, popularity by 1.1% to 10.1% (by 3.4% and 10.2% at most
+across all thirteen). So with ties averaged the lift over popularity is
+level or higher at six of the seven dates, and 0.01x lower at the
+seventh:
+
+| cut | lift, scikit-learn's convention | lift, ties averaged |
+|---|---|---|
+| 2025-08-07 | 4.80x | 4.84x |
+| 2025-10-06 | 5.38x | 5.37x |
+| 2025-12-03 | 6.50x | 6.59x |
+| 2026-01-18 | 4.19x | 4.19x |
+| 2026-03-02 | 3.05x | 3.30x |
+| 2026-04-02 | 4.44x | 4.73x |
+| 2026-05-04 | 2.03x | 2.11x |
+| **median** | 4.44x | **4.73x** |
+
+At the sweep's own dates the median goes from 3.53x to 3.80x (2.34x to
+6.37x), and on the single split from 2.61x (1.65–5.22) to 2.79x
+(1.73–5.41). Either way the model beats popularity at 7/7, and by more
+than its interval at 7/7, at both sets of dates, so point 4 does not
+arise.
+
+**Which way the old convention errs depends on the data.** It credits
+every positive in a run of ties with the precision at the run's end.
+That is below the average over the run's orders when precision falls
+through the run, as on the synthetic halves where path read low, and
+above it when precision rises through the run, which it does when the
+run holds used changes more densely than everything ranked above it.
+Popularity's runs are whole packages, and on the real data the old
+convention read popularity high at every date, by up to a tenth. The
+model's ties are rows that share every feature, as a symbol's parameter
+rows do, far fewer, and it read the model high by under 4% at all
+thirteen dates.
+
+**What follows.** As §35 fixed before the run: the report moves to ties
+averaged for every number, in the wording of §35.2 (two numbers that
+exist only on the old convention are named as such there); the old
+convention's numbers appear once, as the before, in the table above;
+§32.3's claims are restated in §35.2; the site copy follows (Varad); and
+evaluate()'s default changes. Decided today, on timing only: the
+default changes, with intervals()', in item 15's code, the next to touch
+metrics.py, so that every number after it comes from one convention,
+PR-AUC's own interval and the line's PR-AUC included, and ablate.py
+measures on it when it next runs. Until then the report quotes PR-AUC
+without an interval.
+
+### 35.2 What the report says now (10 Oct)
+
+Replacing §32.3's paragraph, slide, site copy and demo, until item 15
+(F25) decides what ships. PR-AUC with ties averaged throughout (§35.1),
+with two exceptions, each named as such where it appears: §32.3's
+ablation paragraph, which stands as measured until ablate.py runs again,
+since it already says what §34.2 confirms; and the refit example, which
+compares with a run that has only the old convention. precision@10 and
+nDCG@20 break ties by one fixed
+random order, as before. The paragraph on the line (§29.3, §30.3) is
+rewritten with item 15's result.
+
+**For the report:**
+
+> On the held-back test window (1,954 rows: 1,510 distinct changes in
+> 190 upgrades), the ranker reaches PR-AUC 0.289 against a floor of
+> 0.079, 2.8 times the popularity baseline (95% interval 1.73–5.41).
+> Across thirteen cut dates, seven fixed in advance and six more placed
+> by the same procedure on the current data, it beats popularity at
+> every one, and at every one the lower end of its own 95% interval
+> stays above 1.0x. How large the lift is depends on the date, from 2.1x
+> to 6.6x, and one release can move it: when sglang 0.5.10, whose 2,296
+> changes no scanned package uses, leaves the test half, the popularity
+> baseline recovers and the lift falls from 4.7x to 2.8x.
+>
+> A rule with nothing learned does as well. Listing a release's changes
+> by how short their public import path is, shortest first, beats
+> popularity by 2.5x to 4.8x at the seven dates fixed in advance. Before
+> measuring it we fixed what would count as the model beating it: across
+> releases, a higher PR-AUC at six of the seven dates, by a median factor
+> of at least 1.25; inside an upgrade, a higher nDCG@20 at six of seven.
+> The model's PR-AUC is higher at four dates and lower at three, a
+> median factor of 1.07 over the seven; its nDCG@20 is higher at three;
+> and the rule's precision@10 is higher at all seven. So the lift over
+> popularity is path length's, not the model's, and we do not claim the
+> model orders an upgrade's changes better than the shortest path
+> first. What the project adds is the
+> pipeline around that ordering: the API diff, a label checked against
+> real downstream imports, the all-clear for releases with nothing to
+> fix, and the fixer.
+>
+> Inside an upgrade, the model's precision@10 is 0.282 (0.190–0.380)
+> over 17 upgrades and its nDCG@20 0.595 (0.439–0.746) over 11. PR-AUC
+> is the average precision expected over every order of tied scores
+> (McSherry and Najork, 2008); scikit-learn's convention, which counts a
+> run of ties as one threshold, read popularity 1% to 10% higher and the
+> model under 4% higher. The model's size and settings are chosen by
+> time-ordered cross-validation inside each training window. Intervals
+> come from 2,000 resamples of whole upgrades with the model held fixed,
+> so they leave out how far a refit moves the result: retrained after
+> ten rows came back into the data, the model's lift at one date went
+> from 5.2x to 6.5x (both by scikit-learn's convention, the only one the
+> earlier run has).
+
+For a slide:
+
+- Beats popularity at all 13 cut dates, 2.1x–6.6x with the date; every
+  date's interval above 1.0x.
+- A rule with nothing learned, shortest import path first, beats
+  popularity too, by 2.5x–4.8x. The model does not beat the rule:
+  PR-AUC higher at 4 of 7 dates fixed in advance (median ratio 1.07x
+  over all 7), nDCG@20 higher at 3 of 7.
+- PR-AUC 0.289, floor 0.079; precision@10 0.282 (17 upgrades), nDCG@20
+  0.595 (11).
+- What the project adds: the API diff, the usage-checked label, the
+  all-clear, the fixer.
+
+**For the site**, replacing §32.3's:
+
+> Beats a popularity baseline at every evaluation cut date, by 2.1x to
+> 6.6x depending on the date, and at every date the lower end of its 95%
+> interval stays above 1x. A simpler rule does as well: listing changes
+> by how short their import path is, shortest first. Measured on
+> releases published before 28 July 2026; later releases are held back,
+> unseen, for the final evaluation.
+
+**For the demo**, replacing §32.3's, since §31.1's rule now picks redis
+(§33.3):
+
+> redis 7.3.0 -> 7.3.1 changed 42 public names. Downstream code uses 3
+> of them, and BreakRank lists those 3 first; a random order would put
+> 0.7 of them in the first 10, on average. Across the 9
+> comparable releases the model never trained on, its top 10 beats that
+> random order at every one, finding 28 used changes where a random
+> order would find 13.1.
+
+Told with it, before anyone asks: the 3 are new default values for
+three parameters of one constructor, `redis.Redis(...)`, and they count
+as used because 2 scanned packages import `Redis`; whether either passes
+those arguments, the label cannot see. The demo shows the ordering, not
+that the model beats a simple rule (§34.2). And the failure, from
+cryptography 46.0.7 -> 47.0.0: `PBKDF2HMAC`, used by 10 packages, the
+most in its release, is ranked 27th of 30. Its path is deep, it is not
+exported and it has no shorter name, and the model trusts how short a
+name is above everything else. §31.2's coda stands: the label measures
+use, not breakage.
