@@ -6,9 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from api import config
 from api.routes import packages
 
+from api.services.model_check import check_model_override
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_model_override()
     config.MODEL_VERSION, config.POSITIVE_RATE = config.resolve_model()
     print(f"Serving model: {config.MODEL_VERSION} (floor {config.POSITIVE_RATE})")
     yield
