@@ -44,6 +44,20 @@ and its interval `lift_vs_path_lo`-`lift_vs_path_hi`, `beats_path` and
 reference dates and applies §34.1's rule; every row now also says its
 label and objective, which the verdict checks.
 
+And, from 10 Oct night, item 15 (F25, NOTES §36): which ranker ships.
+In a sweep of the shipped model (label_alias, lambdarank, binary, tuned
+by CV), each cut also fits R, the two reachability features
+(public_depth, has_export_path) chosen and fitted exactly as the model
+is, and scores two orders that break ties with the model: path length,
+then the model (`path_model`), and R, then the model (`reach_model`).
+Every one of the five rankers gets PR-AUC with ties averaged and, under
+`_e` names, precision@10 and nDCG@20 averaged over every order of its
+ties (F44); R's size, setting and number of distinct scores, a
+fingerprint of the test half and what the sweep ran on are written
+beside them (CONTEST, CONTEST_EXTRA). None of it is printed here:
+scripts/ship_verdict.py reads the sweep at the seven reference dates,
+checks it, and applies §36.1's rule.
+
 BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
 quantiles, so they move whenever the rows do: item 2 deleted 708 dev
 upgrades and every date moved. A fix judged by comparing a sweep before
@@ -89,7 +103,10 @@ Lift is computed WITHIN each split, then summarised.
 """
 
 import argparse
+import hashlib
+import os
 import pathlib
+import subprocess
 import sys
 
 import numpy as np
@@ -99,6 +116,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
+from ml.model.ablate import REACHABILITY  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
 from ml.model.metrics import (evaluate, intervals,  # noqa: E402
                               n_rankable, ndcg_at_k, tie_averaged)
@@ -158,6 +176,28 @@ MIN_TEST_POSITIVES = 30
 # measuring the thing it claims to measure.
 MIN_RANKABLE_PAIRS = 10
 
+# Item 15's five rankers (NOTES §36), simplest first, each as its columns
+# in a sweep row: PR-AUC with ties averaged (F42), and nDCG@20 and
+# precision@10 averaged over every order of the ties (`_e`, F44).
+# scripts/ship_verdict.py reads the same columns.
+CONTEST = {
+    "path length alone": ("path", "path_ndcg_20_e", "path_p_at_10_e"),
+    "the two reachability features": ("reach", "reach_ndcg_20_e",
+                                      "reach_p_at_10_e"),
+    "the model": ("pr_auc_ties", "ndcg_20_e", "p_at_10_e"),
+    "path length, then the model": ("path_model", "path_model_ndcg_20_e",
+                                    "path_model_p_at_10_e"),
+    "the two features, then the model": ("reach_model",
+                                         "reach_model_ndcg_20_e",
+                                         "reach_model_p_at_10_e"),
+}
+# Written beside them: R's size, setting and how many distinct scores it
+# gives, a fingerprint of the test half it was all measured on, and what
+# it ran on, so a sweep that does not reproduce §34.2 can say why.
+CONTEST_EXTRA = ("reach_trees", "reach_setting", "reach_levels", "test_hash",
+                 "lightgbm", "sklearn", "pandas", "numpy", "python", "cpus",
+                 "omp_threads", "commit")
+
 
 def upgrade_dates(df: pd.DataFrame) -> pd.Series:
     """One date per version pair, the newest of its rows. On clean data
@@ -196,12 +236,18 @@ def show(point) -> str:
 def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
               objective: str, stopping: str = "cv",
               relevance: str = "binary",
-              tuning: str = "fixed") -> dict | None:
+              tuning: str = "fixed", contest: bool = False) -> dict | None:
     """Train and score at one cut point (a quantile, or a date with --at).
     None if the split is unusable.
 
     The gates below read the 0/1 label whatever the relevance, so a
-    binary sweep and a graded one skip exactly the same cuts."""
+    binary sweep and a graded one skip exactly the same cuts.
+
+    contest=True adds item 15's rankers (NOTES §36): R, fitted after the
+    model and exactly as it was, on the two reachability features, and the
+    two orders that break ties with the model. Off by default, so the
+    scripts that re-measure earlier results fit what they always did; the
+    model's own numbers are the same either way."""
     cutoff, is_test = cut(df, q)
     test = df[is_test].sort_values(GROUP)
     full_train = df[~is_test].sort_values(GROUP)
@@ -257,6 +303,12 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     # measured at the same dates before the report moves to it.
     tie = tie_averaged(scored, label)
 
+    # Item 15 (NOTES §36), after everything above is measured, so the
+    # model's numbers cannot depend on it.
+    extra = (contest_columns(scored, label, full_train, train, valid,
+                             objective, stopping, relevance, tuning)
+             if contest else {})
+
     return {
         "cut": str(cutoff.date()),
         "q": qval(q),
@@ -288,8 +340,123 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         # leaves/learning rate/smallest leaf. Always 31/0.05/30 untuned.
         "setting": setting_text(getattr(model, "tuned_", {}).get(
             "params", FIXED_PARAMS)),
+        **extra,
         "skipped": False,
     }
+
+
+def then_by(primary, secondary) -> np.ndarray:
+    """A score that orders rows by `primary`, and the rows `primary` ties
+    by `secondary`: for item 15 (NOTES §36), shortest path first, and among
+    changes equally short, the model's order. Rows tied on both stay tied.
+
+    primary's distinct values become their dense ranks, 1 apart whatever
+    the gaps between them (R's scores can differ in the fifth decimal), and
+    secondary adds less than 0.5 by its rank, so it can reorder only inside
+    a tie. Ranks are taken over the whole frame, which keeps every
+    upgrade's own order as well."""
+    p = pd.Series(np.asarray(primary, dtype=float))
+    s = pd.Series(np.asarray(secondary, dtype=float))
+    if p.isna().any() or s.isna().any():
+        raise ValueError("then_by needs a score on every row")
+    return (p.rank(method="dense").to_numpy()
+            + 0.5 * s.rank(method="average").to_numpy() / (len(s) + 1))
+
+
+def contest_columns(scored: pd.DataFrame, label: str,
+                    full_train: pd.DataFrame, train: pd.DataFrame,
+                    valid: pd.DataFrame, objective: str, stopping: str,
+                    relevance: str, tuning: str) -> dict:
+    """Item 15's columns of a sweep row (NOTES §36.1), from a test half the
+    model and the baselines have already scored.
+
+    R is the two reachability features, fitted by exactly the procedure
+    the model was (one_split's): with stopping cv, its setting and tree
+    count chosen on the same folds (tuning cv) and a refit on all of
+    train. `path_model` and `reach_model` are path length's order and R's,
+    their ties broken by the model's (then_by). Every one of the five is
+    scored the same way: PR-AUC with ties averaged (F42; for path and the
+    model, the `path` and `pr_auc_ties` columns already written), and
+    precision@10 and nDCG@20 averaged over every order of whatever still
+    ties (F44, the `_e` columns)."""
+    if stopping == "cv":
+        reach, trees, _ = fit_cv(full_train, REACHABILITY, label, objective,
+                                 relevance=relevance, tuning=tuning)
+    else:
+        reach = fit_model(train, valid, REACHABILITY, label, objective,
+                          relevance=relevance)
+        trees = getattr(reach, "best_iteration_", None) or 600
+    test = scored.copy()
+    test["reach"] = score_with(reach, test, REACHABILITY)
+    test["path_model"] = then_by(test["path"], test["model"])
+    test["reach_model"] = then_by(test["reach"], test["model"])
+    out = {"reach_trees": trees,
+           "reach_setting": setting_text(getattr(reach, "tuned_", {}).get(
+               "params", FIXED_PARAMS)),
+           "reach_levels": int(test["reach"].nunique())}
+    for name in ("path", "reach", "model", "path_model", "reach_model"):
+        e = evaluate(test, name, label, ties=True, expected=True)
+        if name in ("reach", "path_model", "reach_model"):
+            out[name] = round(e["pr_auc"], 4)
+        prefix = "" if name == "model" else f"{name}_"
+        out[f"{prefix}ndcg_20_e"] = round(e["ndcg_at_20"], 4)
+        out[f"{prefix}p_at_10_e"] = round(e["precision_at_10"], 4)
+    out["test_hash"] = test_hash(test, label)
+    return {**out, **environment()}
+
+
+def _cell(v) -> str:
+    """One value as test_hash writes it, the same on every pandas: a
+    missing value empty, a number by its value (2, 2.0 and True alike as
+    2 and 1), anything else as text."""
+    if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NA:
+        return ""
+    if isinstance(v, (bool, np.bool_, int, np.integer, float, np.floating)):
+        return f"{float(v):g}"
+    return str(v)
+
+
+def test_hash(test: pd.DataFrame, label: str) -> str:
+    """A fingerprint of a test half: its changes, their label and the two
+    reachability features, each value written by _cell and the rows in a
+    fixed order. Two sweeps measured on the same rows have the same one,
+    whichever pandas wrote them."""
+    cols = [c for c in GROUP + ["symbol", "sub_target", label,
+                                "public_depth", "has_export_path"]
+            if c in test]
+    rows = sorted("\x1f".join(_cell(v) for v in r)
+                  for r in test[cols].astype(object).itertuples(index=False))
+    return hashlib.sha256("\n".join(rows).encode()).hexdigest()[:12]
+
+
+def environment() -> dict:
+    """What a sweep ran on: library versions, CPUs, the OpenMP thread
+    setting LightGBM reads, and the commit, marked -dirty if the working
+    tree had changes. A refit can come out differently on another machine
+    or another LightGBM, so a sweep that does not reproduce an earlier one
+    says what changed."""
+    import platform
+
+    import lightgbm
+    import sklearn
+    here = pathlib.Path(__file__).resolve().parents[2]
+
+    def git(*args) -> str:
+        try:
+            return subprocess.run(["git", *args], capture_output=True,
+                                  text=True, timeout=10,
+                                  cwd=here).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    commit = git("rev-parse", "--short", "HEAD")
+    if commit and git("status", "--porcelain", "--untracked-files=no"):
+        commit += "-dirty"
+    return {"lightgbm": lightgbm.__version__, "sklearn": sklearn.__version__,
+            "pandas": pd.__version__, "numpy": np.__version__,
+            "python": platform.python_version(), "cpus": os.cpu_count(),
+            "omp_threads": os.environ.get("OMP_NUM_THREADS", "unset"),
+            "commit": commit or "unknown"}
 
 
 def against_the_line(m: dict, lin: dict) -> dict:
@@ -347,8 +514,9 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
               objective: str, stopping: str = "cv",
               points: list | None = None,
               relevance: str = "binary",
-              tuning: str = "fixed") -> pd.DataFrame:
-    """One row per cut point: CUTS, or the dates given with --at."""
+              tuning: str = "fixed", contest: bool = False) -> pd.DataFrame:
+    """One row per cut point: CUTS, or the dates given with --at. contest
+    adds item 15's rankers to every row (one_split)."""
     # ONE SPLIT, ONE VOTE.
     #
     # When a single day holds more upgrades than lie between two
@@ -389,7 +557,8 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
             continue
         first[key] = q
         rows.append(one_split(df, q, label, feats, objective, stopping,
-                              relevance=relevance, tuning=tuning))
+                              relevance=relevance, tuning=tuning,
+                              contest=contest))
     t = pd.DataFrame([r for r in rows if r])
     # Stamp the boundary this sweep ran under. Every file written before the
     # freeze lacks the column, and its later cuts scored holdout rows, so
@@ -529,6 +698,13 @@ def report(t: pd.DataFrame, label: str) -> None:
               f"{ratio.min():.4f}x – {ratio.max():.4f}x; and on nDCG@20, "
               f"within an upgrade,\n  at {int(t['beats_path_ndcg'].sum())}/"
               f"{n}")
+    if "reach" in t:
+        # Item 15 (NOTES §36). Not printed here: its numbers are read first
+        # by scripts/ship_verdict.py, after the checks that say whether the
+        # sweep is the exam its rule was written for.
+        print("\n  item 15 (NOTES §36): the five rankers' numbers are in the "
+              "file, for\n  scripts/ship_verdict.py to read after its "
+              "checks; none are printed here")
 
     if wins == n:
         print("\n  ** Holds at every cut date. The result is not one lucky")
@@ -621,10 +797,21 @@ def main() -> None:
     print("Each cut refits the model AND the baselines, so lift is computed")
     print("within a split before anything is summarised.")
 
+    # Item 15 (NOTES §36) is about the model that ships, so only a sweep
+    # run the way it is gets the extra fits; every other kind of sweep
+    # costs what it did.
+    shipped = (args.objective == "lambdarank" and args.stopping == "cv"
+               and args.relevance == SHIPPED_RELEVANCE
+               and args.tuning == SHIPPED_TUNING)
+    if shipped and "label_alias" in labels:
+        print("For label_alias each cut also fits the two reachability "
+              "features the same way,\nfor item 15 (NOTES §36).")
+
     summary = {}
     for label in labels:
         t = run_label(df, label, feats, args.objective, args.stopping,
-                      points, relevance=args.relevance, tuning=args.tuning)
+                      points, relevance=args.relevance, tuning=args.tuning,
+                      contest=shipped and label == "label_alias")
         report(t, label)
         out = DATA / stability_name(label, args.stopping, args.objective,
                                     args.relevance, at=bool(points),

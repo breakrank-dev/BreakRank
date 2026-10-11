@@ -39,6 +39,24 @@ def _ranked(scores: np.ndarray, labels: np.ndarray, k: int) -> np.ndarray:
     return labels[order][:k]
 
 
+def _expected(scores: np.ndarray, gains: np.ndarray, k: int) -> np.ndarray:
+    """What each of the top k places holds on average over every order of
+    the tied scores (F44, NOTES §36): a run of tied rows fills its places
+    in every order equally often, so each of those places holds the run's
+    mean gain. Exact, and the same whatever order the rows came in.
+
+    _ranked breaks ties by one fixed random order instead, keyed by a
+    row's position in its upgrade, so on a ranking that ties a lot, path
+    length's, precision@10 and nDCG@20 are one draw of many."""
+    scores = np.asarray(scores, dtype=float)
+    gains = np.asarray(gains, dtype=float)
+    order = np.argsort(-scores, kind="mergesort")
+    s, g = scores[order], gains[order]
+    run = np.cumsum(np.r_[True, s[1:] != s[:-1]]) - 1
+    mean = np.bincount(run, weights=g) / np.bincount(run)
+    return mean[run][:k]
+
+
 def _rankable(df: pd.DataFrame, label: str, k: int):
     """Version pairs where ranking can actually be judged.
 
@@ -62,15 +80,19 @@ def n_rankable(df: pd.DataFrame, label: str, k: int = 10) -> int:
     return sum(1 for _ in _rankable(df, label, k))
 
 
-def precision_at_k(df: pd.DataFrame, score: str, label: str, k: int = 10) -> float:
-    """Mean over rankable pairs of (relevant in top k) / k."""
-    out = [_ranked(g[score].to_numpy(float), g[label].to_numpy(int), k).sum() / k
+def precision_at_k(df: pd.DataFrame, score: str, label: str, k: int = 10,
+                   expected: bool = False) -> float:
+    """Mean over rankable pairs of (relevant in top k) / k. expected=True
+    averages over every order of the ties (_expected, F44) instead of
+    taking _ranked's one fixed order."""
+    top = _expected if expected else _ranked
+    out = [top(g[score].to_numpy(float), g[label].to_numpy(int), k).sum() / k
            for g in _rankable(df, label, k)]
     return float(np.mean(out)) if out else 0.0
 
 
 def ndcg_at_k(df: pd.DataFrame, score: str, label: str, k: int = 20,
-              gain: str | None = None) -> float:
+              gain: str | None = None, expected: bool = False) -> float:
     """Mean nDCG@k over rankable pairs (same restriction as precision@k).
 
     gain names a column of per-row gains to use in place of the 0/1 label:
@@ -78,11 +100,16 @@ def ndcg_at_k(df: pd.DataFrame, score: str, label: str, k: int = 20,
     packages use it. The pairs judged are the same either way, the ones
     rankable under the 0/1 label, so the two numbers describe one exam.
     Plain nDCG@k scores "the change 25 packages use, then the one 1 uses"
-    and the reverse order the same; with gains, the first scores higher."""
+    and the reverse order the same; with gains, the first scores higher.
+
+    expected=True averages over every order of the ties (_expected, F44):
+    the ideal ranking is fixed, so the mean of nDCG is the mean DCG over
+    the ideal."""
     out = []
+    top = _expected if expected else _ranked
     for g in _rankable(df, label, k):
         rel = (g[gain].to_numpy(float) if gain else g[label].to_numpy(int))
-        gains = _ranked(g[score].to_numpy(float), rel, k)
+        gains = top(g[score].to_numpy(float), rel, k)
         disc = 1.0 / np.log2(np.arange(2, len(gains) + 2))
         ideal = np.sort(rel)[::-1][:k]
         idisc = 1.0 / np.log2(np.arange(2, len(ideal) + 2))
@@ -138,19 +165,22 @@ def average_precision_ties(y, s, sample_weight=None) -> float:
 
 
 def evaluate(df: pd.DataFrame, score: str, label: str = "label",
-             ties: bool = False) -> dict:
+             ties: bool = False, expected: bool = False) -> dict:
     """The three numbers, ready for a `model_run` row.
 
     ties=True scores PR-AUC with its ties averaged
     (average_precision_ties, F42); the default is sklearn's convention,
-    which every number before 10 Oct used."""
+    which every number before 10 Oct used. expected=True takes
+    precision@10 and nDCG@20 as their average over every order of the
+    ties (F44); the default is _ranked's one fixed order."""
     y = df[label].to_numpy(int)
     s = df[score].to_numpy(float)
     ap = average_precision_ties if ties else average_precision_score
     return {
         "pr_auc": float(ap(y, s)) if y.sum() else 0.0,
-        "precision_at_10": precision_at_k(df, score, label, 10),
-        "ndcg_at_20": ndcg_at_k(df, score, label, 20),
+        "precision_at_10": precision_at_k(df, score, label, 10,
+                                          expected=expected),
+        "ndcg_at_20": ndcg_at_k(df, score, label, 20, expected=expected),
     }
 
 

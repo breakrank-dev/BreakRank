@@ -2992,8 +2992,8 @@ Each of the first four both fixes a defect AND raises the headline.
 13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
-   *[10 Oct: F25 is now which model ships, if any, against path length
-   alone, which the model did not beat (§34.2). Next, with its own rule.]*
+   *[10 Oct: F25 is now which ranker ships, against path length alone,
+   which the model did not beat (§34.2). Its rule is §36.1.]*
 16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
 
 Items 1–5 are about a week and turn the project from "good student
@@ -5314,7 +5314,7 @@ break, the binary curves, is used by almost nobody.
 Varad answered on 9 Oct. The all-clear (F15, item 12) is decided by the
 pipeline, his option (b), once F1 has been changed in two ways. §33.1 was
 written and pushed before `scripts/version_count.py` read the real data.
-The count goes in §33.2, and the retrain in §33.3.
+The count goes in §33.2, the retrain in §33.3 and the load in §33.4.
 
 ### 33.1 The rule, fixed before the count
 
@@ -5617,6 +5617,19 @@ package, is 16th.
 §31.2's coda stands: the label measures use, not breakage, and
 PBKDF2HMAC's change of kind is probably a reimplementation.
 
+### 33.4 The load (10 Oct)
+
+From c2fa88f: `lambdarank-label_alias-tuned` re-loaded under its own
+name, 21,452 scores (replacing 21,440), all written 2026-10-10. The 12
+rows that came back hold scores now, and by the narrowed rules
+version-string rows with a score read 0, package-metadata rows 0.
+trained_at is unchanged (2026-10-05), so the API needed no restart, and
+/health named the model. model_run's pr_auc reads 0.2938, scikit-learn's
+convention, until evaluate()'s default moves (§35.1); the report's
+number is 0.289. The rest is 9 Oct's: 23,267 breakage rows sent, 27,900
+in the table, 232 releases with no status the files can establish, and
+F32's four packages on which releases.csv and changes.csv disagree.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
@@ -5780,7 +5793,9 @@ sides (§35).
 **precision@10, which §34.1 set aside: path length is higher at all 7
 dates** (median 0.2952 against 0.2767). It stays out of the verdict, as
 §25.3's did, and is recorded because it points the same way. The report
-says it.
+says it. *[F44 (§36): this and the second verdict were measured on one
+fixed order of path length's ties; item 15's sweep measures both again
+over every order.]*
 
 **Read beside it, not ruled on.**
 
@@ -5922,7 +5937,11 @@ default changes, with intervals()', in item 15's code, the next to touch
 metrics.py, so that every number after it comes from one convention,
 PR-AUC's own interval and the line's PR-AUC included, and ablate.py
 measures on it when it next runs. Until then the report quotes PR-AUC
-without an interval.
+without an interval. *[Made precise the same night (§36.1): in the code
+that ships item 15's winner. Item 15's own code adds to metrics.py
+precision@10 and nDCG@20 averaged over tie orders (F44) and changes no
+default, so its sweep still writes every number §34.2 was ruled on, the
+same way.]*
 
 ### 35.2 What the report says now (10 Oct)
 
@@ -5932,9 +5951,10 @@ with two exceptions, each named as such where it appears: §32.3's
 ablation paragraph, which stands as measured until ablate.py runs again,
 since it already says what §34.2 confirms; and the refit example, which
 compares with a run that has only the old convention. precision@10 and
-nDCG@20 break ties by one fixed
-random order, as before. The paragraph on the line (§29.3, §30.3) is
-rewritten with item 15's result.
+nDCG@20 break ties by one fixed random order, as before. *[F44 (§36):
+they are restated from their average over tie orders once item 15's
+sweep has run.]* The paragraph on the line (§29.3, §30.3) is rewritten
+with item 15's result.
 
 **For the report:**
 
@@ -6020,3 +6040,232 @@ most in its release, is ranked 27th of 30. Its path is deep, it is not
 exported and it has no shorter name, and the model trusts how short a
 name is above everything else. §31.2's coda stands: the label measures
 use, not breakage.
+
+## 36. Item 15 (F25): which ranker ships, now that path length alone matches the model (10 Oct). The rule, fixed before the run
+
+**F25, as it stands now.** F25 was "the classifier → ranker comparison
+was never made" (§21.6b), and item 15 was to ship whichever won. §34.2
+changed the question: the shipped model does not beat a rule with nothing
+learned, shortest import path first, on either of §34.1's measures. By
+§34.1, item 15 moves up and decides which ranker the site serves and the
+report presents, and it was decided on 10 Oct that a rule settles it.
+
+What was known when §36.1 was written: P's and M's numbers at the seven
+dates (§34.2). What was not: R, as cross-validation chooses it at the
+seven dates, and both tie-broken orders. The ablation's two-feature
+model, on R's two features but with the full model's setting and size,
+was fitted on the real single split twice (§30.3, §32.3). §36.1 was
+written and pushed before any of the new rankers was scored on the real
+data. An independent review of its first draft, before the run, found
+F44 below, two flaws in the draft's rule and two in its checks, and gaps
+in its tests; a second review of the rework found one more gap in the
+rule and smaller ones in the checks. Each is fixed in what follows, and
+the draft's flaws are named where they were.
+
+**F44. precision@10 and nDCG@20 score a ranking with ties by one fixed
+order of them.** metrics.py breaks ties by a random order keyed to a
+row's position in its upgrade, the same keys in every upgrade (`_ranked`).
+For the model, which rarely ties, that is close to nothing. For path
+length, which ties on most rows, it is one draw of many: on the test
+fixture at one cut (2026-04-01, 89 upgrades rankable at 20), path
+length's nDCG@20 ran from 0.466 to 0.517 over 30 such orders; averaged
+exactly over every order it is 0.488, and the order the code uses gave
+0.496 (`scripts/test_ship.py` reproduces all four).
+The test halves at the seven dates are nested, so an
+upgrade is ranked by the same draw at every date, and "6 of 7" counts one
+draw several times. §34.1's second verdict and precision@10's 7 of 7
+(§34.2) were measured this way. *Fix:* `metrics._expected`, the average
+over every order of the ties, exact: a run of tied rows fills its places
+in every order equally often, so each of its places holds the run's mean
+gain. It is F42 for the within-upgrade measures. Found 10 Oct by the
+review of item 15's code, before the run.
+
+### 36.1 The rankers, the test, and what each outcome leads to
+
+**Three rankers, simplest first.**
+
+- **P, path length alone** (§34.1): minus public_depth, nothing fitted.
+- **R, the two reachability features**, public_depth and has_export_path,
+  ranked by LambdaRank chosen and fitted exactly as the shipped model is:
+  its setting and tree count chosen on the same CV folds and grid (§30.1),
+  then a refit on all of train. The ablation's two-feature model, now
+  choosing its own setting and size: the one learned ranker between the
+  other two.
+- **M, the shipped model**, 17 features (§30).
+
+**And the order inside ties.** P gives every change at one depth the same
+score, R ties about as much (with few trees it can merge depths, and the
+export flag can split one), and the site has to list tied changes in
+some order. **P→M** is path length's
+order with the model's order inside each tie, and **R→M** the same with R
+(`stability.then_by`). They answer one question, step 3 below: whether
+the model knows anything about changes that P or R cannot tell apart.
+
+**Where it is measured.** One `stability.py --at` sweep at the seven
+reference dates of §23.5. At each date it fits M and then R on the same
+training rows, and scores all five on the same test half: PR-AUC with
+ties averaged (F42), and nDCG@20 over the upgrades rankable at 20 and
+precision@10 averaged over every order of whatever still ties (F44).
+`scripts/ship_verdict.py` reads that file, checks it, and applies the
+rule. The sweep prints none of the new numbers (the draft's printed
+them), and its file is not opened before the verdict has run: the
+verdict reads them first, after its checks, so a refused sweep has put
+nothing in front of anyone to react to. The sweep also writes R's number of
+distinct scores, a fingerprint of each test half, and what it ran on
+(library versions, CPUs, the OpenMP thread setting, and the commit,
+marked if the working tree had changes).
+
+**It checks itself.** No verdict unless the sweep passes every check
+path_verdict.py makes (stamped as the shipped model is run, the seven
+dates, none skipped, F41's columns), has item 15's columns with no gap,
+and was measured on §34.2's data: at every date the same number of test
+rows and positives, and P's three numbers as §34.2 stored them (PR-AUC,
+and precision@10 and nDCG@20 in the fixed order), exactly. P is fitted
+on nothing, so on the same rows of the same file they cannot move. They
+cannot see has_export_path, which only R reads, so the file itself is
+pinned as well: features.csv's date and checksum are recorded before the
+run, and its date must be that of 10 Oct's build (§33.3). M is refitted, and a
+refit can come out differently on another machine or library (LightGBM
+chooses how it builds histograms by timing), so where M's numbers differ
+from §34.2's the verdict prints both and rules on the sweep's own (the
+draft refused a sweep whose M had moved by 0.001, which an innocent
+refit could do).
+
+**If the data check refuses**, nothing is ruled on, the check is never
+loosened, and NOTES records why the data moved before anything else is
+run. If it moved for a reason NOTES can name (a rebuild, a fix), §34.1
+is applied again to a new `--at` sweep of the new data and recorded;
+REFERENCE is then replaced by that sweep's numbers, in a commit of its
+own that says so, and item 15 is ruled on a sweep that reproduces them.
+
+**Where, and how often, it runs.** Once, on the Mac and in the venv
+§34.2 ran on, with nothing reinstalled in between, after 10 Oct's sweep
+file is copied aside (the run writes over it). The verdict prints what
+the sweep ran on, and NOTES records it. A second run, for any reason,
+gets a NOTES entry saying why before it starts.
+
+**One test, used throughout. X beats Y** when, at the seven dates, X wins
+on at least one of §34.1's two measures, by §34.1's rule
+(path_verdict.py's own functions), and Y wins on neither:
+
+- across releases, PR-AUC: X/Y above 1 at 6 or more dates and its median
+  1.25 or more (Y wins: below 1 at 6 or more, median 0.80 or less);
+- within an upgrade, nDCG@20 (averaged over tie orders): higher at 6 or
+  more.
+
+Values as the sweep stores them, to four places; a tie at four places is
+higher for neither; precision@10 is printed and not ruled on, as in §34.1.
+
+**The rule.**
+
+1. R and M are each set against P. One that does not beat P is out.
+2. If neither beats P, P stands. If only R does, R stands. If only M
+   does, M stands, unless R beats M, and then P stands. If both do, R
+   stands, unless M beats R.
+3. If P or R stands, the order inside its ties: the model's (P→M or R→M)
+   if its nDCG@20 is higher at 6 or more of the 7 dates; otherwise no
+   order is claimed inside a tie.
+
+What stands ships, with that order inside its ties.
+
+**Why these.** A ranker the evaluation cannot tell from a simpler one
+has nothing to defend it but its complexity. The simpler one is the
+honest answer in a viva; it has nothing to refit, so F43 cannot move it;
+and a user can be told why a change is near the top. So the burden is on
+the learned rankers, at §34.1's margins, for §29.1's reasons, and each
+is set against P directly: the draft set M against whichever ranker
+stood, which could have shipped M without its beating P; and M does not
+stand where the simpler R beats it, though R did not beat P either (the
+first rework let it). Step 3 is judged on nDCG@20 alone (the draft used
+both measures) because that is where a release's order shows: pooled
+PR-AUC would also count how P→M orders ties across upgrades, which no
+one sees, and which the model's package-level features (§30.3) would
+decide.
+
+**What each outcome leads to.** Fixed now, whatever the verdict.
+
+- **P ships, no order inside its ties.** The site serves P's scores under
+  a model name of their own (one API restart, §28.5, and Varad told), M's
+  scores staying in the database as the fallback; a change with no depth
+  scores as the deepest in its release. The site says changes at one
+  depth are in no particular order (Varad). The report presents P as
+  BreakRank's ranker: changes ordered by how short their public import
+  path is. M and R are reported as what was tried, with the rules that set
+  them aside (§34.2 and this one). The numbers the report quotes become
+  P's, its lift over popularity with the paired interval the model's has:
+  the single split, the thirteen dates (§34.2: 2.5x to 4.8x at the seven),
+  and the holdout when it is opened, where final_eval.py scores P with M
+  and popularity beside it. stories.py runs again on P's order under
+  §31.1's rules, counting a tied list by its average over tie orders, and
+  the demo follows it.
+- **P→M ships.** As for P, but the scores are P's with M's order inside
+  each depth, and the report says so: shortest path first, then the model
+  among changes equally short. Its PR-AUC across releases is P's, since
+  step 3 judged only the order inside an upgrade; its precision@10 and
+  nDCG@20 are P→M's. The model stays in the product, below path length,
+  and F43 reaches only the order inside a tie.
+- **R or R→M ships.** The site serves R (ranker.txt becomes the
+  two-feature model, by a train.py option for its features, and the loader
+  builds R→M's scores if that is the order), and the report says two
+  features do the work of 17, with the circularity has_export_path carries:
+  label_alias counts a use through the same export paths that set it
+  (labels.py), so it is tied to the label more directly than depth is.
+- **M ships.** Nothing on the site changes, and the report says the 17
+  features are kept because they beat path length, and the two features
+  too where those beat it, by this rule.
+
+Whatever ships, the code that ships it moves evaluate()'s and
+intervals()' defaults to ties averaged, PR-AUC (F42) and the
+within-upgrade measures (F44) alike, so every number the report quotes
+from then on comes from one convention.
+
+**What F44 does to §34.2.** §34.2 stands as ruled, on the fixed order.
+Step 1 measures M against P again with the averaged one. If M's numbers
+in this sweep are §34.2's exactly, the difference between the two
+rulings is F44's alone, and §34.1's list follows the new one, as the
+report moved to F42's convention whatever it showed. If they moved, the
+difference mixes F44 with the refit, and §34.1's list keeps §34.2's
+verdict, the new comparison recorded beside it. Either way the report's
+precision@10 sentence (§35.2) is restated from this sweep's averaged
+numbers, and says which sweep.
+
+**Not in the contest, by choice.** The classifier, F25 as first written:
+as complex as M, and measured against it for the record on 2 Oct (§29.2).
+The line: a learned ranker on all 17 features, which is not what item 15
+asks about (whether a simpler ranker should ship), and which path length
+alone was above at 5 of 7 dates (§34.2), a count read across two
+conventions. §35.2's paragraph on the line is rewritten after the verdict
+from §29.2's measurement, beside whatever ships.
+
+**Known, and left as it is.** R is chosen exactly as M is, so its folds
+stop and score on sklearn's PR-AUC (train.cv_tune), which F42 corrects for
+reporting. R ties far more than M, so the convention can sway its choice
+of setting more than M's; changing it for R alone would break "exactly as
+M", and for both would change the model §34.2 measured. The sweep records
+how many distinct scores R gives at each date.
+
+Tested by `scripts/test_ship.py`, seven cases: then_by(), the first
+score deciding however close its values and the second reordering only
+inside its ties; precision@10 and nDCG@20 averaged over tie orders,
+against every order of the ties on 40 small upgrades, binary and graded,
+against the fixed order where nothing ties, the same whatever order the
+rows arrive in, and through evaluate() on a tie across the 10th and 20th
+places worked by hand (precision@10 0.175); the test half's fingerprint
+and the run's stamps, and F44's four figures above; the sweep's row,
+where R is fitted after the model on the two features alone, tuned and
+on the same rows, every number of the five rankers is the one worked out
+in the test, and the model's numbers are the same with item 15 on or
+off, under `--stopping holdout` too; stability.py end to end, which
+writes item 15's columns in a sweep of the shipped model only and prints
+none of their numbers; the rule at its edges and on every branch, the
+two routes by which a draft would have shipped M among them; the verdict
+on files, with what it prints and each of its refusals; and REFERENCE
+against §34.2's table in this file. The fixture's export flag carries
+signal of its own: in test_holdout.py's fixture it is depth 1 exactly,
+so R would rank as P does there and a broken R would pass. Forty-four
+guards were broken on purpose, five in metrics.py, twenty in
+stability.py and nineteen in the verdict, and the test failed on each.
+One, evaluate() dropping the averaged precision@10, survived the first
+pass, because the test's top tie held exactly ten rows, which fill the
+top ten the same in any order; the test now has a tie across the 10th
+place.
