@@ -8,6 +8,7 @@ from api.routes import packages
 
 from api.services.model_check import check_model_override
 
+from api.routes import analyze, packages   # add analyze to your existing line
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(packages.router)
+app.include_router(analyze.router)
 
 
 @app.get("/health")
