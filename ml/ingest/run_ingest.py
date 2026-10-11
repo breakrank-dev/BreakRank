@@ -12,6 +12,9 @@ does not fill, and records every failure with a reason instead of losing it.
 Outputs, all under data/ (which is gitignored):
 
     changes.csv           one row per candidate breaking change
+    releases.csv          one row per release CONSIDERED, with a status —
+                          including the ones where nothing broke, which
+                          changes.csv cannot express
     failures.csv          one row per thing that went wrong, with a reason
     done.txt              packages already processed — this is the resume file
 
@@ -51,13 +54,14 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from ml.ingest.api_extract import diff_series, find_import_names  # noqa: E402
+from ml.ingest.api_extract import diff_series, resolve_layout  # noqa: E402
 from ml.ingest.download import (download_and_extract,  # noqa: E402
                                 list_releases_with_meta)
 from ml.ingest.packages import get_top_packages          # noqa: E402
 
 DATA = pathlib.Path("data")
 CHANGES = DATA / "changes.csv"
+RELEASES = DATA / "releases.csv"
 FAILURES = DATA / "failures.csv"
 PACKAGES = DATA / "packages.csv"
 DONE = DATA / "done.txt"
@@ -67,13 +71,75 @@ CHANGE_COLS = [
     "package", "package_rank", "version_from", "version_to", "symbol", "kind",
     "sub_target", "is_private", "in_dunder_all", "module_depth", "is_top_level",
     "name_length", "released_at", "explanation",
+    # Added 6 Sep 2026. Every path downstream code could write for this
+    # symbol, from the old version's alias graph (api_extract.export_index).
+    # Adding a column changes the header, so the resume guard below will
+    # refuse to append to an older changes.csv — which is correct: a file
+    # half-written with this column and half without would silently label
+    # the older half wrong.
+    "export_paths",
+    # Added 12 Sep 2026. How many other classes inherit this exact change.
+    # griffe diffs `all_members`, so a method removed from a base class is
+    # reported once per subclass — 3,243 times for three ModuleUtilsMixin
+    # methods in transformers 5.17.0, which was 30% of the dataset. The
+    # rows are folded onto the defining class at extract time and the count
+    # lands here instead. NOTES §10.2.
+    "inherited_by",
+    # Added 16 Sep 2026. The two HISTORY features — the only ones in the
+    # set that need more than one release to compute, which is why they
+    # are written here at extract time rather than derived in build.py.
+    #
+    # was_deprecated_before: did the OLD version carry a deprecation
+    # marker for this symbol (decorator, docstring, or griffe's own flag)?
+    # The project book calls this "probably your single strongest
+    # feature". It cannot be recovered later — once the release is diffed
+    # and thrown away the marker is gone with it.
+    #
+    # prior_breaks_in_module: how many breakages this module already
+    # produced EARLIER in the same version chain. Accumulated oldest-first
+    # in api_extract.diff_series, so a row never counts itself and never
+    # sees a release that shipped after it.
+    "was_deprecated_before",
+    "prior_breaks_in_module",
 ]
 # Maps one-to-one onto the API's `package` table.
 PACKAGE_COLS = ["package", "download_rank", "github_repo"]
+
+# One row per release we CONSIDERED, which is the file that did not exist
+# until 16 Sep and is the whole point of Varad's analysis_status.
+#
+# A pair with zero breaking changes writes zero rows to changes.csv, so
+# until now "we analysed this release and nothing broke" and "we never
+# looked at this release" were the same absence. `scripts/window_gaps.py`
+# found 27 releases in that hole from the outside; this closes it from
+# the inside, and the true number is larger because it counts PAIRS.
+#
+# n_changes belongs to the PAIR (previous -> version), not to the release:
+# "what breaks if I upgrade TO this" is the product question, and it is
+# also the distinction behind no_baseline and behind the superseded bug
+# in §13.2. A release is not a unit of analysis.
+RELEASE_COLS = ["package", "version", "released_at", "status", "n_changes"]
 FAILURE_COLS = ["package", "stage", "detail", "error_type", "message"]
 
 # Concurrent sdist downloads inside ONE package's worker. See stage 2.
 DOWNLOAD_THREADS = 4
+
+# Packages whose sdist makes macOS XProtect block "scripted malware" and
+# kill the whole run. NOT a judgement that the package is malicious — it is
+# almost certainly a benign file (a test fixture or sample) that matches an
+# antivirus signature. It is excluded here only so one flagged file cannot
+# take down a 500-package run on a Mac.
+#
+# transformers: confirmed 17 Sep 2026 by scripts/find_culprit.py, which
+# processes packages one at a time and died the instant it reached it, with
+# every earlier package clean. On Linux (the ingest sandbox) it processes
+# fine — XProtect is macOS-only — so its rows are backfilled from there and
+# the two are concatenated. Recorded as a `skipped` failure row so the
+# omission is visible in the data, never a silent gap. NOTES §18.
+#
+# Set BREAKRANK_NO_SKIP=1 to ignore this list (e.g. when running on Linux,
+# where nothing here applies and transformers should be processed normally).
+XPROTECT_BLOCKED = {"transformers"}
 
 
 # --------------------------------------------------------------- small helpers
@@ -127,7 +193,7 @@ def _alarm(_sig, _frame):
 
 
 def process_package(name: str, rank: int, n_versions: int,
-                    timeout_s: int = 600) -> tuple[list[dict], list[dict]]:
+                    timeout_s: int = 1800) -> tuple[list[dict], list[dict]]:
     """
     Diff every consecutive version pair of one package.
 
@@ -144,6 +210,21 @@ def process_package(name: str, rank: int, n_versions: int,
     for them. Wall clock was 162 minutes for maybe 140 minutes of work.
     A hard alarm bounds the unit of work, which is what makes the nightly
     job's runtime something you can promise rather than hope for.
+
+    RAISED 600s -> 1800s ON 16 SEP, and the reason it was too low is not
+    the one the number suggests. transformers was recorded as a 600s
+    timeout and then finished in 3.1 MINUTES on retry. Nothing about the
+    package changed; what changed was that it ran alone instead of
+    alongside nine siblings, and its sdists were already extracted.
+    Loading a 2,680-module tree needs real memory, and ten workers doing
+    that at once on a laptop means swapping.
+
+    So the old limit was excluding the biggest packages for being
+    contended, not for being slow — and the biggest packages are the
+    most-depended-on ones, which is a sampling decision nobody made on
+    purpose. 1800s is generous enough that a package has to be genuinely
+    stuck to hit it, and still bounded enough that one bad package cannot
+    hold a worker all night.
 
     A package that blows the alarm is discarded WHOLE, not kept partially.
     Half a package means its oldest version pairs and not its newest —
@@ -163,10 +244,12 @@ def process_package(name: str, rank: int, n_versions: int,
         shutil.rmtree(SDISTS / name, ignore_errors=True)
 
 
-def _process_package(name: str, rank: int,
-                     n_versions: int) -> tuple[list[dict], list[dict], list[dict]]:
+def _process_package(
+        name: str, rank: int, n_versions: int,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     failures: list[dict] = []
     meta: list[dict] = []
+    rels: list[dict] = []
     base = SDISTS / name
 
     # --- stage 1: what versions exist? -------------------------------------
@@ -174,20 +257,27 @@ def _process_package(name: str, rank: int,
     # (github_repo). Fetching them separately would double the request count
     # for a field already in the response.
     try:
-        releases, info = list_releases_with_meta(name, last_n=n_versions)
+        releases, info, skipped = list_releases_with_meta(
+            name, last_n=n_versions)
         meta = [{"package": name, "download_rank": rank,
                  "github_repo": info.get("github_repo")}]
+        # Recorded even when the package goes on to fail: "we saw this
+        # release and did not analyse it, here is why" is exactly the
+        # answer that was missing, and it is most valuable for packages
+        # that produce nothing at all (torch and friends ship wheels only).
+        rels = [{"package": name, "version": s["version"], "released_at": "",
+                 "status": s["status"], "n_changes": ""} for s in skipped]
     except Exception as e:
         failures.append({"package": name, "stage": "list_releases", "detail": "",
                          "error_type": type(e).__name__, "message": short(e)})
-        return [], failures, meta
+        return [], failures, meta, rels
 
     if len(releases) < 2:
         failures.append({"package": name, "stage": "list_releases",
                          "detail": f"{len(releases)} sdist releases",
                          "error_type": "TooFewReleases",
                          "message": "needs at least 2 versions with a source distribution"})
-        return [], failures, meta
+        return [], failures, meta, rels
 
     # --- stage 2: download every version once, all at the same time --------
     # Six versions used to download one after another, and a download is
@@ -222,21 +312,31 @@ def _process_package(name: str, rank: int,
         dl.shutdown(wait=False, cancel_futures=True)
 
     if not paths:
-        return [], failures, meta
+        # Every download failed. Each version is analysis_failed — recorded
+        # so the package is not simply absent from releases.csv.
+        rels.extend({"package": name, "version": r["version"],
+                     "released_at": (r.get("uploaded") or "")[:10],
+                     "status": "analysis_failed", "n_changes": ""}
+                    for r in releases)
+        return [], failures, meta, rels
 
     # --- stage 3: what is this thing actually called when you import it? ---
     # The PyPI name and the import name disagree for ~30% of packages
     # (typing-extensions -> typing_extensions, pyyaml -> yaml). Resolve it
     # once, from the newest version we managed to download.
     newest = max(paths, key=lambda v: [r["version"] for r in releases].index(v))
-    modules = find_import_names(paths[newest], name)
+    _root, modules = resolve_layout(paths[newest], name)
     if not modules:
         failures.append({"package": name, "stage": "resolve_module",
                          "detail": newest, "error_type": "NoPythonModule",
                          "message": "no importable module in the sdist — "
                                     "compiled-only or not a Python package"})
         shutil.rmtree(base, ignore_errors=True)
-        return [], failures, meta
+        rels.extend({"package": name, "version": r["version"],
+                     "released_at": (r.get("uploaded") or "")[:10],
+                     "status": "analysis_failed", "n_changes": ""}
+                    for r in releases)
+        return [], failures, meta, rels
     # --- stage 4: diff consecutive pairs -----------------------------------
     # One pass down the version chain, parsing each version once instead of
     # twice. Parsing is ~70% of the pipeline's total runtime (measured), so
@@ -263,13 +363,35 @@ def _process_package(name: str, rank: int,
     # modules=None so diff_series takes the union across the chain rather
     # than only the newest version's names (see its docstring).
     rows: list[dict] = []
+
+    def rel(version, status, n_changes=""):
+        rels.append({"package": name, "version": version,
+                     "released_at": uploaded.get(version, "")[:10],
+                     "status": status, "n_changes": n_changes})
+
+    # A version we could not download is analysis_failed, and it is the
+    # reason the chain was split above — recorded here so the gap in the
+    # chain has a stated cause rather than being inferred from a silence.
+    for r in releases:
+        if r["version"] not in paths:
+            rel(r["version"], "analysis_failed")
+
     for segment in segments:
+        # THE OLDEST VERSION IN A SEGMENT HAS NO PREDECESSOR TO DIFF
+        # AGAINST. It is not clean — nothing was compared. Calling it
+        # analysed_clean would have the site say "safe to upgrade" about a
+        # release we never examined, which is the one failure mode this
+        # feature must not have. Varad added `no_baseline` for exactly
+        # this and was right to.
+        rel(segment[0][0], "no_baseline")
+
         for vf, vt, found in diff_series(name, segment):
             if isinstance(found, Exception):
                 failures.append({"package": name, "stage": "griffe",
                                  "detail": f"{vf} -> {vt}",
                                  "error_type": type(found).__name__,
                                  "message": short(found)})
+                rel(vt, "analysis_failed")
                 continue
 
             for r in found:
@@ -278,13 +400,16 @@ def _process_package(name: str, rank: int,
                 r["version_to"] = vt
                 r["released_at"] = uploaded[vt][:10]
             rows.extend(found)
+            # n_changes belongs to the PAIR (vf -> vt) and is filed under
+            # vt: "what breaks if you upgrade TO this".
+            rel(vt, "analysed" if found else "analysed_clean", len(found))
 
     # --- stage 5: clean up -------------------------------------------------
     # Delete the source now, while we still know it is safe to. Skipping this
     # is how a 300-package run fills a laptop and dies at package 180.
     shutil.rmtree(base, ignore_errors=True)
 
-    return rows, failures, meta
+    return rows, failures, meta, rels
 
 
 # ------------------------------------------------------------------------ main
@@ -299,12 +424,13 @@ def main() -> None:
                     help="wipe previous output and start from scratch")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 1),
                     help="packages to process at once (default: CPU cores - 1)")
-    ap.add_argument("--timeout", type=int, default=600,
-                    help="seconds allowed per package before it is skipped")
+    ap.add_argument("--timeout", type=int, default=1800,
+                    help="seconds allowed per package before it is skipped "
+                         "(default 1800)")
     args = ap.parse_args()
 
     if args.restart:
-        for p in (CHANGES, FAILURES, PACKAGES, DONE):
+        for p in (CHANGES, RELEASES, FAILURES, PACKAGES, DONE):
             p.unlink(missing_ok=True)
         shutil.rmtree(SDISTS, ignore_errors=True)
         print("cleared previous run\n")
@@ -330,7 +456,28 @@ def main() -> None:
 
     packages = get_top_packages(args.packages)
     done = load_done()
-    todo = [p for p in packages if p["name"] not in done]
+
+    # Exclude the XProtect-blocked packages up front, unless told not to.
+    # Recorded as skipped failures (below) and marked done, so a resume
+    # does not keep re-hitting them and the CSVs show the omission plainly.
+    skip = set() if os.environ.get("BREAKRANK_NO_SKIP") else XPROTECT_BLOCKED
+    blocked = [p for p in packages
+               if p["name"] in skip and p["name"] not in done]
+    if blocked:
+        append_rows(FAILURES, [
+            {"package": p["name"], "stage": "skipped", "detail": "",
+             "error_type": "XProtectBlocked",
+             "message": "excluded on macOS: sdist trips XProtect; "
+                        "backfilled from the Linux ingest"}
+            for p in blocked], FAILURE_COLS)
+        for p in blocked:
+            mark_done(p["name"])
+        done = load_done()
+        print(f"skipping {len(blocked)} XProtect-blocked package(s): "
+              f"{', '.join(p['name'] for p in blocked)}")
+
+    todo = [p for p in packages
+            if p["name"] not in done and p["name"] not in skip]
 
     workers = max(1, min(args.workers, len(todo) or 1))
     print(f"{len(packages)} packages requested, {len(done)} already done, "
@@ -361,22 +508,23 @@ def main() -> None:
                 pkg = futures[fut]
                 name = pkg["name"]
                 try:
-                    rows, failures, meta = fut.result()
+                    rows, failures, meta, rels = fut.result()
                 except PackageTimeout:
                     # Expected for a handful of giants. Data, not a crash.
-                    rows, meta = [], []
+                    rows, meta, rels = [], [], []
                     failures = [{"package": name, "stage": "timeout", "detail": "",
                                  "error_type": "Timeout",
                                  "message": f"exceeded {args.timeout}s"}]
                 except Exception:
                     # A bug in our own code, not in the package. Show it.
                     traceback.print_exc()
-                    rows, meta = [], []
+                    rows, meta, rels = [], [], []
                     failures = [{"package": name, "stage": "pipeline", "detail": "",
                                  "error_type": "UnexpectedError",
                                  "message": "see traceback above"}]
 
                 append_rows(CHANGES, rows, CHANGE_COLS)
+                append_rows(RELEASES, rels, RELEASE_COLS)
                 append_rows(FAILURES, failures, FAILURE_COLS)
                 append_rows(PACKAGES, meta, PACKAGE_COLS)
                 all_failures.extend(failures)

@@ -66,20 +66,35 @@ NOT_THE_LIBRARY = {
 }
 
 
+def _normalise(name: str) -> str:
+    """`typing-extensions` and `typing_extensions` are the same thing."""
+    return re.sub(r"[-_.]", "", name).lower()
+
+
+# Compared against NORMALISED names, below. Written however reads best.
+_NOISE_NORMALISED = {re.sub(r"[-_.]", "", n).lower() for n in NOT_THE_LIBRARY}
+
+
 def _is_noise(stem: str) -> bool:
-    """Test suites, docs and build scaffolding that sit beside the real code."""
+    """Test suites, docs and build scaffolding that sit beside the real code.
+
+    NORMALISE BEFORE COMPARING. This used to test the raw lowercased stem
+    against a set holding normalised entries, so `py_src` sailed past a
+    filter that literally contains `pysrc` — and the set's own
+    `third_party` entry could never have matched anything either. The
+    comparison and the data it compared against were in different formats.
+
+    Measured cost of that (NOTES §9.5): 129 tokenizers rows recorded as
+    `py_src.tokenizers.models.BPE.from_file`, a path nobody can import, so
+    every one was a guaranteed negative no matter how used the function is.
+    """
     low = stem.lower()
     return (
-        low in NOT_THE_LIBRARY
+        _normalise(stem) in _NOISE_NORMALISED
         or low.startswith(("test_", "tests_", "_test"))
         or low.endswith(("_test", "_tests"))
         or stem.startswith(".")
     )
-
-
-def _normalise(name: str) -> str:
-    """`typing-extensions` and `typing_extensions` are the same thing."""
-    return re.sub(r"[-_.]", "", name).lower()
 
 
 def find_import_names(search_path, package_name: str = "") -> list[str]:
@@ -118,7 +133,7 @@ def find_import_names(search_path, package_name: str = "") -> list[str]:
 
     target = _normalise(package_name)
 
-    real, namespace = [], []
+    real, namespace, scripts = [], [], []
     for p in sorted(root.iterdir()):
         stem = p.stem
         # The noise filter must never fire on the package we came for.
@@ -138,12 +153,83 @@ def find_import_names(search_path, package_name: str = "") -> list[str]:
                 # `protobuf` ships google/protobuf/ exactly like this.
                 namespace.append((p.name, len(list(p.rglob("*.py")))))
         elif p.suffix == ".py" and not stem.startswith("_"):
-            real.append((stem, 1))      # single-file libraries, e.g. six.py
+            scripts.append((stem, 1))   # six.py — or a build helper
+
+    # A STRAY TOP-LEVEL SCRIPT IS ONLY THE LIBRARY WHEN NOTHING ELSE IS.
+    # `six.py` and `typing_extensions.py` really are single-file libraries
+    # and must keep working. But `version.py` (dill, multiprocess),
+    # `runtests.py` (cython), `make_cffi.py` (zstandard), `grpc_version.py`
+    # and `protoc_lib_deps.py` (grpcio-tools) are build helpers sitting at
+    # the sdist root beside a perfectly good package directory, and every
+    # row they produced was a symbol nobody can import (NOTES §9.5).
+    #
+    # The rule that separates them without a blocklist: when a package
+    # directory exists, a loose script only counts if its name matches the
+    # distribution. When none exists, accept them all — that is the
+    # single-file case, and it is also how jsonref keeps `proxytypes.py`.
+    if scripts and (real or namespace):
+        scripts = [c for c in scripts if _normalise(c[0]) == target]
+    real += scripts
 
     candidates = real or namespace
-    target = _normalise(package_name)
     candidates.sort(key=lambda c: (_normalise(c[0]) != target, -c[1]))
     return [name for name, _ in candidates]
+
+
+def resolve_layout(search_path, package_name: str = "", max_depth: int = 3):
+    """(directory to import FROM, importable names in it), descending if needed.
+
+    download_and_extract knows about `src/` and `lib/`. It does not know
+    about `py_src/`, and tokenizers ships its Python at
+    `tokenizers-0.23.2/py_src/tokenizers/` — two levels below the root,
+    behind a directory the noise filter is right to reject as a MODULE but
+    wrong to reject as a CONTAINER.
+
+    Before the filter was fixed, that produced `py_src.tokenizers.models.
+    BPE.from_file`. After the fix and without this, the top level yields
+    nothing at all and tokenizers becomes a NoPythonModule failure — 129
+    rows traded for zero. The name and the path have to move together.
+
+    DESCEND ONLY WHEN THE TOP LEVEL IS EMPTY, never merely when it fails to
+    match the distribution name. protobuf is the case that rule protects:
+    it ships `google/protobuf/` with no __init__.py on `google`, so the top
+    level offers `google`, which does not match `protobuf` — and descending
+    would report `protobuf.*` for symbols the world imports as
+    `google.protobuf.*`.
+
+    Breadth-first, so the shallowest copy wins. tokenizers ships the same
+    package twice (`py_src/tokenizers` and `bindings/python/py_src/
+    tokenizers`), which is how one release once produced two rows for every
+    change under two different wrong roots.
+    """
+    root = pathlib.Path(search_path)
+    names = find_import_names(root, package_name)
+    if names or not root.is_dir():
+        return root, names
+
+    queue, seen = [(root, 0)], {root}
+    while queue:
+        here, depth = queue.pop(0)
+        if depth >= max_depth:
+            continue
+        try:
+            children = sorted(c for c in here.iterdir() if c.is_dir())
+        except OSError:
+            continue
+        for child in children:
+            if child in seen:
+                continue
+            seen.add(child)
+            try:
+                if not any(child.rglob("*.py")):
+                    continue
+            except OSError:
+                continue
+            found = find_import_names(child, package_name)
+            if found:
+                return child, found
+            queue.append((child, depth + 1))
+    return root, []
 
 
 def load_api(package_name: str, search_path) -> griffe.Module:
@@ -159,7 +245,12 @@ def load_api(package_name: str, search_path) -> griffe.Module:
     A failure you cannot see is worse than a failure. Let it raise; the
     caller decides whether to log and continue.
     """
-    return griffe.load(package_name, search_paths=[str(search_path)])
+    # allow_inspection=False IS A SECURITY BOUNDARY, NOT A TUNING KNOB.
+    # See the long note on load_all_modules below. griffe defaults it to
+    # True, which means "if you cannot parse this file, import it and look
+    # at the live objects" — and importing a module runs it.
+    return griffe.load(package_name, search_paths=[str(search_path)],
+                       allow_inspection=False)
 
 
 def load_all_modules(search_path, modules: list[str]) -> griffe.ModulesCollection:
@@ -179,7 +270,39 @@ def load_all_modules(search_path, modules: list[str]) -> griffe.ModulesCollectio
     followed only when something actually asks for them, which is all
     find_breaking_changes needs.
     """
-    loader = griffe.GriffeLoader(search_paths=[str(search_path)])
+    # ---------------------------------------------------------------
+    # allow_inspection=False. THE MOST IMPORTANT ARGUMENT IN THIS FILE.
+    #
+    # griffe has two ways to read a package. STATIC analysis parses the
+    # .py files as text and never runs them. DYNAMIC analysis imports the
+    # module and inspects the live objects — and importing a module runs
+    # every line at its top level.
+    #
+    # griffe defaults `allow_inspection` to **True**, so when a module
+    # cannot be parsed statically it silently falls back to importing it.
+    # That fallback is a sensible default for griffe's own use case,
+    # where you are documenting your own code. It is the wrong default
+    # here, where the input is 500 strangers' source archives downloaded
+    # from PyPI minutes earlier.
+    #
+    # This was missing until 16 Sep 2026. Two runs over the top 500
+    # therefore had permission to import arbitrary downloaded code
+    # whenever a module failed to parse — which is exactly the case where
+    # you least want it, because unparseable often means generated,
+    # obfuscated, or not really Python. macOS XProtect raised "Malicious
+    # Script Blocked" during both runs. NOTES §17.
+    #
+    # The cost of turning it off is small and known: a module that cannot
+    # be parsed statically produces no rows instead of inspected ones.
+    # That is the correct trade. A missing row is a gap in coverage; an
+    # executed setup.py is a different category of problem, and no
+    # dataset is worth it.
+    #
+    # Do not remove this argument. Do not "temporarily" flip it to debug
+    # a package that will not load.
+    # ---------------------------------------------------------------
+    loader = griffe.GriffeLoader(search_paths=[str(search_path)],
+                                 allow_inspection=False)
     for module in modules:
         try:
             loader.load(module)
@@ -226,6 +349,160 @@ def module_exports(mod: griffe.Module) -> set[str]:
     return out
 
 
+# ------------------------------------------------------- the re-export gap
+
+def alias_hops(obj, seen: set[int] | None = None,
+               hops: dict[str, str] | None = None, depth: int = 0
+               ) -> dict[str, str]:
+    """Every `alias path -> the path it names`, ONE hop, for one tree.
+
+    THE PROBLEM THIS SOLVES. griffe reports a breaking change at the
+    DEFINITION: `pandas.io.parsers.readers.read_csv`. Downstream code
+    imports `from pandas import read_csv` and our usage index records
+    `pandas.read_csv`. The two never join, so the most heavily used symbols
+    in the ecosystem are labelled negative, and `module_depth` ends up
+    predicting our own measurement error (NOTES §5.3).
+
+    NO RESOLUTION HAPPENS HERE, deliberately. `alias.target_path` is a
+    plain string built from the import statement; reading it does not make
+    griffe go and find the target, so none of the AliasResolutionError /
+    CyclicAliasError machinery can fire. That is the whole reason this is
+    cheap enough to run on every version.
+
+    Never recurse INTO an alias. Touching an alias's `.members` is what
+    triggers resolution, which is exactly what we are avoiding — and it is
+    the same cyclic-alias hazard that already truncates numpy's diff
+    (see diff_collections).
+    """
+    hops = {} if hops is None else hops
+    seen = set() if seen is None else seen
+    if id(obj) in seen or depth > 12:
+        return hops
+    seen.add(id(obj))
+    try:
+        members = getattr(obj, "members", {}) or {}
+    except Exception:
+        return hops
+    for member in members.values():
+        try:
+            if getattr(member, "is_alias", False):
+                target = getattr(member, "target_path", None)
+                if isinstance(target, str) and target:
+                    hops[member.path] = target
+            else:
+                alias_hops(member, seen, hops, depth + 1)
+        except Exception:
+            continue
+    return hops
+
+
+def resolve_alias_chains(hops: dict[str, str],
+                         max_hops: int = 10) -> dict[str, str]:
+    """Follow alias -> alias -> ... -> the real object.
+
+    ONE HOP IS NOT ENOUGH, and this is the trap. Measured on a fixture:
+
+        fakepkg.read_csv     -> fakepkg.io.read_csv           (still an alias)
+        fakepkg.io.read_csv  -> fakepkg.io.parsers.read_csv   (the function)
+
+    which is exactly pandas: `pandas.read_csv` -> `pandas.io.parsers.read_csv`
+    -> `pandas.io.parsers.readers.read_csv`. A one-hop map would join
+    against a path griffe never reports and SILENTLY DO NOTHING — no error,
+    no crash, just a fix that appears not to work.
+
+    Cycles are real, not theoretical: `a` imports from `b` while `b`
+    imports from `a` is legal Python, and numpy's cyclic aliases already
+    crash griffe's own diff walker partway through. A cycle contributes
+    nothing rather than raising.
+    """
+    out: dict[str, str] = {}
+    for start in hops:
+        current, walked, n = start, {start}, 0
+        while current in hops and n < max_hops:
+            current = hops[current]
+            n += 1
+            if current in walked:
+                current = None
+                break
+            walked.add(current)
+        if current and current != start:
+            out[start] = current
+    return out
+
+
+def export_index(collection, modules: list[str]) -> dict[str, list[str]]:
+    """`definition path -> [the paths users actually write]`, reversed.
+
+    Targets outside this distribution are dropped. Every `import` inside a
+    package registers as an alias, so the raw map is mostly stdlib —
+    measured on requests 2.34.1: 221 targets, of which the great majority
+    were things like `collections.OrderedDict` and `base64.b64encode`.
+    griffe only ever reports breakages at paths inside the modules being
+    diffed, so those entries can never be looked up. Dropping them is free
+    and keeps the index small on packages the size of pandas.
+    """
+    roots = {m.split(".")[0] for m in modules}
+    hops: dict[str, str] = {}
+    for m in modules:
+        if m in collection:
+            alias_hops(collection[m], hops=hops)
+    rev: dict[str, list[str]] = {}
+    for alias, target in resolve_alias_chains(hops).items():
+        if target.split(".")[0] in roots:
+            rev.setdefault(target, []).append(alias)
+    return rev
+
+
+def user_paths(symbol: str, rev: dict[str, list[str]]) -> list[str]:
+    """Every way downstream code could name `symbol`.
+
+    LONGEST-PREFIX REWRITING, because the alias is rarely on the thing that
+    changed. griffe reports `pandas.io.formats.style.Styler.where`; the
+    re-export is on `Styler`, not on `.where`. Matching only whole symbols
+    would catch re-exported functions and miss every method on a
+    re-exported class — and classes are where the methods are.
+
+    So each prefix of the symbol is checked and the remainder carried over:
+    `fakepkg.io.parsers.Frame.append` becomes `fakepkg.Frame.append`.
+
+    A symbol with no alias returns [] — this never invents a path.
+
+    ONLY SHORTER NAMES SURVIVE, and this filter is the whole difference
+    between signal and noise. Aliases run in both directions:
+
+        requests/__init__.py:  from .api import get
+            -> requests.get           names requests.api.get       SHORTER
+        packaging/metadata.py: from . import utils
+            -> packaging.metadata.utils names packaging.utils      LONGER
+
+    Both are real aliases and Python resolves both, but only the first is
+    a name a human writes. Without this filter the column fills with paths
+    like `packaging.metadata.utils.BuildTag` — measured at 55% of rows on
+    a 3-package run, which looks like coverage and is nothing of the kind.
+
+    Equal depth is kept only when the ROOT differs, which is the
+    `attr` / `attrs` case: attrs.exceptions.FrozenError.msg is a genuine
+    second name for the same thing, while attr.validators.attrib is just
+    _make.attrib imported into a sibling module.
+    """
+    out: set[str] = set()
+    parts = symbol.split(".")
+    depth, root = len(parts), parts[0]
+    for i in range(len(parts), 0, -1):
+        aliases = rev.get(".".join(parts[:i]))
+        if not aliases:
+            continue
+        tail = parts[i:]
+        for alias in aliases:
+            candidate = ".".join([alias, *tail])
+            cparts = candidate.split(".")
+            if len(cparts) < depth or (len(cparts) == depth
+                                       and cparts[0] != root):
+                out.add(candidate)
+    out.discard(symbol)
+    return sorted(out)
+
+
 def diff_versions(package_name: str, old_path, new_path,
                   module: str | None = None) -> list[dict]:
     """
@@ -242,7 +519,9 @@ def diff_versions(package_name: str, old_path, new_path,
     Raises if either version fails to load. Callers running in bulk should
     catch, record the reason, and move on — see ml/ingest/run_ingest.py.
     """
-    modules = [module] if module else find_import_names(new_path, package_name)
+    new_path, found = resolve_layout(new_path, package_name)
+    old_path, _ = resolve_layout(old_path, package_name)
+    modules = [module] if module else found
     if not modules:
         raise RuntimeError(
             f"no importable Python module found in {new_path} — "
@@ -289,11 +568,21 @@ def diff_series(package_name: str, versions: list[tuple[str, object]],
     # are not there, and each pair re-filters to what actually loaded in
     # both. So a name that only exists in half the chain simply produces
     # no rows for the other half.
+    #
+    # RESOLVE THE PATH PER VERSION, not just the names. A package nested
+    # under a build directory (tokenizers ships py_src/tokenizers) has to
+    # be imported FROM that directory, and the nesting can differ between
+    # releases of the same package, so this cannot be decided once.
+    seen: dict[str, None] = {}
+    resolved = []
+    for label, path in versions:
+        here, names = resolve_layout(path, package_name)
+        resolved.append((label, here))
+        for m in names:
+            seen.setdefault(m, None)
+    versions = resolved
+
     if modules is None:
-        seen: dict[str, None] = {}
-        for _, path in versions:
-            for m in find_import_names(path, package_name):
-                seen.setdefault(m, None)
         modules = list(seen)
     if not modules:
         raise RuntimeError(
@@ -301,12 +590,28 @@ def diff_series(package_name: str, versions: list[tuple[str, object]],
             "probably a compiled-only or non-Python distribution"
         )
 
+    # Breakages per module, accumulated OLDEST FIRST across the chain, so
+    # a pair only ever sees what happened before it. Built here rather than
+    # in diff_collections because only this function knows the chain
+    # exists — and building it anywhere else would need the history passed
+    # in from somewhere, which is the same thing with more steps.
+    #
+    # The ordering is the whole feature. diff_series walks oldest to
+    # newest, so at pair k the counter holds pairs 0..k-1. Filling it from
+    # the complete run and then reading it back per row would leak the
+    # future into every row — the same class of error as a random split.
+    module_history: dict[str, int] = {}
+
     prev_label, prev_path = versions[0]
     prev_col = load_all_modules(prev_path, modules)
     for label, path in versions[1:]:
         col = load_all_modules(path, modules)
         try:
-            rows = diff_collections(package_name, prev_col, col, modules)
+            rows = diff_collections(package_name, prev_col, col, modules,
+                                    module_history)
+            for r in rows:
+                m = module_of(r["symbol"])
+                module_history[m] = module_history.get(m, 0) + 1
         except Exception as e:
             # One bad pair must not kill the rest of the chain; the caller
             # records it and we carry on from the version we just loaded.
@@ -315,9 +620,351 @@ def diff_series(package_name: str, versions: list[tuple[str, object]],
         prev_label, prev_col = label, col   # the old side is dropped here
 
 
+# The bare stem. It covers "deprecated", "deprecation", "deprecate" and
+# "DeprecationWarning" at once, which is right for asking "does this NAME
+# mean deprecation" — and badly wrong for asking "is this SYMBOL
+# deprecated", which is what the feature needs. Both uses are below; see
+# NOTES §16.6 for the measurement that separated them.
+_DEPRECATED = re.compile(r"deprecat", re.IGNORECASE)
+
+# A DOCSTRING THAT DECLARES ITSELF DEPRECATED, as opposed to one that
+# merely says the word. Measured across nine packages: the bare stem fired
+# on 168 symbols, of which 82 were declarations. The other half were
+# things like `sqlalchemy.exc.SADeprecationWarning` ("Issued for usage of
+# deprecated APIs" — the warning class itself), `click.core.Command`
+# (documents a parameter *named* deprecated) and `numpy.linalg.qr`
+# ("'economic' mode is deprecated" — a mode, not the function).
+#
+# A feature the book expects to be the strongest in the set cannot be
+# 50% noise, so this matches the forms maintainers use to DECLARE it.
+_DEPRECATED_DOC = re.compile(
+    r"""(?mix)
+      ^\s*\.\.\s*deprecated                   # Sphinx: .. deprecated:: 1.4
+    | ^\s*:deprecated:                        # reST field
+    | ^\s*\*{0,2}deprecated\*{0,2}\s*(?:::|:|$)   # "Deprecated:" section
+      # A plain shout, and CASE-SENSITIVE on purpose — (?-i:) turns the
+      # pattern-wide (?i) back off for this branch alone. Written as
+      # ^\s*DEPRECATED\b under (?i) it matched any line merely BEGINNING
+      # with the lowercase word, which is what a wrapped `:param flag:`
+      # description does the moment "deprecated" lands at the start of a
+      # continuation line. That is the click.core.Command false positive,
+      # reproduced by a case-insensitivity I put there myself.
+    | ^\s*(?-i:DEPRECATED)\b
+    | ^\s*warning:\s*deprecated\b             # pydantic's "Warning: Deprecated"
+    | !!!\s*\w+\s+"?\s*deprecated             # MkDocs: !!! warning "Deprecated"
+    | \bdeprecated\s+(?:since|in|as\s+of)\b   # "deprecated since version 1.4"
+      # Plain prose, but SELF-scoped. "This class is deprecated" counts;
+      # "This parameter is deprecated" does not, because the symbol the
+      # row is about is still there. rich.align.VerticalCenter is the case
+      # that earns this branch — a real deprecation with no directive.
+    | \bthis\s+(?:class|function|method|module|decorator|property
+        |attribute|constant|exception|type|helper|object|subclass|mixin)\s+
+        (?:is|has\s+been|was)\s+deprecated\b
+    """)
+
+# Decorator names that deprecate a CALLING CONVENTION rather than the
+# symbol. pandas ships `@deprecate_nonkeyword_arguments`, `@deprecate_kwarg`
+# and `@deprecate_posargs`; sqlalchemy ships `@util.deprecated_params`.
+# The function is not going anywhere — one way of calling it is. A row
+# about the function should not read True.
+_PARAM_SCOPED = re.compile(r"param|arg|kwarg|posarg|nonkeyword", re.IGNORECASE)
+
+
+def _decorator_name(dec) -> str:
+    """The callable a decorator names, without its arguments.
+
+    THE ARGUMENTS ARE NOT THE DECLARATION, and reading them was the
+    single worst source of false positives in this feature. Surveyed over
+    sqlalchemy, pydantic, numpy, django and pandas: 297 decorators
+    contained the stem, and 181 of them were
+    `@pytest.mark.filterwarnings("ignore::DeprecationWarning")` — a test
+    saying "ignore deprecation noise", which is close to the opposite of
+    the symbol being deprecated. `@pytest.mark.parametrize(...,
+    DeprecationWarning)` and `@pytest.mark.xfail(...)` matched the same
+    way. Matching the name alone drops all 181 without a rule about
+    pytest, because none of those names contains the word.
+    """
+    text = str(getattr(dec, "value", dec) or "")
+    return text.split("(", 1)[0].strip()
+
+
+def was_deprecated(obj) -> bool:
+    """Was the author already signalling this was going away?
+
+    The project book calls this "probably your single strongest feature",
+    and the reasoning is sound: a maintainer who wrote "deprecated since
+    2.1" and then removed it in 3.0 gave downstream a year of warning, so
+    the removal is far less likely to break anyone who was paying
+    attention. A removal with no prior warning is the dangerous kind.
+
+    THREE SIGNALS, BECAUSE griffe'S OWN FLAG IS NOT ONE. Measured on
+    griffe 2.2.0 against a fixture with a `.. deprecated::` docstring, a
+    `Deprecated:` docstring and an `@deprecated` decorator: `obj.deprecated`
+    was **None in every case**. Shipping `is_deprecated` alone would have
+    produced a column that is False on every row — a feature that looks
+    implemented and measures nothing. So:
+
+      1. griffe's flag, if it is ever populated. Free, and correct when set.
+      2. The DECORATOR's NAME, read as a string. `@deprecated("use x")`
+         from typing_extensions / PEP 702 reads back as
+         `deprecated('use x')`, so the name is the part before the paren
+         — never the arguments, for the reason in _decorator_name.
+      3. The DOCSTRING, matched against _DEPRECATED_DOC rather than the
+         bare stem — `.. deprecated:: 1.2` in Sphinx, "Deprecated: use X"
+         in Google style, "DEPRECATED" in a shout, "This class is
+         deprecated" in plain prose.
+
+    BOTH of the string matches are DECLARATION-SHAPED, and that is the
+    correction that matters most in this function. The first version
+    searched for the stem anywhere in the decorator text and anywhere in
+    the docstring, which made the feature fire on any symbol that
+    *mentioned* deprecation: the exception class raised to report one, a
+    test suppressing the warning, a docstring explaining that some
+    parameter is going away. Measured, that was roughly half the docstring
+    hits and about 60% of the decorator hits. NOTES §16.6.
+
+    NEVER TOUCHES AN ALIAS, and this is not caution for its own sake.
+    Reading `.docstring` on an alias resolves it, and resolution is where
+    AliasResolutionError lives (§9.1) — the probe that established the
+    behaviour above crashed on exactly that, on a two-line fixture. An
+    alias is a name for something defined elsewhere; the definition is
+    where a deprecation marker would be, and the definition gets its own
+    row.
+
+    What this MISSES, stated rather than discovered: a bare
+    `warnings.warn(..., DeprecationWarning)` inside a function body with
+    nothing in the docstring. Catching that needs the function's source,
+    not its signature. Measured on the fixture: not detected. It is a
+    false negative, never a false positive, so the feature under-claims.
+    """
+    if getattr(obj, "is_alias", False):
+        return False
+
+    if getattr(obj, "deprecated", None):
+        return True
+
+    for dec in getattr(obj, "decorators", None) or []:
+        name = _decorator_name(dec)
+        if _DEPRECATED.search(name) and not _PARAM_SCOPED.search(name):
+            return True
+
+    try:
+        doc = obj.docstring
+    except Exception:
+        # Any resolution problem at all means "we do not know", and we
+        # say False rather than guessing. A crash here would fail a whole
+        # version pair over a feature that is a nice-to-have.
+        return False
+    if doc and _DEPRECATED_DOC.search(doc.value or ""):
+        return True
+    return False
+
+
+def deprecated_paths(obj, seen: set[int] | None = None,
+                     out: set[str] | None = None, depth: int = 0) -> set[str]:
+    """Every DEFINITION path in one tree that carries a deprecation marker.
+
+    WHY A WHOLE WALK AND NOT JUST THE BREAKING OBJECT. Measured on a
+    three-version fixture: a symbol deprecated at its definition
+    (`pkg.core.a`) and re-exported at a shorter path (`pkg.a`) produces
+    TWO breakage rows, and only the definition one carries the marker —
+    because was_deprecated() refuses to touch an alias, correctly (§9.1).
+
+    That is the worst possible place to lose the signal. The alias path is
+    the SHORT one, the one downstream code actually writes, the one most
+    likely to be labelled positive. Reading the flag only off the object
+    griffe hands us would give the strongest feature a false negative on
+    exactly the rows that matter most.
+
+    So collect the marked definitions once per version, and let an alias
+    row look its target up by `target_path` — a plain string, no
+    resolution, same rule as alias_hops.
+
+    Walks like alias_hops and for the same reasons: never recurse into an
+    alias, guard against cycles by object id, cap the depth.
+    """
+    seen = set() if seen is None else seen
+    out = set() if out is None else out
+    if depth > 12 or id(obj) in seen:
+        return out
+    seen.add(id(obj))
+
+    if getattr(obj, "is_alias", False):
+        return out
+    if was_deprecated(obj):
+        out.add(obj.path)
+
+    for member in (getattr(obj, "members", {}) or {}).values():
+        deprecated_paths(member, seen, out, depth + 1)
+    return out
+
+
+def module_of(symbol: str) -> str:
+    """The module a symbol lives in — everything before the leaf.
+
+    `pandas.io.parsers.readers.read_csv` -> `pandas.io.parsers.readers`.
+    Crude for a method (it returns the class path, not the module) and
+    deliberately so: "how much has this NEIGHBOURHOOD been churning" is
+    the question, and a class is a neighbourhood.
+    """
+    return symbol.rsplit(".", 1)[0] if "." in symbol else symbol
+
+
+def sub_target_of(b) -> str:
+    """WHAT INSIDE the symbol changed, or "" for whole-symbol breakages.
+
+    griffe reports one breakage per changed parameter, all sharing the
+    function's path, so without this the rows are indistinguishable — and
+    the database's uniqueness key (release_id, symbol_path, kind,
+    sub_target) would quietly keep only the last one.
+
+    Gate on the KIND, not on "does old_value have a .name". Every griffe
+    breakage carries an old_value with a name of some sort: for
+    OBJECT_REMOVED it is the removed object itself, and reading it here
+    would file `_exported` under sub_target, which is a lie a NOT NULL
+    column would happily store forever.
+
+    Pulled out of the row loop on 12 Sep so fold_inherited() can key on the
+    same value the row will carry. Two parameters removed from one
+    inherited method are two changes, and a fold that ignored sub_target
+    would merge their counts.
+    """
+    if b.kind.name.startswith("PARAMETER"):
+        p = (getattr(b.old_value, "name", None)
+             or getattr(b.new_value, "name", None))
+        return p if isinstance(p, str) else ""
+    if b.kind.name == "CLASS_REMOVED_BASE":
+        # MEASURED, and it contradicts the assumption this column was asked
+        # for: griffe does NOT emit one breakage per dropped base.
+        # old_value/new_value are the WHOLE base lists, so a class dropping
+        # two bases produces exactly one row and cannot collide with
+        # itself. Filled in anyway — it is real information, it costs
+        # nothing, and it keeps the key correct if griffe ever switches to
+        # per-base reporting.
+        olds = b.old_value or []
+        news = {getattr(x, "name", None) for x in (b.new_value or [])}
+        return ",".join(
+            str(getattr(x, "name", x)) for x in olds
+            if getattr(x, "name", None) not in news
+        )
+    return ""
+
+
+def defining_path(obj) -> str | None:
+    """Where an INHERITED member is actually defined, or None if declared.
+
+    MEASURED on griffe 2.2.0, not assumed. griffe's diff walks
+    `old_obj.all_members`, and for a class that is
+    `{**inherited_members, **members}` — so every method a subclass
+    inherits is compared as if the subclass declared it. A member reached
+    that way comes back as an Alias whose `target_path` names the base
+    class's method and whose own `.path` has been re-parented onto the
+    subclass:
+
+        pkg.base.Mixin.gone     Function  declared
+        pkg.models.m0.M0.gone   Alias     target_path=pkg.base.Mixin.gone
+        pkg.models.m1.M1.gone   Alias     target_path=pkg.base.Mixin.gone
+        ... one per subclass
+
+    Reading `.target_path` is safe for the same reason the alias resolver
+    reads it (NOTES §9.1): it is a plain string filled in at parse time,
+    so nothing resolves and nothing can raise AliasResolutionError.
+
+    The `name in parent.members` test is what keeps a genuine re-export
+    inside a class body from being mistaken for inheritance — that member
+    is an Alias too, but it is declared where it sits.
+    """
+    if not getattr(obj, "is_alias", False):
+        return None
+    parent = getattr(obj, "parent", None)
+    if parent is None or not getattr(parent, "is_class", False):
+        return None
+    if obj.name in (getattr(parent, "members", {}) or {}):
+        return None
+    target = getattr(obj, "target_path", None)
+    return target if isinstance(target, str) and target else None
+
+
+def fold_inherited(breakages) -> tuple[list, dict[tuple[str, str, str], int]]:
+    """One logical change, one row — plus how many classes inherited it.
+
+    WHY THIS EXISTS, in one number: transformers 5.16.1 -> 5.17.0 produced
+    9,863 rows, 30% of the entire 32,405-row dataset, and 9,729 of them
+    were THREE methods. 5.17.0 dropped invert_attention_mask,
+    get_extended_attention_mask and create_extended_attention_mask_for_decoder
+    from ModuleUtilsMixin, and 3,242 model classes inherit that mixin, so
+    griffe reported each removal 3,243 times.
+
+    Every one of those rows is TRUE. None of them is a separate event. Left
+    alone they would have been 30% of the training data, all with near
+    identical features and all labelled 0 — one library's refactor setting
+    the positive rate for the whole dataset.
+
+    So fold them onto the class that defines the method and keep the count.
+    The count is not bookkeeping: a method 3,242 classes inherit is a
+    bigger break than one on a leaf class, and `inherited_by` gives the
+    ranker that in one number instead of 3,242 duplicate rows.
+
+    THE GUARD MATTERS MORE THAN THE FOLD. If the defining class is private
+    or lives in a module we never diffed, no row for the target exists and
+    folding onto it would delete a real public breakage. In that case keep
+    the SHALLOWEST inheriting path as the stand-in — a public subclass of a
+    private base is exactly the case where the subclass's name is the one
+    users wrote.
+
+    Returns (breakages to keep, {(path, kind, sub_target): inherited_by}).
+    """
+    declared = {(b.obj.path, b.kind.name, sub_target_of(b))
+                for b in breakages if defining_path(b.obj) is None}
+
+    counts: dict[tuple[str, str, str], int] = {}
+    orphans: dict[tuple[str, str, str], object] = {}
+    kept = []
+    for b in breakages:
+        target = defining_path(b.obj)
+        if target is None:
+            kept.append(b)
+            continue
+        key = (target, b.kind.name, sub_target_of(b))
+        counts[key] = counts.get(key, 0) + 1
+        if key in declared:
+            continue
+        prev = orphans.get(key)
+        # Tie-break on the path, not on iteration order, and this is not
+        # tidiness. griffe walks members in a dict order that is stable
+        # within a run but not across them, and when ten subclasses sit at
+        # the same depth "whichever came first" can pick a different one
+        # next time. The database keys breakage on the symbol path, so an
+        # unstable choice here writes a SECOND row on the next load instead
+        # of upserting the first. Sorting makes the stand-in reproducible.
+        if prev is None or ((b.obj.path.count("."), b.obj.path)
+                            < (prev.obj.path.count("."), prev.obj.path)):
+            orphans[key] = b
+    kept.extend(orphans.values())
+
+    # Re-key the counts onto the row that actually survives, so the row
+    # loop can look them up by its own (symbol, kind, sub_target).
+    inherited_by: dict[tuple[str, str, str], int] = {}
+    for key, n in counts.items():
+        if key in declared:
+            inherited_by[key] = n
+        else:
+            b = orphans[key]
+            inherited_by[(b.obj.path, b.kind.name, sub_target_of(b))] = n
+    return kept, inherited_by
+
+
 def diff_collections(package_name: str, old_col, new_col,
-                     modules: list[str]) -> list[dict]:
-    """Rows for one pair of already-loaded griffe collections."""
+                     modules: list[str],
+                     module_history: dict[str, int] | None = None) -> list[dict]:
+    """Rows for one pair of already-loaded griffe collections.
+
+    `module_history` counts breakages already seen in each module EARLIER
+    IN THIS CHAIN, and the caller owns it because only the caller knows
+    the chain. Passing None gives every row 0, which is the honest value
+    for a pair diffed on its own.
+    """
+    module_history = module_history if module_history is not None else {}
     shared = [m for m in modules if m in old_col and m in new_col]
     if not shared:
         raise RuntimeError(
@@ -347,11 +994,31 @@ def diff_collections(package_name: str, old_col, new_col,
     if errors and not breakages:
         raise RuntimeError("; ".join(errors))
 
+    # Collapse inherited-member repeats BEFORE anything reads a path. Done
+    # here rather than in labels.py on purpose: a fold at label time would
+    # leave the raw rows in changes.csv and in the database, so the site
+    # would still show one removal 3,243 times.
+    breakages, inherited_by = fold_inherited(breakages)
+
     # The OLD version's __all__ per top-level module — old because that is
     # the version the changed symbol lived in. Keyed by module name, which
     # is the first part of every symbol path that module's diff produces.
     exports_by_root = {m: module_exports(old_col[m])
                        for m in modules if m in old_col}
+
+    # The OLD version's alias map, for exactly the reason __all__ is taken
+    # from the old version: it is how downstream code referred to the
+    # symbol BEFORE the upgrade removed it. Built once per pair, off a
+    # collection that is already in memory — no extra parsing.
+    aliases = export_index(old_col, modules)
+
+    # Deprecation markers in the OLD version, by definition path. Built
+    # once per pair off a tree already in memory, and consulted for alias
+    # rows whose own object cannot be inspected safely.
+    deprecated: set[str] = set()
+    for m in modules:
+        if m in old_col:
+            deprecated_paths(old_col[m], out=deprecated)
 
     rows = []
     seen: set[tuple[str, str, str]] = set()
@@ -360,35 +1027,7 @@ def diff_collections(package_name: str, old_col, new_col,
         parts = symbol.split(".")
         explanation = ANSI.sub("", b.explain())
 
-        # WHAT INSIDE the symbol changed. griffe reports one breakage per
-        # changed parameter, all sharing the function's path, so without
-        # this the rows are indistinguishable — and the database's
-        # uniqueness key (release_id, symbol_path, kind, sub_target) would
-        # quietly keep only the last one.
-        #
-        # Gate on the kind, not on "does old_value have a .name". Every
-        # griffe breakage carries an old_value with a name of some sort:
-        # for OBJECT_REMOVED it is the removed object itself, and reading
-        # it here would file `_exported` under sub_target, which is a lie
-        # a NOT NULL column would happily store forever.
-        sub_target = ""
-        if b.kind.name.startswith("PARAMETER"):
-            p = getattr(b.old_value, "name", None) or getattr(b.new_value, "name", None)
-            sub_target = p if isinstance(p, str) else ""
-        elif b.kind.name == "CLASS_REMOVED_BASE":
-            # MEASURED, and it contradicts the assumption this column was
-            # asked for: griffe does NOT emit one breakage per dropped base.
-            # old_value/new_value are the WHOLE base lists, so a class
-            # dropping two bases produces exactly one row and cannot
-            # collide with itself. Filled in anyway — it is real
-            # information, it costs nothing, and it keeps the key correct
-            # if griffe ever switches to per-base reporting.
-            olds = b.old_value or []
-            news = {getattr(x, "name", None) for x in (b.new_value or [])}
-            sub_target = ",".join(
-                str(getattr(x, "name", x)) for x in olds
-                if getattr(x, "name", None) not in news
-            )
+        sub_target = sub_target_of(b)
 
         # Big packages ship their test suite inside the installed package —
         # numpy.random.tests.test_extending.required_version turned up in a
@@ -448,6 +1087,44 @@ def diff_collections(package_name: str, old_col, new_col,
                 "is_top_level": symbol.count(".") == 1,
                 # Longer names tend to be more obscure.
                 "name_length": len(parts[-1]),
+                # EVERY path downstream code could have written for this
+                # symbol, from the old version's alias graph. This is the
+                # exact join that replaces the leaf-name heuristic in
+                # labels.py: `pandas.read_csv` for a change griffe reports
+                # at `pandas.io.parsers.readers.read_csv`.
+                #
+                # Semicolon-joined because a CSV cell holds one string, and
+                # ";" cannot appear in a dotted Python path. Empty for most
+                # rows — a symbol that is never re-exported has no other
+                # name, and this column does not invent one.
+                "export_paths": ";".join(user_paths(symbol, aliases)),
+                # THE BOOK'S "probably your single strongest feature".
+                # Read off the OLD side of the pair — the release the
+                # symbol still existed in — because that is where a
+                # maintainer's warning would have been sitting when
+                # somebody upgraded past it.
+                "was_deprecated_before": (
+                    was_deprecated(b.obj)
+                    or (getattr(b.obj, "target_path", None) or "") in deprecated
+                ),
+                # How many breakages this module has already produced
+                # EARLIER in this version chain. Some modules churn
+                # constantly and their users know it; a first break in a
+                # quiet module is a different event. Counted before this
+                # pair's own rows are added, so a row never counts itself.
+                "prior_breaks_in_module": int(
+                    module_history.get(module_of(symbol), 0)),
+                # How many OTHER classes inherit this exact change. 0 for
+                # the overwhelming majority — a plain function or a method
+                # nobody subclasses. 3,242 for the three ModuleUtilsMixin
+                # methods transformers 5.17.0 dropped.
+                #
+                # This is the number that replaces 3,242 duplicate rows, so
+                # it is a feature, not a diagnostic: breadth of blast
+                # radius inside the library, which is the one thing a
+                # single row could not otherwise say.
+                "inherited_by": inherited_by.get(
+                    (symbol, b.kind.name, sub_target), 0),
             }
         )
 
@@ -468,7 +1145,7 @@ if __name__ == "__main__":
     old_path = download_and_extract(old_rel["url"], base / old_rel["version"])
     new_path = download_and_extract(new_rel["url"], base / new_rel["version"])
 
-    modules = find_import_names(new_path, package)
+    new_path, modules = resolve_layout(new_path, package)
     print(f"\nPyPI name '{package}' -> importable as {modules or 'NOTHING FOUND'}")
 
     rows = diff_versions(package, old_path, new_path)

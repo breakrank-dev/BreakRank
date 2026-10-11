@@ -130,6 +130,60 @@ def add_labels(changes: pd.DataFrame, usage: pd.DataFrame) -> pd.DataFrame:
     df["scoped_user_count"] = df["user_count"].where(
         df["user_count"] > 0, df["name_user_count"].where(unambiguous, 0))
 
+    # --- the ALIAS label: the same join, done exactly ---------------------
+    # label_scoped above is a HEURISTIC. It guesses that a change at
+    # pandas.io.parsers.readers.read_csv is the same thing downstream code
+    # calls pandas.read_csv, on the evidence that only one changed symbol
+    # in pandas owns the leaf `read_csv`. That guess is usually right and
+    # has no way of knowing when it is wrong.
+    #
+    # export_paths (added 6 Sep 2026, ml/ingest/api_extract.py) replaces the
+    # guess with the fact. griffe knows the alias graph — `from .api import
+    # get` is right there in the source — so the old version's aliases are
+    # walked at ingest and every path downstream code could write is
+    # recorded on the row. No leaf matching, no ambiguity, no 134 symbols
+    # sharing DEFAULT_MTLS_ENDPOINT.
+    #
+    # MAX, not SUM, across a symbol's alias paths. usage.csv stores counts,
+    # not the package names behind them, so summing `attr.attrib` and
+    # `attrs.attrib` would double-count any package that imports both.
+    # Max is the honest lower bound; the true figure needs a union we
+    # cannot compute from this file.
+    if "export_paths" in df.columns:
+        paths = df["export_paths"].fillna("").astype(str)
+        df["alias_user_count"] = [
+            max([count] + [exact.get(p, 0) for p in s.split(";") if p])
+            for count, s in zip(df["user_count"], paths)
+        ]
+        df["has_export_path"] = paths.ne("")
+
+        # PUBLIC DEPTH — a feature, and the direct answer to NOTES §5.3.
+        #
+        # module_depth measures where a symbol is DEFINED. NOTES §5.3 showed
+        # it was substantially predicting our own broken join: deep paths
+        # scored zero not because deep symbols are unimportant but because
+        # the exact match failed on them. pandas.io.parsers.readers.read_csv
+        # has module_depth 4 and is one of the most used functions alive.
+        #
+        # public_depth measures where a symbol can be REACHED — the shortest
+        # name a user can write for it. For read_csv that is 1, not 4. This
+        # is what module_depth was always trying to be, and it is computed
+        # from the package's own source with no downstream data anywhere
+        # near it, so it is a feature and not a leak.
+        df["public_depth"] = [
+            min([d] + [p.count(".") for p in s.split(";") if p])
+            for d, s in zip(df["module_depth"], paths)
+        ]
+    else:
+        print("note: this changes.csv predates the export_paths column, so "
+              "label_alias falls back to the exact join. Rerun "
+              "ml/ingest/run_ingest.py --restart to populate it.\n")
+        df["alias_user_count"] = df["user_count"]
+        df["has_export_path"] = False
+        df["public_depth"] = df["module_depth"]
+
+    df["label_alias"] = (df["alias_user_count"] > 0).astype(int)
+
     return df.drop(columns=["_root", "_leaf"])
 
 
@@ -193,6 +247,54 @@ def sanity_report(df: pd.DataFrame) -> None:
               f"({df['label_scoped'].mean():.2%})  —  {gained:,} rows recovered")
         print("  Both labels are written to the CSV. Train on each and compare;")
         print("  scripts/reexport_probe.py shows which rows the difference is.")
+
+    if "label_alias" not in df:
+        return
+
+    print("\n" + "=" * 66)
+    print("  THE THREE LABELS, SIDE BY SIDE")
+    print("=" * 66)
+    for name in ("label", "label_scoped", "label_alias"):
+        print(f"  {name:<14} {int(df[name].sum()):>6,} positive "
+              f"({df[name].mean():>6.2%})")
+
+    if "has_export_path" in df:
+        cov = df["has_export_path"].mean()
+        print(f"\n{int(df['has_export_path'].sum()):,} rows ({cov:.1%}) have at "
+              "least one shorter public name.")
+        print("Rows without one are not failures: most symbols are simply never")
+        print("re-exported, and packaging.utils.BuildTag really is the only")
+        print("way to import it.")
+
+    alias_only = int((df["label_alias"] > df["label"]).sum())
+    print(f"\nRows the EXACT join missed and the alias graph recovered: "
+          f"{alias_only:,}")
+
+    # The comparison that matters. label_scoped guessed; label_alias knows.
+    # Where they disagree, one of them is wrong, and which one tells us
+    # whether NOTES section 5.3 was measuring the ecosystem or our own
+    # broken join.
+    scoped_only = (df["label_scoped"] == 1) & (df["label_alias"] == 0)
+    alias_wins = (df["label_alias"] == 1) & (df["label_scoped"] == 0)
+    print("\nWHERE THE HEURISTIC AND THE FACT DISAGREE")
+    print(f"  scoped says used, alias graph says no: {int(scoped_only.sum()):,}")
+    print("    ^ candidate FALSE POSITIVES of the leaf-name heuristic — the")
+    print("      thing Varad's decision-10 worried about, now countable.")
+    print(f"  alias graph says used, scoped says no:  {int(alias_wins.sum()):,}")
+    print("    ^ real usage the heuristic was too cautious to claim.")
+
+    if scoped_only.any():
+        print("\n  A sample of the disputed rows:")
+        cols = ["symbol", "name_user_count", "leaf_owners"]
+        for _, r in df[scoped_only].head(5)[cols].iterrows():
+            print(f"    {r.symbol}")
+            print(f"      leaf used by {int(r.name_user_count)} pkgs, "
+                  f"{int(r.leaf_owners)} symbol owns that leaf, "
+                  "no alias path exists")
+
+    print("\nWhich label ships is an experiment, not an opinion. Train on all")
+    print("three and compare lift over the SAME-label baseline — PR-AUC is not")
+    print("comparable across labels, because its floor is the positive rate.")
 
 
 def main() -> None:

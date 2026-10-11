@@ -71,7 +71,9 @@ def find_github_repo(info: dict) -> str | None:
     return None
 
 
-def list_releases_with_meta(package: str, last_n: int = 15) -> tuple[list[dict], dict]:
+def list_releases_with_meta(
+        package: str, last_n: int = 15,
+) -> tuple[list[dict], dict, list[dict]]:
     """
     Releases plus the package-level metadata, from ONE PyPI request.
 
@@ -79,44 +81,133 @@ def list_releases_with_meta(package: str, last_n: int = 15) -> tuple[list[dict],
     fetched separately because we already have the JSON in hand — a second
     request per package would be 400 extra round trips for a field that is
     sitting right there in the response.
+
+    Returns (releases to analyse, package metadata, releases SKIPPED inside
+    the same window with the reason each was skipped).
     """
     data = get_json(f"https://pypi.org/pypi/{package}/json")
     info = data.get("info") or {}
     meta = {"package": package, "github_repo": find_github_repo(info)}
 
-    out = []
-    for version, files in data["releases"].items():
-        try:
-            v = Version(version)
-        except InvalidVersion:
-            continue  # some ancient packages have unparseable version strings
-        if v.is_prerelease or v.is_devrelease:
-            continue
+    def collect(allow_prerelease: bool) -> tuple[list[dict], list[dict]]:
+        # SKIPPED RELEASES ARE RECORDED, NOT DISCARDED. A release we chose
+        # not to analyse is not the same thing as a release that does not
+        # exist, and until 16 Sep the difference was unrecoverable — the
+        # filter dropped them on the floor and the only way to find out
+        # what had been skipped was to ask PyPI again from a separate
+        # script (scripts/window_gaps.py). That script stays as an
+        # independent audit; this makes the ingest able to answer for
+        # itself, which is what analysis_status needs.
+        found, skipped = [], []
 
-        sdist = next(
-            (f for f in files if f["packagetype"] == "sdist" and not f.get("yanked")),
-            None,
-        )
-        if sdist:
-            out.append(
-                {
+        def skip(version, reason):
+            skipped.append({"version": version, "status": reason})
+
+        for version, files in data["releases"].items():
+            try:
+                v = Version(version)
+            except InvalidVersion:
+                skip(version, "unparseable_version")
+                continue
+            # DEV FIRST. `is_devrelease` implies `is_prerelease`, so
+            # testing prerelease first files 1.2.3.dev4 as "pre_release" —
+            # measured on requests, which reported its one dev build under
+            # the wrong reason. Same trap as the fallback itself: one flag
+            # covers two ideas.
+            #
+            # A dev build is never "what users upgraded to", even in the
+            # fallback. 0.65b0 is OpenTelemetry's release; 1.2.3.dev4 is
+            # nobody's.
+            if v.is_devrelease:
+                skip(version, "dev_release")
+                continue
+            if not allow_prerelease and v.is_prerelease:
+                skip(version, "pre_release")
+                continue
+
+            sdist = next(
+                (f for f in files
+                 if f["packagetype"] == "sdist" and not f.get("yanked")),
+                None,
+            )
+            if not sdist:
+                # Order matters: a release whose every file is yanked is
+                # YANKED, not source-less. Both end up unanalysed, but only
+                # one of them is a limitation of reading source.
+                skip(version, "yanked" if files and
+                     all(f.get("yanked") for f in files) else "no_source")
+            if sdist:
+                found.append({
                     "version": version,
                     "parsed": v,
                     "url": sdist["url"],
                     "uploaded": sdist["upload_time_iso_8601"],
-                }
-            )
+                    "is_prerelease": bool(v.is_prerelease),
+                })
+        found.sort(key=lambda r: r["parsed"])
+        return found, skipped
 
-    out.sort(key=lambda r: r["parsed"])  # sort by real version order, not string order
-    return out[-last_n:], meta
+    # STABLE FIRST, PRE-RELEASES ONLY IF THERE IS NOTHING ELSE.
+    #
+    # The plain filter is right almost everywhere: nobody upgrades to
+    # 2.0.0rc1, so diffing it would describe a change no user ever
+    # experienced. But `packaging` calls 0.65b0 a pre-release, and that
+    # beta suffix IS OpenTelemetry's release — their instrumentation line
+    # has shipped that way for years and never left beta.
+    #
+    # Measured 14 Sep: 9 of 13 TooFewReleases failures were
+    # opentelemetry-*, every one of which publishes a real, non-yanked
+    # sdist on every release. The pipeline threw all of them away and then
+    # reported the package as having no releases.
+    #
+    # So: take stable releases when a package has enough of them, and fall
+    # back to including pre-releases ONLY when it does not. A package with
+    # real releases never sees its rc builds; a package that only ships
+    # betas stops being invisible. `is_prerelease` rides along on every row
+    # so the fallback is visible in the data rather than inferred from it.
+    out, skipped = collect(allow_prerelease=False)
+    if len(out) < 2:
+        widened, w_skipped = collect(allow_prerelease=True)
+        if len(widened) > len(out):
+            out, skipped = widened, w_skipped
+
+    # Only releases inside the analysed window are reported as skipped.
+    # Everything older is not "skipped", it is out of scope, and counting
+    # it would make the number grow with a package's age rather than with
+    # anything we did.
+    kept = out[-last_n:]
+
+    def parsed(s):
+        try:
+            return Version(s["version"])
+        except InvalidVersion:
+            return None
+
+    if kept:
+        lo, hi = kept[0]["parsed"], kept[-1]["parsed"]
+        skipped = [s for s in skipped
+                   if (v := parsed(s)) is not None and lo <= v <= hi]
+    else:
+        # NOTHING KEPT IS THE CASE no_source EXISTS FOR. torch, triton,
+        # onnxruntime and playwright publish wheels only, so every release
+        # is skipped and there is no window to bound them with — and
+        # emptying the list here would silently drop the reason for the
+        # packages the reason matters most for. Report the newest last_n
+        # instead, so "we analysed nothing, and here is why" is recorded
+        # rather than inferred from an absence.
+        skipped = sorted((s for s in skipped if parsed(s) is not None),
+                         key=parsed)[-last_n:]
+
+    return kept, meta, skipped
 
 
 def list_releases(package: str, last_n: int = 15) -> list[dict]:
     """
     The last N real releases of `package` that ship an sdist, oldest first.
 
-    Skips pre-releases (2.0.0rc1), dev releases, and yanked files —
-    none of those represent "what users actually upgraded to".
+    Skips dev releases and yanked files always. Skips pre-releases too —
+    UNLESS the package has fewer than two stable ones, in which case they
+    come back rather than the package vanishing. See the note above.
     """
     return list_releases_with_meta(package, last_n)[0]
 
