@@ -27,6 +27,10 @@ TEMPLATES = {
 
 FALLBACK = "{symbol} changed in this release."
 
+# How many downstream packages the usage scan covered. The count says how
+# many of them import a symbol, not how many call it or would break.
+SCANNED = "~1,500"
+
 
 def render(
     kind: str,
@@ -58,14 +62,15 @@ def render(
         sentence = FALLBACK.format(symbol=symbol_path)
 
     if user_count > 0:
-        plural = "package" if user_count == 1 else "packages"
-        sentence += f" {user_count} {plural} in the ecosystem call it."
+        verb = "imports" if user_count == 1 else "import"
+        sentence += f" {user_count:,} of the {SCANNED} scanned packages {verb} it."
 
     if inherited_by > 0:
-        sentence += f" It affects {inherited_by:,} inheriting classes."
+        classes = "class" if inherited_by == 1 else "classes"
+        sentence += f" It affects {inherited_by:,} inheriting {classes}."
 
     if deprecated := detail.get("was_deprecated_in"):
-        sentence += f" It was deprecated in {deprecated}."
+        sentence += f" It was already marked deprecated in {deprecated}."
 
     if moved := detail.get("moved_to"):
         sentence += f" It appears to have moved to {moved}."
