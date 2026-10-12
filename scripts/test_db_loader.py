@@ -50,15 +50,33 @@ Eight cases:
      would leave the version with no scores, or under half of them, is
      refused before anything is deleted.
 
+Three more from 12 Oct (NOTES §33.5), on a second fixture:
+
+  9. The rows that are not changes are not written: a version constant
+     or a package-metadata string whose value changed (F1, F39), by
+     build.py's own two rules; a removed one, or one changed to `unset`,
+     is written. A release left with nothing is analysed_clean with 0
+     changes, and n_changes counts the rows written, while the agreement
+     check against releases.csv still compares the ingest's own counts.
+     The dry run says the same.
+ 10. A release the files cannot establish is written `unknown` where the
+     database accepts the value, and its upsert gives up only 'analysed'
+     with 0 changes on a row already there; without migration 007 it is
+     written with no status, as before, and the load says why.
+ 11. check_schema reads which statuses the database accepts from its own
+     CHECK constraint, and assumes `unknown` only when it names it.
+
 The same fixture was also loaded into a real Postgres built from Varad's
 migrations 001-006, 001-005 and 001-004, first with the old loader
 (reproducing both bugs exactly as Neon shows them) and then with this
-one. That needs a Postgres server, so it is not part of this file.
+one; on 12 Oct the second fixture went the same way through 001-007. That
+needs a Postgres server, so it is not part of this file.
 """
 
 import contextlib
 import io
 import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -279,9 +297,11 @@ def case_sql(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
           [c for c in ("release_id", "symbol_path", "kind", "sub_target")
            if f"{c} = EXCLUDED.{c}" in update], [])
     rels = [s for s in conn.sql if "INSERT INTO release" in s]
-    check("releases with a known status carry it; the rest do not",
-          ["analysis_status = EXCLUDED.analysis_status" in s for s in rels],
-          [True, False])
+    check("releases with a known status carry it outright; the rest go "
+          "through the `unknown` upsert (case 10)",
+          [("analysis_status = EXCLUDED.analysis_status" in s,
+            "analysis_status = CASE" in s) for s in rels],
+          [(True, False), (False, True)])
 
     caps_old = {**caps, "analysis_status": False, "inherited_by": False}
     conn = FakeConn()
@@ -465,6 +485,279 @@ def case_scores(chg: pd.DataFrame, rel: pd.DataFrame) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ------------------------------------------- the second fixture (12 Oct)
+
+def _attr(pkg, vf, vt, sym, old, new, when, kind="ATTRIBUTE_CHANGED_VALUE",
+          title=None):
+    """A changed attribute, with griffe's explanation as the ingest writes
+    it: the file and line, the object's path inside its module (its bare
+    name for a module-level attribute, Class.name for a class's), and the
+    sentence. build.py's rules read the explanation, so the fixture has to
+    carry the real shape of it."""
+    title = title or sym.rsplit(".", 1)[-1]
+    msg = {"ATTRIBUTE_CHANGED_VALUE":
+           f"Attribute value was changed: {old} -> {new}",
+           "OBJECT_REMOVED": "Public object was removed"}[kind]
+    row = _row(pkg, vf, vt, sym, when)
+    row.update(kind=kind, explanation=f"x/y.py:7: {title}: {msg}")
+    return row
+
+
+def changes_versions() -> pd.DataFrame:
+    """epsilon: 1.0.0 -> 1.1.0 changed only its version string; 1.1.0 ->
+    1.2.0 changed the version string twice over (`__version__` and
+    `_version.version`), a copyright line, and removed a function; 1.2.0
+    -> 1.3.0 removed __version__, set a module's `version` to unset and
+    changed a class's VERSION, three changes that stay, the last reported
+    twice under one database key as griffe does now and then (§8). zeta:
+    one release whose only two rows are a version string and an author
+    line."""
+    return pd.DataFrame([
+        _attr("epsilon", "1.0.0", "1.1.0", "epsilon.__version__",
+              "'1.0.0'", "'1.1.0'", "2026-03-01"),
+        _attr("epsilon", "1.1.0", "1.2.0", "epsilon.__version__",
+              "'1.1.0'", "'1.2.0'", "2026-04-01"),
+        _attr("epsilon", "1.1.0", "1.2.0", "epsilon._version.version",
+              "'1.1.0'", "'1.2.0'", "2026-04-01"),
+        _attr("epsilon", "1.1.0", "1.2.0", "epsilon.__about__.__copyright__",
+              "'2025'", "'2026'", "2026-04-01"),
+        _row("epsilon", "1.1.0", "1.2.0", "epsilon.core.run", "2026-04-01"),
+        _attr("epsilon", "1.2.0", "1.3.0", "epsilon.__version__", "", "",
+              "2026-05-01", kind="OBJECT_REMOVED"),
+        _attr("epsilon", "1.2.0", "1.3.0", "epsilon._version.version",
+              "'1.2.0'", "unset", "2026-05-01"),
+        _attr("epsilon", "1.2.0", "1.3.0", "epsilon.core.Config.VERSION",
+              "1", "2", "2026-05-01", title="Config.VERSION"),
+        _attr("epsilon", "1.2.0", "1.3.0", "epsilon.core.Config.VERSION",
+              "'a'", "'b'", "2026-05-01", title="Config.VERSION"),
+        _attr("zeta", "0.9", "1.0", "zeta.__version__", "'0.9'", "'1.0'",
+              "2026-06-01"),
+        _attr("zeta", "0.9", "1.0", "zeta.__author__", "'A'", "'B'",
+              "2026-06-01"),
+    ])
+
+
+RELEASES_VERSIONS_CSV = """package,version,released_at,status,n_changes
+epsilon,1.0.0,2026-02-01,no_baseline,
+epsilon,1.1.0,2026-03-01,analysed,1
+epsilon,1.2.0,2026-04-01,analysed,4
+epsilon,1.3.0,2026-05-01,analysed,4
+epsilon,1.4.0,2026-06-01,analysed_clean,0
+"""
+
+
+def releases_versions() -> pd.DataFrame:
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="breakrank-loader-"))
+    path = tmp / "releases.csv"
+    path.write_text(RELEASES_VERSIONS_CSV)
+    original = db.RELEASES
+    db.RELEASES = path
+    try:
+        return db.load_releases()
+    finally:
+        db.RELEASES = original
+
+
+CAPS_007 = {"sub_target": True, "inherited_by": True, "positive_rate": True,
+            "analysis_status": True, "statuses": set(db.DB_STATUSES)}
+CAPS_006 = {**CAPS_007, "statuses": set(db.DB_STATUSES) - {db.UNKNOWN}}
+
+
+def _load(conn, chg, rel, caps, packages=None):
+    usage = pd.DataFrame({"symbol": ["epsilon.core.run"], "user_count": [4]})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        db.write_all(conn, chg, usage, packages, caps, None, rel)
+    return out.getvalue()
+
+
+def case_not_changes() -> None:
+    print("\n9. THE ROWS THAT ARE NOT CHANGES ARE NOT WRITTEN; A RELEASE LEFT "
+          "WITH NOTHING IS CLEAN")
+    chg, rel = changes_versions(), releases_versions()
+    check("build.py's two rules mark the four changed values and nothing "
+          "else (the removal, the `unset` and the class's stay changes)",
+          [r.symbol for r, m in zip(chg.itertuples(), db.not_a_change(chg))
+           if m and r.package == "epsilon"],
+          ["epsilon.__version__", "epsilon.__version__",
+           "epsilon._version.version", "epsilon.__about__.__copyright__"])
+
+    known, unknown, report = db.release_plan(chg, rel)
+    known = by_key(known)
+    check("a release whose only row was its version string is "
+          "analysed_clean with 0 changes",
+          (known[("epsilon", "1.1.0")]["analysis_status"],
+           known[("epsilon", "1.1.0")]["n_changes"]), ("analysed_clean", 0))
+    check("a release with a real change beside them is analysed, and "
+          "n_changes counts the rows written",
+          (known[("epsilon", "1.2.0")]["analysis_status"],
+           known[("epsilon", "1.2.0")]["n_changes"]), ("analysed", 1))
+    check("a removed __version__, a `version` changed to unset and a class's "
+          "VERSION are changes: analysed, 3, counted once per database key "
+          "(the second Config.VERSION row is dropped before insert)",
+          (known[("epsilon", "1.3.0")]["analysis_status"],
+           known[("epsilon", "1.3.0")]["n_changes"]), ("analysed", 3))
+    check("the agreement check compares the ingest's own counts (1, 4, 4), "
+          "so releases.csv's statuses are still used",
+          (report["agree"], report["disagree"],
+           known.get(("epsilon", "1.0.0"), {}).get("analysis_status"),
+           known.get(("epsilon", "1.4.0"), {}).get("analysis_status")),
+          (["epsilon"], {}, "no_baseline", "analysed_clean"))
+    known_none, _, _ = db.release_plan(chg, None)
+    check("without releases.csv the same: clean, not `analysed` with a count "
+          "of rows the table will not hold",
+          sorted((r["version"], r["analysis_status"], r["n_changes"])
+                 for r in known_none if r["package"] == "epsilon"),
+          [("1.1.0", "analysed_clean", 0), ("1.2.0", "analysed", 1),
+           ("1.3.0", "analysed", 3)])
+    check("zeta 1.0, a version string and an author line, is clean too",
+          [(r["analysis_status"], r["n_changes"]) for r in known_none
+           if r["package"] == "zeta"], [("analysed_clean", 0)])
+
+    conn = FakeConn()
+    out = _load(conn, chg, rel, CAPS_007)
+    sent = sorted((b["symbol_path"], b["kind"]) for b in conn.brk)
+    check("the load sends the four changes, once each, and none of the six "
+          "others",
+          sent, [("epsilon.__version__", "OBJECT_REMOVED"),
+                 ("epsilon._version.version", "ATTRIBUTE_CHANGED_VALUE"),
+                 ("epsilon.core.Config.VERSION", "ATTRIBUTE_CHANGED_VALUE"),
+                 ("epsilon.core.run", "OBJECT_REMOVED")])
+    check("and says how many it did not write",
+          bool(re.search(r"not written\s+6\s+version strings and package "
+                         r"metadata \(F1, F39\)", out)), True)
+    check("and that a release left with nothing is clean; not on a database "
+          "without the status column",
+          ("left with nothing is analysed_clean" in out,
+           "left with nothing is analysed_clean" in
+           _load(FakeConn(), chg, rel,
+                 {**CAPS_007, "analysis_status": False})),
+          (True, False))
+    check("the release rows it sends carry the written counts",
+          sorted((r["version"], r["analysis_status"], r["n_changes"])
+                 for r in conn.rel if r["package"] == "epsilon"
+                 and r["version"] in ("1.1.0", "1.2.0")),
+          [("1.1.0", "analysed_clean", 0), ("1.2.0", "analysed", 1)])
+
+    out = io.StringIO()
+    usage = pd.DataFrame({"symbol": ["epsilon.core.run"], "user_count": [4]})
+    with contextlib.redirect_stdout(out):
+        db.dry_run(chg, usage, None, rel)
+    text = out.getvalue()
+    check("the dry run counts the same rows by rule, and the releases left "
+          "with nothing",
+          ("4 version-string rows (F1) and 2 package-metadata" in text,
+           "2 release(s) with" in text,
+           bool(re.search(r"breakage\s+4\s", text))), (True, True, True))
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            db.dry_run(chg[db.not_a_change(chg)], usage, None, None)
+        crashed = None
+    except Exception as e:  # noqa: BLE001 - a crash here is the finding
+        crashed = repr(e)
+    check("a file of nothing but version strings previews without crashing: "
+          "every release clean, no row to show",
+          (crashed, "statuses written: analysed_clean 3" in out.getvalue(),
+           bool(re.search(r"breakage\s+0\s", out.getvalue()))),
+          (None, True, True))
+
+
+def case_unknown() -> None:
+    print("\n10. A RELEASE THE FILES CANNOT ESTABLISH IS WRITTEN `unknown`, "
+          "WHERE THE DATABASE ACCEPTS IT")
+    chg, rel = changes(), releases()
+    conn = FakeConn()
+    out = _load(conn, chg, rel, CAPS_007)
+    unknown_rows = [r for r in conn.rel if (r["package"], r["version"]) in
+                    {("beta", "2.0.0"), ("gamma", "0.1")}]
+    check("beta 2.0.0 and gamma 0.1 are sent as unknown with 0 changes",
+          sorted((r["package"], r["analysis_status"], r["n_changes"])
+                 for r in unknown_rows),
+          [("beta", "unknown", 0), ("gamma", "unknown", 0)])
+    rels = [s for s in conn.sql if "INSERT INTO release" in s]
+    case = next((s for s in rels if "analysis_status = CASE" in s), "")
+    check("their upsert replaces only 'analysed' with 0 changes, and keeps "
+          "any other status the row has",
+          ("WHEN release.analysis_status = 'analysed' AND release.n_changes "
+           "= 0" in case, "THEN EXCLUDED.analysis_status" in case,
+           "ELSE release.analysis_status END" in case,
+           "n_changes = EXCLUDED.n_changes" in case),
+          (True, True, True, False))
+    check("the known releases' upsert still sets the status outright",
+          sum("analysis_status = EXCLUDED.analysis_status" in s
+              and "CASE" not in s for s in rels), 1)
+    check("the load says so, and counts what the old default left behind",
+          ("written as unknown, the files establish no status for them: 2"
+           in out, "releases still reading 'analysed' with 0 changes: 0"
+           in out), (True, True))
+
+    conn = FakeConn()
+    out = _load(conn, chg, rel, CAPS_006)
+    unknown_rows = [r for r in conn.rel if (r["package"], r["version"]) in
+                    {("beta", "2.0.0"), ("gamma", "0.1")}]
+    check("without migration 007 they are sent with no status, as before",
+          (sorted(set(k for r in unknown_rows for k in r) &
+                  {"analysis_status", "n_changes"}),
+           any("CASE" in s for s in conn.sql)), ([], False))
+    check("and the load says why",
+          "does not accept 'unknown': migration 007 is not applied" in out,
+          True)
+    caps_005 = {**CAPS_007, "analysis_status": False}
+    conn = FakeConn()
+    out = _load(conn, chg, rel, caps_005)
+    check("without migration 005 no status is named at all, and nothing is "
+          "counted", (any("analysis_status" in s for s in conn.sql),
+                      "still reading" in out), (False, False))
+
+
+class SchemaConn:
+    """Answers check_schema's two questions: which columns exist, and what
+    the release table's CHECK constraint says."""
+
+    def __init__(self, constraint):
+        self.constraint = constraint
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "information_schema.columns" in sql:
+            cols = [("package", "name"), ("release", "analysis_status"),
+                    ("release", "n_changes"), ("breakage", "sub_target"),
+                    ("breakage", "inherited_by"), ("breakage", "detail"),
+                    ("usage_index", "symbol_path"),
+                    ("model_run", "positive_rate"), ("prediction", "score")]
+            return _Result(cols)
+        if "pg_get_constraintdef" in sql:
+            return _Result([(self.constraint,)] if self.constraint else [])
+        return _Result([])
+
+
+def case_check_schema() -> None:
+    print("\n11. WHICH STATUSES THE DATABASE ACCEPTS IS READ FROM ITS CHECK")
+    c007 = ("CHECK ((analysis_status = ANY (ARRAY['analysed'::text, "
+            "'analysed_clean'::text, 'analysis_failed'::text, "
+            "'no_source'::text, 'yanked'::text, 'no_baseline'::text, "
+            "'unknown'::text])))")
+    c006 = c007.replace(", 'unknown'::text", "")
+
+    def caps(constraint):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            got = db.check_schema(SchemaConn(constraint), False)
+        return got["statuses"], out.getvalue()
+
+    got, out = caps(c007)
+    check("after 007 the constraint names unknown, so the loader may write it",
+          (db.UNKNOWN in got, "007" in out), (True, False))
+    got, out = caps(c006)
+    check("before 007 it does not, and the loader says so",
+          (db.UNKNOWN in got, "migration 007 is\n        not applied" in out),
+          (False, True))
+    got, out = caps(None)
+    check("with no constraint to read, unknown is not assumed",
+          (db.UNKNOWN in got, got == db.DB_STATUSES - {db.UNKNOWN}),
+          (False, True))
+
+
 def main() -> None:
     chg, rel = changes(), releases()
     check("load_releases collapses the duplicate delta 3.2.0 row",
@@ -479,6 +772,9 @@ def main() -> None:
     case_detail()
     case_unlisted(chg, rel)
     case_scores(chg, rel)
+    case_not_changes()
+    case_unknown()
+    case_check_schema()
 
     print("\n" + "=" * 60)
     if failures:

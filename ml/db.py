@@ -7,7 +7,8 @@ Load the pipeline's CSVs into Postgres. The last piece before the site works.
     python ml/db.py --scores --ranker model   # the model's, the fallback
 
 Reads  data/packages.csv        -> package
-       data/changes.csv         -> release, breakage
+       data/changes.csv         -> release, breakage (minus the rows that
+                                   are not changes; see not_a_change)
        data/releases.csv        -> release.analysis_status, n_changes, and
                                    the releases that changed nothing
                                    (optional; see release_plan)
@@ -25,6 +26,16 @@ length's under its own name (ml/model/ship.py), and the model's stay in
 the table as the fallback. A load under a new name is served only after
 the API restarts (§28.5). path_metrics.json is written by train.py, with
 path length's numbers on the single split and across the sweeps' dates.
+
+WHAT IS NOT WRITTEN, and what is written as unknown (NOTES §33.5, from
+12 Oct). A version constant or a package-metadata string that changed
+value describes a release; it does not change it (F1, F39), so those rows
+are not sent, by build.py's own two rules, and a release left with nothing
+is analysed_clean with 0 changes. A release the files cannot establish,
+one changes.csv names only as the older side of a pair, is written
+`unknown` where the database accepts the value (migration 007), in place
+of taking the column's default. scripts/db_drop_versions.py removes the
+rows of the first kind that earlier loads wrote.
 
 The database is the boundary between the two halves of this project. The
 pipeline writes, the API reads, neither calls the other's code — which
@@ -71,6 +82,7 @@ from packaging.version import InvalidVersion, Version
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.contract import bump_type  # noqa: E402
+from ml.features.build import metadata_strings, version_strings  # noqa: E402
 from ml.holdout import HOLDOUT_FILE, HOLDOUT_START  # noqa: E402
 from ml.model.ship import (PATH_METRICS, RANKERS,  # noqa: E402
                            SHIPPED_RANKER, path_scores)
@@ -81,17 +93,22 @@ CHANGES, PACKAGES, USAGE = (DATA / "changes.csv", DATA / "packages.csv",
                             DATA / "usage.csv")
 RELEASES = DATA / "releases.csv"
 
-# The values release.analysis_status accepts, from Varad's migrations 005
-# and 006. releases.csv also records `pre_release` and `dev_release`: the
-# ingest filtered those out before analysing anything, and the database
-# has no value for them, so they are skipped and counted rather than
-# forced into a value that means something else.
+# The values release.analysis_status accepts, from Varad's migrations 005,
+# 006 and 007. releases.csv also records `pre_release` and `dev_release`:
+# the ingest filtered those out before analysing anything, and the
+# database has no value for them, so they are skipped and counted rather
+# than forced into a value that means something else.
+UNKNOWN = "unknown"
 DB_STATUSES = {"analysed", "analysed_clean", "analysis_failed", "no_source",
-               "yanked", "no_baseline"}
+               "yanked", "no_baseline", UNKNOWN}
 # Releases that were part of a diffed chain. Only these can be a clean
 # release's predecessor, which is what its bump_type is measured from.
 CHAIN_STATUSES = {"analysed", "analysed_clean", "no_baseline",
                   "analysis_failed"}
+# Varad's hand-written rows, for the API to be built against before the
+# pipeline produced any (NOTES §8.1). No changes.csv names this package,
+# and nothing on this side deletes or counts its rows as its own.
+FIXTURE_PACKAGE = "breakrank-fixture"
 FEATURES = DATA / "features.csv"
 METRICS, RANKER = ART / "metrics.json", ART / "ranker.txt"
 
@@ -158,6 +175,37 @@ def package_rows(changes: pd.DataFrame, packages) -> list[dict]:
 
     p = p[["name", "download_rank", "github_repo"]].astype(object)
     return p.where(pd.notna(p), None).to_dict("records")
+
+
+def not_a_change(changes: pd.DataFrame) -> pd.Series:
+    """True for the rows the database does not get (NOTES §33.5): F1's
+    version strings and F39's package-metadata strings, decided by
+    build.py's own two functions, the ones it drops rows by before any
+    feature is computed and scripts/db_model_check.py counts by. They read
+    the symbol, the kind and griffe's explanation: a version constant or a
+    copyright line whose VALUE changed describes the release and breaks
+    nobody; a removed one, or one changed to `unset`, is a change and
+    stays (§33.1, §32.1). One function, so the loader, the dry run, the
+    deletion step and db_prune's count cannot drift apart.
+    """
+    return (version_strings(changes) | metadata_strings(changes)).astype(bool)
+
+
+def written_counts(changes: pd.DataFrame) -> pd.Series:
+    """Rows the table will hold, per (package, version_to): the rows that
+    are changes, counted once per database key, since breakage_rows drops
+    the second of two rows with one key before the insert (griffe reports
+    pygments' CppLexer.tokens twice for one release, §8). This is what
+    release.n_changes is set to, so it equals the rows a load leaves in
+    the table, and what scripts/db_drop_versions.py recounts to."""
+    kept = changes[~not_a_change(changes)]
+    sub = (kept["sub_target"].map(lambda v: "" if v is None or v != v
+                                  else str(v))
+           if "sub_target" in kept.columns
+           else pd.Series("", index=kept.index))
+    key = ["package", "version_to", "symbol", "kind", "_sub"]
+    return (kept.assign(_sub=sub).drop_duplicates(key)
+            .groupby(["package", "version_to"]).size())
 
 
 def release_rows(changes: pd.DataFrame) -> list[dict]:
@@ -229,18 +277,29 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
     stamp one run's verdict onto another run's data. Those packages keep
     what the loader always did, and the report names them.
 
-    A release with no known status goes in without one: a new row takes
-    the database default and an existing row keeps what it has. Never
-    `analysed_clean` by guesswork, which would have the site say "safe to
-    upgrade" about a release nobody compared (NOTES §13.4).
+    A release with no known status goes in as `unknown` where the database
+    accepts the value (migration 007; write_all decides), and otherwise
+    without one. Never `analysed_clean` by guesswork, which would have the
+    site say "safe to upgrade" about a release nobody compared (NOTES
+    §13.4).
+
+    TWO COUNTS PER RELEASE (§33.5). The ingest's own, every row changes.csv
+    has, is what releases.csv's n_changes was written from, so it is the
+    one the agreement check compares. What is WRITTEN counts only the rows
+    that are changes (not_a_change), one per database key, as
+    breakage_rows sends them: a release whose rows were all its version
+    string was diffed and found nothing, so it is analysed_clean with 0
+    changes, not `analysed` with a count of rows the table will not hold.
     """
     base = {(r["package"], r["version"]): r for r in release_rows(changes)}
     counts = changes.groupby(["package", "version_to"]).size()
+    written = written_counts(changes)
     known, unknown = {}, {}
     for key, r in base.items():
         if key in counts.index:
-            known[key] = {**r, "analysis_status": "analysed",
-                          "n_changes": int(counts[key])}
+            n = int(written.get(key, 0))
+            known[key] = {**r, "analysis_status": "analysed" if n
+                          else "analysed_clean", "n_changes": n}
         else:
             unknown[key] = r
 
@@ -294,13 +353,36 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
     return list(known.values()), list(unknown.values()), report
 
 
-def describe_plan(known: list, unknown: list, report: dict) -> str:
+def describe_unknown(n: int, unknown_ok: bool | None) -> str:
+    """The line for the releases the files cannot establish (§33.5).
+    unknown_ok is whether this database accepts `unknown`, or None when
+    nothing has asked it yet (the dry run)."""
+    if unknown_ok is None:
+        return (f"  written as unknown, the files establish no status for "
+                f"them: {n:,}\n  (where the database accepts the value, "
+                "migration 007; else with no status)")
+    if unknown_ok:
+        return (f"  written as unknown, the files establish no status for "
+                f"them: {n:,}\n  (a row already there keeps a real status; "
+                "'analysed' with 0 changes, the old\n  default on a row "
+                "written without one, becomes unknown)")
+    return (f"  written with no status (existing rows keep theirs): {n:,}\n"
+            "  ** this database does not accept 'unknown': migration 007 is "
+            "not applied, so a\n  ** new row takes the column's default and "
+            "the old rows stay as they are.")
+
+
+def describe_plan(known: list, unknown: list, report: dict,
+                  unknown_ok: bool | None = None) -> str:
     """The release-status part of the load, in words, for both run modes."""
+    statuses = pd.Series([r["analysis_status"] for r in known]).value_counts()
     if not report["rows"] and not report["agree"]:
         return ("  release status: no data/releases.csv, so only releases "
-                "that changed something\n  get one (analysed, with their "
-                "count). Nothing else is claimed.")
-    statuses = pd.Series([r["analysis_status"] for r in known]).value_counts()
+                "that changed something\n  get one (analysed with their "
+                "count, or analysed_clean when every row was\n  its version "
+                "string). Nothing else is claimed.\n  statuses written: "
+                + "   ".join(f"{s} {n:,}" for s, n in statuses.items())
+                + "\n" + describe_unknown(len(unknown), unknown_ok))
     lines = [
         f"  release status: releases.csv has {report['rows']:,} rows. It "
         f"agrees with changes.csv on {len(report['agree']):,} package(s),",
@@ -309,8 +391,7 @@ def describe_plan(known: list, unknown: list, report: dict) -> str:
         "in it.",
         "  statuses written: " + "   ".join(
             f"{s} {n:,}" for s, n in statuses.items()),
-        f"  written with no status (existing rows keep theirs): "
-        f"{len(unknown):,}",
+        describe_unknown(len(unknown), unknown_ok),
     ]
     if report["skipped"]:
         lines.append("  skipped, the database has no value for them: " +
@@ -578,16 +659,22 @@ def check_schema(conn, allow_lossy: bool) -> dict[str, bool]:
                   "loads normally.")
 
     # WHICH STATUSES THIS DATABASE ACCEPTS, read from its own CHECK
-    # constraint rather than assumed. Migration 006 added no_baseline; a
-    # database without it would reject the whole load on the first such
-    # row, so the loader writes only what the constraint allows.
-    caps["statuses"] = set(DB_STATUSES)
+    # constraint rather than assumed. Migration 006 added no_baseline and
+    # 007 `unknown`; a database without them would reject the whole load on
+    # the first such row, so the loader writes only what the constraint
+    # allows, and `unknown` only when the constraint was read and names it.
+    caps["statuses"] = set(DB_STATUSES) - {UNKNOWN}
     found = conn.execute(text("""
         SELECT pg_get_constraintdef(oid) FROM pg_constraint
         WHERE conrelid = 'release'::regclass
           AND pg_get_constraintdef(oid) LIKE '%analysis_status%'""")).scalar()
     if found:
         caps["statuses"] = set(re.findall(r"'([a-z_]+)'", found))
+    if caps["analysis_status"] and UNKNOWN not in caps["statuses"]:
+        print("  note: this database does not accept the status 'unknown' — "
+              "migration 007 is\n        not applied, so releases the files "
+              "cannot establish are written with no\n        status, as "
+              "before (NOTES §33.5).")
     return caps
 
 
@@ -641,13 +728,35 @@ def write_all(conn, changes, usage, packages, caps, score_map,
                                        release.released_at),
                 bump_type = COALESCE(EXCLUDED.bump_type, release.bump_type){s}
     """
+    with_status = dict(c=", analysis_status, n_changes",
+                       v=", :analysis_status, :n_changes")
+    unknown_ok = bool(caps["analysis_status"]) and UNKNOWN in caps["statuses"]
     if caps["analysis_status"]:
         executemany(conn, upsert.format(
-            c=", analysis_status, n_changes",
-            v=", :analysis_status, :n_changes",
+            **with_status,
             s=",\n                analysis_status = EXCLUDED.analysis_status,"
               "\n                n_changes = EXCLUDED.n_changes"), known)
         rest = unknown
+        if unknown_ok:
+            # THE RELEASES THE FILES CANNOT ESTABLISH ARE WRITTEN AS
+            # `unknown` (NOTES §33.5), not left to the column's default,
+            # which was `analysed` before migration 007 and made 232
+            # releases read "diffed, changes found, 0 changes". A row
+            # already in the table keeps a real status, since an earlier
+            # load's files established it and today's merely do not; it
+            # gives up only `analysed` with 0 changes, which was never a
+            # verdict but that old default on a row written without one.
+            for r in unknown:
+                r["analysis_status"], r["n_changes"] = UNKNOWN, 0
+            executemany(conn, upsert.format(
+                **with_status,
+                s=",\n                analysis_status = CASE"
+                  "\n                    WHEN release.analysis_status = "
+                  "'analysed' AND release.n_changes = 0"
+                  "\n                    THEN EXCLUDED.analysis_status"
+                  "\n                    ELSE release.analysis_status END"),
+                unknown)
+            rest = []
     else:
         rest = known + unknown
     executemany(conn, upsert.format(c="", v="", s=""), rest)
@@ -658,12 +767,40 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         SELECT r.id, p.name, r.version FROM release r
         JOIN package p ON p.id = r.package_id""")).fetchall()}
     print(f"  release       {len(known) + len(unknown):>7,}")
-    print(describe_plan(known, unknown, plan) if caps["analysis_status"] else
+    print(describe_plan(known, unknown, plan, unknown_ok)
+          if caps["analysis_status"] else
           "  release status: none written, this database has no "
           "analysis_status column\n  (migration 005).")
+    if caps["analysis_status"]:
+        # What the old default left behind, after this load: a release
+        # reading `analysed` with 0 changes was written without a status
+        # before 007. With 007 every such row in today's files has just
+        # become unknown, so whatever is left is outside them, and each is
+        # looked at (§33.5), not guessed about.
+        stale = conn.execute(text("""
+            SELECT p.name, r.version FROM release r
+            JOIN package p ON p.id = r.package_id
+            WHERE r.analysis_status = 'analysed' AND r.n_changes = 0
+            ORDER BY p.name, r.version""")).fetchall()
+        print(f"  releases still reading 'analysed' with 0 changes: "
+              f"{len(stale):,}"
+              + ("" if not stale else
+                 (", none of them in today's files:" if unknown_ok else
+                  " (migration 007 is not applied, so they stay):")
+                 + "".join(f"\n    {n} {v}" for n, v in stale[:8])
+                 + (f"\n    ... and {len(stale) - 8:,} more"
+                    if len(stale) > 8 else "")))
 
     has_sub = caps["sub_target"]
-    rows, keys, dropped = breakage_rows(changes, rel_id)
+    # THE ROWS THAT ARE NOT CHANGES ARE NOT SENT (§33.5): build.py's two
+    # rules, through not_a_change(). Until 12 Oct every row went in, and
+    # the site listed a package's own version string as its first change.
+    kept = changes[~not_a_change(changes)]
+    print(f"  not written   {len(changes) - len(kept):>7,}   version strings "
+          f"and package metadata (F1, F39), by\n{'':25}build.py's rules"
+          + ("; a release left with nothing is analysed_clean"
+             if caps["analysis_status"] else ""))
+    rows, keys, dropped = breakage_rows(kept, rel_id)
     # Drop any optional column this database does not have, from both the
     # column list and the row dicts — a bound parameter with no column to
     # land in is as fatal as a column with no parameter.
@@ -927,7 +1064,8 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     # drops against a true figure of 1. A stub that stops being a stub is
     # worse than no stub.
     fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
-    rows, keys, dropped = breakage_rows(changes, fake)
+    kept = changes[~not_a_change(changes)]
+    rows, keys, dropped = breakage_rows(kept, fake)
 
     # Must go through package_rows(), not changes['package'].nunique().
     # Those two numbers are different and the difference is the point: the
@@ -949,6 +1087,16 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     print(f"  package       {analysed:>7,}")
     print(f"  release       {len(rels):>7,}")
     print(describe_plan(known, unknown, plan))
+    vs, meta = version_strings(changes), metadata_strings(changes)
+    diffed = set(zip(changes["package"], changes["version_to"]))
+    clean = sum(1 for r in known if r["analysis_status"] == "analysed_clean"
+                and (r["package"], r["version"]) in diffed)
+    n_vs, n_meta = int(vs.sum()), int((meta & ~vs).sum())
+    print(f"  not written   {len(changes) - len(kept):>7,}   {n_vs:,} "
+          f"version-string rows (F1) and {n_meta:,} package-metadata\n"
+          f"{'':25}rows (F39), by build.py's rules (NOTES §33.5); "
+          f"{clean:,} release(s) with\n{'':25}changes.csv rows are left with "
+          "nothing and written analysed_clean")
     print(f"  breakage      {len(rows):>7,}   (a row already in the database "
           "gets every column\n                         refreshed, "
           "inherited_by included)")
@@ -970,11 +1118,12 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     else:
         print("no key collisions — every change survives the insert.")
 
-    priv = int(changes["is_private"].sum())
-    print(f"private rows kept: {priv:,} ({priv / len(changes):.1%}) — stored "
-          "and hidden, never dropped")
-    print(f"\nexample detail payload:\n  "
-          f"{json.dumps(detail_of(next(changes.itertuples(index=False))))}")
+    priv = int(kept["is_private"].sum())
+    print(f"private rows kept: {priv:,} ({priv / max(len(kept), 1):.1%}) — "
+          "stored and hidden, never dropped")
+    if len(kept):
+        print(f"\nexample detail payload:\n  "
+              f"{json.dumps(detail_of(next(kept.itertuples(index=False))))}")
 
 
 def main() -> None:

@@ -21,15 +21,49 @@ script confirms or refutes that instead of assuming it.
 
 It also checks the other direction — rows we sent that are NOT in the
 table — which would be the actually alarming case.
+
+Since 12 Oct (NOTES §33.5) "what we sent" leaves out the version-string
+and package-metadata rows the loader no longer writes; the ones still in
+the table from earlier loads are counted on a line of their own, for
+scripts/db_drop_versions.py, and not classed with the rest.
 """
 
 import json
 import pathlib
 import sys
 
+import pandas as pd
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ml.db import breakage_rows, connect, load_frames, release_rows  # noqa: E402
+from ml.db import (FIXTURE_PACKAGE, breakage_rows, connect,  # noqa: E402
+                   load_frames, not_a_change, release_rows)
+
+
+def griffe_message(detail) -> str:
+    """detail.griffe_message out of the detail column, however the driver
+    hands the JSON back (a dict, a string, or nothing)."""
+    try:
+        d = json.loads(detail) if isinstance(detail, str) else (detail or {})
+        return str(d.get("griffe_message", "") or "")
+    except (TypeError, ValueError, AttributeError):
+        return ""
+
+
+def not_sent_any_more(extra: list, in_db: dict) -> set:
+    """The rows among `extra` that the loader stopped writing on 12 Oct
+    (NOTES §33.5): version strings and package metadata, by ml/db.py's
+    not_a_change() read from the table's own symbol, kind and griffe
+    message, Varad's fixture rows excepted. They sit in the table until
+    scripts/db_drop_versions.py removes them, and they are named as what
+    they are rather than classed as superseded, as db_prune does."""
+    if not extra:
+        return set()
+    frame = pd.DataFrame([(k[2], k[3], griffe_message(in_db[k][1]))
+                          for k in extra],
+                         columns=["symbol", "kind", "explanation"])
+    return {k for k, m in zip(extra, not_a_change(frame))
+            if m and k[0] != FIXTURE_PACKAGE}
 
 
 def audit_other_tables(engine, changes, rels) -> None:
@@ -95,10 +129,17 @@ def main() -> None:
     # tuple the loader reads back out of the database.
     rels = release_rows(changes)
     fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
-    _rows, keys, dropped = breakage_rows(changes, fake)
+    # The rows the loader SENDS (NOTES §33.5): not the version strings and
+    # package-metadata rows, which it stopped writing on 12 Oct. Counting
+    # them as ours would report every one of them as "sent and not in the
+    # table" once the deletion step has run.
+    kept = changes[~not_a_change(changes)]
+    _rows, keys, dropped = breakage_rows(kept, fake)
     ours = set(keys)
     print(f"built from changes.csv: {len(ours):,} distinct keys "
-          f"({dropped} dropped as duplicates)")
+          f"({dropped} dropped as duplicates; {len(changes) - len(kept):,} "
+          "version-string and\n  package-metadata rows the loader does not "
+          "send, NOTES §33.5)")
 
     from sqlalchemy import text
 
@@ -137,8 +178,15 @@ def main() -> None:
 
     extra = sorted(k for k in in_db if k not in ours)
     missing = sorted(k for k in ours if k not in in_db)
+    # Named first, as db_prune does: these are for scripts/db_drop_versions.py,
+    # and are neither fixtures nor superseded rows.
+    stopped = not_sent_any_more(extra, in_db)
+    extra = [k for k in extra if k not in stopped]
 
     print(f"\nrows in the table that we did NOT send: {len(extra)}")
+    print(f"  (and {len(stopped):,} version-string and package-metadata rows "
+          "the loader no longer\n  writes, not counted above: "
+          "scripts/db_drop_versions.py removes them, NOTES §33.5)")
     print(f"rows we sent that are NOT in the table: {len(missing)}")
 
     if missing:

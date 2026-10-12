@@ -48,6 +48,12 @@ directly in a module, which it reads from griffe's explanation; and
 neither F1 nor F39 takes a value changed to `unset` (NOTES §33.1). The
 database keeps that explanation as detail.griffe_message, so the same
 functions decide here.
+
+From 12 Oct the same two rules are counted over the WHOLE breakage table
+as well, scored or not (NOTES §33.5): the loader no longer writes such
+rows, and scripts/db_drop_versions.py removes the ones earlier loads
+wrote, so after it both numbers read 0. Varad's breakrank-fixture rows are
+left out of that count, as that script leaves them alone.
 """
 
 import argparse
@@ -59,7 +65,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ml.db import connect  # noqa: E402
+from ml.db import FIXTURE_PACKAGE, connect  # noqa: E402
 from ml.features.build import (METADATA_LEAVES, VERSION_KIND,  # noqa: E402
                                VERSION_LEAVES, metadata_strings,
                                version_strings)
@@ -113,11 +119,27 @@ def main() -> None:
         """), {"v": ours, "kind": VERSION_KIND,
                "leaves": sorted(VERSION_LEAVES | METADATA_LEAVES)}
         ).fetchall() if ours else []
+        # The same candidates over the whole table, scored or not (§33.5),
+        # Varad's fixture rows left out.
+        in_table = conn.execute(text(r"""
+            SELECT b.symbol_path, b.kind, b.detail ->> 'griffe_message'
+            FROM breakage b
+            JOIN release r ON r.id = b.release_id
+            JOIN package p ON p.id = r.package_id
+            WHERE b.kind = :kind
+              AND regexp_replace(b.symbol_path, '^.*\.', '') = ANY(:leaves)
+              AND p.name <> :fixture
+        """), {"kind": VERSION_KIND,
+               "leaves": sorted(VERSION_LEAVES | METADATA_LEAVES),
+               "fixture": FIXTURE_PACKAGE}).fetchall()
 
-    scored = pd.DataFrame([tuple(r) for r in named],
-                          columns=["symbol", "kind", "explanation"])
+    cols = ["symbol", "kind", "explanation"]
+    scored = pd.DataFrame([tuple(r) for r in named], columns=cols)
     stale_vs = int(version_strings(scored).sum())
     stale_meta = int(metadata_strings(scored).sum())
+    whole = pd.DataFrame([tuple(r) for r in in_table], columns=cols)
+    table_vs = int(version_strings(whole).sum())
+    table_meta = int((metadata_strings(whole) & ~version_strings(whole)).sum())
 
     print(f"\nmodel_run rows, newest first ({breakages:,} breakage rows in "
           "the table):\n")
@@ -145,6 +167,16 @@ def main() -> None:
               + ("   (none, as F39 intends)" if not stale_meta else
                  "   ** F39 took these out of the model; reload:\n** "
                  f"{load}"))
+
+    print(f"\nin the whole breakage table, scored or not ({FIXTURE_PACKAGE}'s "
+          "rows left out):")
+    print(f"  version-string rows {table_vs:,}   package-metadata rows "
+          f"{table_meta:,}"
+          + ("   (none; the loader writes none, NOTES §33.5)"
+             if not table_vs + table_meta else
+             "\n  ** the loader no longer writes these; "
+             "scripts/db_drop_versions.py removes them,\n  ** dry run "
+             "first (NOTES §33.5)"))
 
     if not runs:
         print(f"  (none) Load one with: {load}")

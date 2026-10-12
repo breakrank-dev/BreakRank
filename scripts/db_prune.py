@@ -50,15 +50,30 @@ touched by this script: since migration 005 they are the package
 breakrank-fixture, which no changes.csv contains. That is luck rather
 than design — the classifier cannot tell a fixture from a real aged-out
 release — but the outcome is right: his rows are his to remove.
+
+A FOURTH GROUP, COUNTED AND NEVER DELETED HERE (NOTES §33.5, 12 Oct): the
+version-string and package-metadata rows, F1's and F39's, which the
+loader no longer writes and scripts/db_drop_versions.py removes with a
+dry run and an --expect count of its own. They are 6.5% of the table by
+the loader's count, over this script's guard, which is why they have a
+script of their own. Until 12 Oct this script could not see them: the
+ones in today's changes.csv counted as "ours" and were skipped without
+a word, and the ones from earlier loads were split between superseded
+and aged out. Now they are named first, as what they are, whatever else
+they would be. Decided by ml/db.py's not_a_change(), build.py's two
+rules, from the explanation the table keeps as detail.griffe_message.
 """
 
 import argparse
 import pathlib
 import sys
 
+import pandas as pd
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ml.db import breakage_rows, connect, load_frames, release_rows  # noqa: E402
+from ml.db import (FIXTURE_PACKAGE, breakage_rows, connect,  # noqa: E402
+                   load_frames, not_a_change, release_rows)
 
 BAD_ROOTS = ("python.", "bindings.", "py_src.", "crates.", "_cffi_src.")
 
@@ -66,6 +81,40 @@ BAD_ROOTS = ("python.", "bindings.", "py_src.", "crates.", "_cffi_src.")
 # it is a symptom — a stale changes.csv, the wrong database, a half-failed
 # ingest. Refuse and make a human look.
 MAX_SHARE = 0.05
+
+
+def classify(found: list, ours: set, live_rel: set) -> dict:
+    """Every table row into one of four lists of ids. `found` rows are
+    (id, package, version, symbol_path, kind, sub_target, griffe_message).
+
+    The version-string and package-metadata rows come first, whatever
+    else they are: they go through scripts/db_drop_versions.py, not here,
+    and as there Varad's fixture rows are not among them. Then, for a row
+    the current changes.csv does not have: an un-importable root is wrong
+    wherever it came from; a row of a release the current run re-analysed
+    is superseded; the rest aged out of the window and are kept (NOTES
+    §8), the fixture's rows with them."""
+    out = {"versions": [], "bad": [], "superseded": [], "aged": []}
+    if not found:
+        return out
+    frame = pd.DataFrame([tuple(r) for r in found],
+                         columns=["id", "package", "version", "symbol",
+                                  "kind", "sub_target", "explanation"])
+    frame["explanation"] = frame["explanation"].fillna("").astype(str)
+    marked = not_a_change(frame)
+    for is_marked, (bid, name, ver, sym, kind, sub, _msg) in zip(marked,
+                                                                   found):
+        if is_marked and name != FIXTURE_PACKAGE:
+            out["versions"].append(bid)
+        elif (name, ver, sym, kind, sub or "") in ours:
+            continue
+        elif str(sym).startswith(BAD_ROOTS):
+            out["bad"].append(bid)
+        elif (name, ver) in live_rel:
+            out["superseded"].append(bid)
+        else:
+            out["aged"].append(bid)
+    return out
 
 
 def main() -> None:
@@ -123,29 +172,26 @@ def main() -> None:
         """)).fetchone())
         sub_sel = "b.sub_target" if has_sub else "''"
         found = conn.execute(text(f"""
-            SELECT b.id, p.name, r.version, b.symbol_path, b.kind, {sub_sel}
+            SELECT b.id, p.name, r.version, b.symbol_path, b.kind, {sub_sel},
+                   b.detail ->> 'griffe_message'
             FROM breakage b
             JOIN release r ON r.id = b.release_id
             JOIN package p ON p.id = r.package_id
         """)).fetchall()
 
     total = len(found)
-    bad, superseded, aged = [], [], []
-    for bid, name, ver, sym, kind, sub in found:
-        if (name, ver, sym, kind, sub or "") in ours:
-            continue
-        if str(sym).startswith(BAD_ROOTS):
-            bad.append(bid)
-        elif (name, ver) in live_rel:
-            superseded.append(bid)
-        else:
-            aged.append(bid)
+    groups = classify(found, ours, live_rel)
+    bad, superseded, aged = (groups["bad"], groups["superseded"],
+                             groups["aged"])
 
     doomed = bad + superseded
     print(f"\nbreakage rows in table: {total:,}")
     print(f"  un-importable root   {len(bad):>5}   delete")
     print(f"  superseded           {len(superseded):>5}   delete")
     print(f"  aged out of window   {len(aged):>5}   KEEP — still true")
+    print(f"  version strings and  {len(groups['versions']):>5}   NOT THIS "
+          "SCRIPT'S: scripts/db_drop_versions.py removes\n  package metadata"
+          f"{'':12}these (F1, F39; NOTES §33.5), with its own dry run")
     print(f"\nwould delete {len(doomed):,} rows "
           f"({len(doomed) / max(total, 1):.1%} of the table)")
 
