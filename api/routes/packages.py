@@ -17,10 +17,12 @@ WHERE pk.name = :name AND r.version = :version
 """
 
 COUNT_SQL = """
-SELECT count(*)
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE COALESCE(u.user_count, 0) > 0) AS n_imported
 FROM breakage b
 JOIN release r  ON r.id = b.release_id
 JOIN package pk ON pk.id = r.package_id
+LEFT JOIN usage_index u ON u.symbol_path = b.symbol_path
 WHERE pk.name = :name
   AND r.version = :version
   AND (:include_private OR b.is_private = FALSE)
@@ -87,7 +89,9 @@ def get_breakages(
                 },
             )
 
-        total = conn.execute(text(COUNT_SQL), params).scalar()
+        # Two numbers now: all changes, and how many of them any scanned
+        # package imports (for the "none imported" note).
+        counts = conn.execute(text(COUNT_SQL), params).one()
         rows = conn.execute(text(BREAKAGES_SQL), params).mappings().all()
 
     # Decision 2: if nothing is scored we ranked by usage, and we say so
@@ -100,7 +104,8 @@ def get_breakages(
         model_version=config.MODEL_VERSION,
         ranking="model" if has_scores else "usage_fallback",
         analysis_status=status,
-        total=total,
+        total=counts.total,
+        n_imported=counts.n_imported,
         breakages=[
             Breakage(
                 symbol=r["symbol_path"],

@@ -158,3 +158,7 @@ def test_real_data_ranks_by_model():
     body = client.get(f"/packages/{name}/releases/{version}/breakages").json()
     assert body["ranking"] == "model"
     assert any(b["score"] is not None for b in body["breakages"])
+
+def test_n_imported_is_between_zero_and_total():
+    body = client.get(BASE).json()
+    assert 0 <= body["n_imported"] <= body["total"]
