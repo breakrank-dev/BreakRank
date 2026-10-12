@@ -6567,3 +6567,100 @@ again, which a stamped sweep would make a dead end. test_ship.py and
 test_path_baseline.py were brought to the new defaults, and the sweeps
 that test_holdout.py, test_intervals.py, test_relevance.py and
 test_tuning.py hand train.py now carry the stamp.
+
+### 36.4 The runs (12 Oct)
+
+Run 12 Oct, 12:30 to 12:50 India time, on the Mac and venv of §36.2,
+after §36.3 was pushed (4119f81). The code of 4119f81 passed all 19 test
+files first (test_path_ships.py the new one). Everything §36.3 said a run
+should show, it showed, with one exception, the overwritten record,
+below.
+
+**The model, refitted, is the same model.** `train.py` wrote
+artifacts/ranker.txt with the md5 it had before (dff4eb9c…), so the
+fallback the site holds and the file in the repo are still one model.
+Its numbers on the new convention: PR-AUC 0.2893 (0.225 to 0.426),
+2.79x popularity (1.73x to 5.41x), the report's 0.289 and 2.8x of §35.2;
+precision@10 0.281 (0.188 to 0.379) over 17 upgrades and nDCG@20 0.569
+(0.428 to 0.696) over 11, from 0.282 and 0.595 in the fixed order; 1.60x
+the line (1.26x to 2.08x). Its model_run notes say `convention=
+ties-averaged`; the row in the database keeps §33.4's 0.2938, the old
+convention, since the fallback was not reloaded.
+
+**Path length's numbers**, the report's from here on.
+
+- The single split (1,954 test rows, 190 upgrades, floor 0.0793):
+  PR-AUC 0.265 (0.186 to 0.375), **2.56x popularity (1.69x to 3.88x)**,
+  precision@10 0.287 (0.187 to 0.407) over 17 upgrades, nDCG@20 0.558
+  (0.404 to 0.707) over 11. The model's PR-AUC is 1.09x path length's
+  (0.78x to 1.74x), as §34.2 had it.
+- The seven reference dates (`--at`): path length's lift over
+  popularity 3.96x, 4.09x, 4.82x, 4.71x, 4.05x, 4.41x, 2.53x, median
+  **4.09x**, and the lower end of its interval above 1.0x at every date
+  (1.62x at the lowest, 2026-03-02). The model's columns repeated §34.2
+  and §35.1 to the digit, averaged where F44 averages them; the line's
+  PR-AUC moved a little, now on the same convention as everything else.
+- The sweep's own dates (2025-08-07, 10-10, 12-05, 2026-01-21, 03-05,
+  04-05, 05-06): path length 3.96x, 4.81x, 4.81x, 3.09x, 3.73x, 2.56x,
+  2.64x, median 3.73x, above 1.0x at every date; the model 4.84x to
+  2.34x, median 3.80x, §35.1's tie-averaged figures. There the model's
+  PR-AUC is above path length's at 5 of 7 (median 1.10x, 0.85x to
+  1.33x) and its nDCG@20 at 3 of 7: read, not ruled on, as in §34.2.
+- **Across the thirteen dates**, path_metrics.json's notes: beats
+  popularity 13/13, lift median 4.05x, 2.53x to 4.82x, its interval
+  above 1.0x at 13/13. The report's sentence is this one.
+
+**The site.** `ml/db.py --scores` scored 21,453 rows (features.csv and
+holdout.csv; 0 with no depth) and wrote 21,452 predictions under
+`path-length`, one row fewer for the same duplicate key the model's load
+had (§33.4: 21,452); nothing replaced, and `lambdarank-label_alias-
+tuned`'s 21,452 stay as the fallback. model_run `path-length`:
+trained_at 2026-10-12 07:18:28 UTC, pr_auc 0.2651, positive_rate
+0.079324. db_model_check.py: a restarted API serves `path-length`; its
+scores come from one day; version-string and metadata rows with a score,
+0 and 0. The API picks the newest row when it starts (§28.5), and on
+Render's free tier every wake from sleep is a start, so the switch
+happens on its own, before F45's fix is in; Varad is told the same day,
+with F45's fix and the choice of pinning the model meanwhile
+(MODEL_VERSION=lambdarank-label_alias-tuned).
+
+**The stories**, under §31.1's rules and §36.3's addition, on path
+length's order. Of the 9 candidate releases, path length's top 10 holds
+more used changes than a random order would at 7, fewer at 2; 30.0 of
+85 used changes found where a random order expects 13.1 (the model: 9 of
+9 and 28, §35.2). The success story moves to **redis 7.4.1 → 8.0.0**
+(28 May 2026): 134 changes, 50 used; the 57 shortest-path changes tie
+at the top, 50 of them used, so the top 10 holds 8.8 used changes on
+average against a random order's 3.7. Told with it: 49 of the 57 are
+parameters of one constructor, `redis.Redis(...)`, moved or given new
+defaults, used because 2 scanned packages import `Redis`; whether either
+passes those arguments, the label cannot see. The failure story stays
+**cryptography 46.0.7 → 47.0.0**: `PBKDF2HMAC`, used by 10 packages, the
+most in its release, sits at places 13 to 30 of 30, tied with every
+other change at depth 5. Its path is deep and it has no shorter name,
+which is now the rule itself, not a feature the model leaned on.
+
+**The verdicts.** `path_verdict.py`, with no argument, printed §34.2
+from the 10 Oct sweep. `ship_verdict.py` found no 11 Oct sweep: **the
+record of §36.2 had been written over.** §36.2 said the next sweep
+writes over it and it is copied aside first; the copy was a condition in
+the run's instructions, the first `ls` showed it had not been made, and
+the runs went ahead. The verdict itself was never in doubt: every number
+is in §36.2's tables and in the saved terminal output. The file was
+remade the same afternoon from the code that wrote it: a clone of the
+repository at cb73049, the same venv, the same features.csv (md5
+58c8070d…), `stability.py --at` at the seven dates. Its printed table
+and every line `ship_verdict.py` prints from it, the 105 numbers of the
+five rankers, their medians, the seven test-half fingerprints, the
+environment, R's trees, settings and distinct scores, and the rule's
+steps, are the 11 Oct output line for line, which is also the second
+time a refit on this Mac has reproduced the first to the digit (§36.2
+was the first). The remade file is kept under the 11 Oct name,
+`data/stability_label_alias_cv_tuned_at-20261011.csv`, and this
+paragraph is its provenance. git status was clean after the runs.
+
+**What follows.** Item 5 of §36.2's list: the report and deck present
+path length as the ranker, with the numbers above; §35.2's paragraphs
+are rewritten (§36.5). F45's fix and the restart are Varad's. The
+'unknown' status, the deletion step and db_prune follow, now that
+migration 007 is on Neon.
