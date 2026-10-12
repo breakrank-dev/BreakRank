@@ -4,11 +4,11 @@ matches the model (§34.2). Decided by the rule in §36.1, written before
 any of the new rankers was scored on the real data.
 
     python scripts/ship_verdict.py
-    python scripts/ship_verdict.py data/stability_label_alias_cv_tuned_at.csv
+    python scripts/ship_verdict.py data/stability_label_alias_cv_tuned_at-20261011.csv
 
 Reads  the sweep `ml/model/stability.py --at ...` wrote at the seven
-       reference dates; by default the shipped model's,
-       data/stability_label_alias_cv_tuned_at.csv
+       reference dates on 11 Oct, kept aside as
+       data/stability_label_alias_cv_tuned_at-20261011.csv (the default)
 Writes nothing. Nothing is fitted either: the sweep fitted and scored
        every ranker at every date on the same test half.
 
@@ -65,8 +65,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from ml.model.stability import CONTEST, CONTEST_EXTRA  # noqa: E402
-from path_verdict import (DATES, DEFAULT, across, refusal,  # noqa: E402
-                          within)
+from path_verdict import (AGAIN, DATES, KEPT_SHIP, across,  # noqa: E402
+                          refusal, within)
+
+DEFAULT = KEPT_SHIP
 
 # The five rankers by the names the rule uses, in CONTEST's order.
 SHORT = dict(zip(["P", "R", "M", "P->M", "R->M"], CONTEST))
@@ -163,9 +165,7 @@ def contest_refusal(t: pd.DataFrame) -> str | None:
     if missing:
         return ("This sweep has no " + ", ".join(missing) + " column: it was "
                 "written before item 15\n(NOTES §36), or not by a sweep of "
-                "the shipped model. Run the sweep again at the seven\n"
-                "dates:\n  python ml/model/stability.py --at "
-                + ",".join(DATES))
+                "the shipped model. " + AGAIN)
     if t[[c for c in dict.fromkeys(need)]].isna().any().any():
         return "The sweep has an empty value at one of the seven dates."
     return None
@@ -222,8 +222,7 @@ def main() -> None:
     args = ap.parse_args()
     f = pathlib.Path(args.sweep)
     if not f.exists():
-        sys.exit(f"{f} not found. Run: python ml/model/stability.py --at "
-                 + ",".join(DATES))
+        sys.exit(f"{f} not found. " + AGAIN)
     t = pd.read_csv(f, dtype={"cut": str, "commit": str, "test_hash": str})
     why = refusal(t) or contest_refusal(t)
     if why:
@@ -255,8 +254,8 @@ def main() -> None:
               "against P is recorded\n  beside it (§36.1)")
     else:
         print("  the model, refitted: its numbers are §34.2's, so step 1's M "
-              "against P is §34.2's\n  exam with F44's averaging, and §34.1's "
-              "list follows it (§36.1)")
+              "against P is §34.2's\n  exam with F44's averaging, and "
+              "§34.1's list follows it (§36.1)")
     print()
     for k, name in SHORT.items():
         print(f"  {k:<5} {name}")

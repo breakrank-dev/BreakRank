@@ -11,7 +11,9 @@ Does the result survive more than one arbitrary date?
 
 Reads  data/features.csv
 Writes data/stability_<label>_<stopping>.csv, or with --at
-       data/stability_<label>_<stopping>_at.csv, which train.py never quotes.
+       data/stability_<label>_<stopping>_at.csv, which train.py quotes
+       only for path length's row, and only cut at the seven reference
+       dates (NOTES §36.3).
        Another objective adds its name, then _graded, _tuned, _at:
        data/stability_label_alias_cv_binary.csv,
        data/stability_label_alias_cv_graded.csv,
@@ -35,7 +37,8 @@ And, since 10 Oct, two things beside each other (metrics.tie_averaged).
 F42 (NOTES §35): `pr_auc_ties` and `popularity_ties` are the model's and
 popularity's PR-AUC with ties averaged, with `lift_vs_pop_ties`, its
 interval `lift_lo_ties`-`lift_hi_ties`, and `beats_pop_ties`; every other
-number keeps sklearn's convention until the report moves. F41 (NOTES
+number kept sklearn's convention until the report moved, on 11 Oct, and
+since then they repeat the plain columns (below). F41 (NOTES
 §34): `path` is the PR-AUC, ties averaged, of ranking by the shortest
 import path (minus public_depth, nothing fitted), with `path_p_at_10`,
 `path_ndcg_20`, `lift_vs_path` (pr_auc_ties over path, to four places)
@@ -57,6 +60,18 @@ fingerprint of the test half and what the sweep ran on are written
 beside them (CONTEST, CONTEST_EXTRA). None of it is printed here:
 scripts/ship_verdict.py reads the sweep at the seven reference dates,
 checks it, and applies §36.1's rule.
+
+And, from 11 Oct (NOTES §36.2): path length alone ships, so two things
+change. Every number takes one convention, metrics.CONVENTION: PR-AUC
+with ties averaged and precision@10 and nDCG@20 averaged over every
+order of the ties, and every row says so (`convention`). A file without
+the stamp was measured the old way, and train.py and compare_sweeps.py
+do not set it beside one with it. Its F42 columns (`pr_auc_ties` and the
+rest) now repeat the plain ones and are kept so older readers still
+work. And each row carries path length's own lift over popularity, the
+number the report quotes: `path_lift_vs_pop`, its paired interval
+`path_lift_lo`-`path_lift_hi`, and `path_beats_pop`. Item 15's columns
+are written only when asked for (--contest); its verdict is in.
 
 BEFORE AND AFTER A FIX, AT THE SAME DATES (--at). The seven cut dates are
 quantiles, so they move whenever the rows do: item 2 deleted 708 dev
@@ -118,8 +133,9 @@ from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.ablate import REACHABILITY  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import (evaluate, intervals,  # noqa: E402
-                              n_rankable, ndcg_at_k, tie_averaged)
+from ml.model.metrics import (CONVENTION, evaluate,  # noqa: E402
+                              intervals, n_rankable, ndcg_at_k,
+                              tie_averaged)
 from ml.model.train import (COUNT_OF, FIXED_PARAMS, GROUP,  # noqa: E402
                             RELEVANCE, SHIPPED_RELEVANCE, SHIPPED_TUNING,
                             TUNING, fit_cv, fit_model, graded_gain,
@@ -297,10 +313,10 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
     # the model held fixed. The spread ACROSS cuts, which report() prints
     # as the range, is the other kind; neither stands in for the other.
     ci = intervals(scored, label, "model", "popularity")
-    # F42 and F41 (NOTES §35, §34): every PR-AUC again with ties averaged,
-    # each lift's interval the same way, and path length alone, beside the
-    # convention every earlier number used, so the size of the change is
-    # measured at the same dates before the report moves to it.
+    # F42 and F41 (NOTES §35, §34): the tie-averaged PR-AUCs and their
+    # lifts' intervals, and path length alone. Until 11 Oct these sat
+    # beside the old convention's numbers; since metrics.CONVENTION every
+    # number above is tie-averaged too, and the F42 columns repeat them.
     tie = tie_averaged(scored, label)
 
     # Item 15 (NOTES §36), after everything above is measured, so the
@@ -336,6 +352,7 @@ def one_split(df: pd.DataFrame, q, label: str, feats: list[str],
         **against_the_line(m, lin),
         **with_ties(tie),
         **against_path(m, tie),
+        **path_over_popularity(tie),
         # F7: the setting this cut's model was fitted with, as
         # leaves/learning rate/smallest leaf. Always 31/0.05/30 untuned.
         "setting": setting_text(getattr(model, "tuned_", {}).get(
@@ -475,8 +492,9 @@ def against_the_line(m: dict, lin: dict) -> dict:
 def with_ties(tie: dict) -> dict:
     """The F42 columns of a sweep row (NOTES §35), from tie_averaged(): the
     model's and popularity's PR-AUC with ties averaged, the lift between
-    them with its 95% interval, and whether the model is ahead, beside the
-    convention every earlier number used."""
+    them with its 95% interval, and whether the model is ahead. Until 11
+    Oct they sat beside the old convention's numbers; now (NOTES §36.3)
+    they repeat the plain columns, and are kept for older readers."""
     return {
         "pr_auc_ties": round(tie["model"], 4),
         "popularity_ties": round(tie["popularity"], 4),
@@ -507,6 +525,21 @@ def against_path(m: dict, tie: dict) -> dict:
         "lift_vs_path_hi": round(tie["ci_path"][1], 4),
         "beats_path": bool(mp > pp),
         "beats_path_ndcg": bool(mn > pn),
+    }
+
+
+def path_over_popularity(tie: dict) -> dict:
+    """Path length's own columns as the ranker that ships (NOTES §36.2),
+    from tie_averaged(): its lift over popularity, both PR-AUCs with ties
+    averaged, the paired 95% interval of that lift, and whether it is
+    ahead. Worked out as the model's are: the lift to two places from the
+    unrounded PR-AUCs, and a tie is not ahead."""
+    pth, pop = tie["path"]["pr_auc"], tie["popularity"]
+    return {
+        "path_lift_vs_pop": round(pth / pop, 2) if pop else float("nan"),
+        "path_lift_lo": round(tie["ci_path_pop"][0], 2),
+        "path_lift_hi": round(tie["ci_path_pop"][1], 2),
+        "path_beats_pop": bool(pth > pop),
     }
 
 
@@ -575,6 +608,10 @@ def run_label(df: pd.DataFrame, label: str, feats: list[str],
     # them, and scripts/path_verdict.py checks the rows too (F41).
     t["label"] = label
     t["objective"] = objective
+    # And, from 11 Oct, how ties were counted (NOTES §36.2): a file without
+    # the stamp took scikit-learn's PR-AUC and one fixed order of the ties,
+    # and is never set beside one with it.
+    t["convention"] = CONVENTION
     return t
 
 
@@ -634,8 +671,13 @@ def report(t: pd.DataFrame, label: str) -> None:
         cols.insert(cols.index("popularity"), "linear")
         cols.append("linear_ndcg_20")
     # F42 and F41: PR-AUC with ties averaged, and path length alone,
-    # where the file has them.
-    has_ties = "pr_auc_ties" in t and t["pr_auc_ties"].notna().all()
+    # where the file has them. In a sweep on CONVENTION every number is
+    # tie-averaged already and the F42 columns repeat the plain ones, so
+    # they are not shown twice.
+    same = ("convention" in t
+            and t["convention"].astype(str).eq(CONVENTION).all())
+    has_ties = (not same and "pr_auc_ties" in t
+                and t["pr_auc_ties"].notna().all())
     if has_ties:
         cols.insert(cols.index("pr_auc") + 1, "pr_auc_ties")
         cols.insert(cols.index("popularity") + 1, "popularity_ties")
@@ -645,6 +687,15 @@ def report(t: pd.DataFrame, label: str) -> None:
     if has_path:
         cols.insert(cols.index("popularity"), "path")
         cols.append("path_ndcg_20")
+    # Path length's own lift over popularity, with its interval, where the
+    # file has it (NOTES §36.2): the ranker that ships.
+    has_ship = (has_path and "path_lift_vs_pop" in t
+                and t["path_lift_vs_pop"].notna().all())
+    if has_ship:
+        t["path_lift_95"] = [f"{lo:.2f}-{hi:.2f}" for lo, hi in
+                             zip(t["path_lift_lo"], t["path_lift_hi"])]
+        at = cols.index("path") + 1
+        cols[at:at] = ["path_lift_vs_pop", "path_lift_95"]
     # A skipped row has no tree count, which turns the column into floats
     # ("20.0") for the rows that do. Every fitted row has a whole number.
     t["trees"] = t["trees"].astype(int)
@@ -698,13 +749,25 @@ def report(t: pd.DataFrame, label: str) -> None:
               f"{ratio.min():.4f}x – {ratio.max():.4f}x; and on nDCG@20, "
               f"within an upgrade,\n  at {int(t['beats_path_ndcg'].sum())}/"
               f"{n}")
+    if has_ship:
+        # The ranker that ships (NOTES §36.2), read as the model's lift is
+        # read above: the count, the count clear of its interval, the
+        # median and the range.
+        pl = t["path_lift_vs_pop"].astype(float)
+        clear = int((t["path_lift_lo"].astype(float) > 1).sum())
+        print(f"  path length alone, the ranker that ships (NOTES §36.2): "
+              f"beats popularity at {int(t['path_beats_pop'].sum())}/{n},\n"
+              f"  by more than its interval at {clear}/{n}; lift vs pop "
+              f"median {pl.median():.2f}x, range {pl.min():.2f}x – "
+              f"{pl.max():.2f}x")
     if "reach" in t:
-        # Item 15 (NOTES §36). Not printed here: its numbers are read first
-        # by scripts/ship_verdict.py, after the checks that say whether the
-        # sweep is the exam its rule was written for.
+        # Item 15 (NOTES §36). Not printed here, as when the verdict was
+        # made (§36.2); ship_verdict.py rules only on the sweep kept aside
+        # from that day, and refuses a sweep stamped with the convention.
         print("\n  item 15 (NOTES §36): the five rankers' numbers are in the "
-              "file, for\n  scripts/ship_verdict.py to read after its "
-              "checks; none are printed here")
+              "file; none are printed here.\n  The verdict is §36.2's, made "
+              "on the sweep kept aside; scripts/ship_verdict.py does not\n  "
+              "rule on this one.")
 
     if wins == n:
         print("\n  ** Holds at every cut date. The result is not one lucky")
@@ -747,7 +810,9 @@ def main() -> None:
                     help="comma-separated cut dates (YYYY-MM-DD) to use "
                          "instead of the quantiles, e.g. the dates a sweep "
                          "before a fix printed. Written to a separate _at "
-                         "file that train.py never quotes.")
+                         "file, which train.py quotes only for path "
+                         "length's row, and only at the seven reference "
+                         "dates (NOTES §36.3).")
     ap.add_argument("--relevance", default=SHIPPED_RELEVANCE,
                     choices=RELEVANCE,
                     help="what each cut's model is taught: binary, or "
@@ -758,6 +823,13 @@ def main() -> None:
                          "clamped at 20. cv: setting and tree count chosen "
                          "on each cut's own folds (F7, NOTES §30). Written "
                          "to a _tuned file.")
+    ap.add_argument("--contest", action="store_true",
+                    help="also fit and score item 15's rankers for "
+                         "label_alias (NOTES §36), as the record was made; "
+                         "the verdict is in (§36.2) and ship_verdict.py "
+                         "rules only on the sweep kept aside, so this is "
+                         "for reading and for the tests, not for a verdict; "
+                         "each cut then fits twice")
     args = ap.parse_args()
     points = None
     if args.at:
@@ -797,21 +869,26 @@ def main() -> None:
     print("Each cut refits the model AND the baselines, so lift is computed")
     print("within a split before anything is summarised.")
 
-    # Item 15 (NOTES §36) is about the model that ships, so only a sweep
-    # run the way it is gets the extra fits; every other kind of sweep
-    # costs what it did.
+    # Item 15 (NOTES §36) was about the model that ships, so only a sweep
+    # run the way it is can take the extra fits, and only when asked for:
+    # the verdict is in (§36.2).
     shipped = (args.objective == "lambdarank" and args.stopping == "cv"
                and args.relevance == SHIPPED_RELEVANCE
                and args.tuning == SHIPPED_TUNING)
-    if shipped and "label_alias" in labels:
+    contest = args.contest and shipped and "label_alias" in labels
+    if contest:
         print("For label_alias each cut also fits the two reachability "
               "features the same way,\nfor item 15 (NOTES §36).")
+    elif args.contest:
+        print("--contest is for a sweep run as the shipped model is "
+              "(label_alias, lambdarank,\nstopping cv, binary, tuning cv); "
+              "this one is not, so item 15's rankers are not fitted.")
 
     summary = {}
     for label in labels:
         t = run_label(df, label, feats, args.objective, args.stopping,
                       points, relevance=args.relevance, tuning=args.tuning,
-                      contest=shipped and label == "label_alias")
+                      contest=contest and label == "label_alias")
         report(t, label)
         out = DATA / stability_name(label, args.stopping, args.objective,
                                     args.relevance, at=bool(points),

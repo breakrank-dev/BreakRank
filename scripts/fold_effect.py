@@ -116,8 +116,13 @@ def run(name: str, changes_path: pathlib.Path, usage: pd.DataFrame,
     test["model"] = score_with(model, test, feats)
     test = add_baseline_scores(train, test, label)
 
-    m = evaluate(test, "model", label)
-    pop = evaluate(test, "popularity", label)
+    # By the convention §11.5 was measured on (scikit-learn's PR-AUC, one
+    # fixed order of tied scores), so a run here reads against its table.
+    # From 11 Oct every shipped number averages over the order of ties
+    # (NOTES §36.2); this script re-measures an older result and keeps
+    # doing so, as it keeps binary relevance.
+    m = evaluate(test, "model", label, ties=False, expected=False)
+    pop = evaluate(test, "popularity", label, ties=False, expected=False)
     floor = float(test[label].mean())
 
     r = {

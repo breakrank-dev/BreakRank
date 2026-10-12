@@ -29,10 +29,11 @@ Seven cases:
      rankers is the one worked out here; the model's numbers are the same
      with item 15 on or off; and all of it again under --stopping
      holdout.
-  4. stability.py end to end: a sweep of the shipped model writes item
-     15's columns and prints none of their numbers; a sweep run another
-     way writes none; and the model's columns match a run without item
-     15, cell for cell.
+  4. stability.py end to end: a sweep of the shipped model with --contest
+     writes item 15's columns and prints none of their numbers; a sweep
+     without it, or run another way, writes none; and the model's columns
+     match a run without item 15, cell for cell. (The verdict is in,
+     §36.2, so the contest's fits are made only when asked for.)
   5. The rule: the one test at its edges, and every branch of §36.1,
      both routes by which a draft would have shipped M without its
      beating P, or past a simpler ranker that beats it, included.
@@ -219,8 +220,8 @@ def case_expected() -> None:
     check("where nothing ties, the fixed-order numbers",
           (metrics.precision_at_k(d, "s", "y", 10, expected=True),
            metrics.ndcg_at_k(d, "s", "y", 20, expected=True)),
-          (metrics.precision_at_k(d, "s", "y", 10),
-           metrics.ndcg_at_k(d, "s", "y", 20)))
+          (metrics.precision_at_k(d, "s", "y", 10, expected=False),
+           metrics.ndcg_at_k(d, "s", "y", 20, expected=False)))
     score = np.repeat([3.0, 2.0, 1.0], 10)
     rel = (rng.random(30) < 0.3).astype(int)
     rel[:2] = 1
@@ -229,7 +230,7 @@ def case_expected() -> None:
                 for i in range(5)]
     averaged = {round(metrics.ndcg_at_k(x, "s", "y", 20, expected=True), 12)
                 for x in shuffled + [d]}
-    fixed = {round(metrics.ndcg_at_k(x, "s", "y", 20), 12)
+    fixed = {round(metrics.ndcg_at_k(x, "s", "y", 20, expected=False), 12)
              for x in shuffled + [d]}
     check("and the same whatever order the rows come in, which the fixed "
           "order is not", (len(averaged), len(fixed) > 1), (1, True))
@@ -237,7 +238,7 @@ def case_expected() -> None:
     rel[[0, 8, 9, 15, 20, 29]] = 1
     d = one_upgrade(np.repeat([3.0, 2.0, 1.0], [7, 12, 11]), rel)
     e = evaluate(d, "s", "y", ties=True, expected=True)
-    f = evaluate(d, "s", "y", ties=True)
+    f = evaluate(d, "s", "y", ties=True, expected=False)
     check("evaluate(expected=True) carries both, here where a tie straddles "
           "the 10th and 20th places and the fixed order cannot match them",
           (e["precision_at_10"], e["ndcg_at_20"],
@@ -261,7 +262,8 @@ def case_spread(df: pd.DataFrame) -> None:
     try:
         for s in range(30):
             metrics.TIE_SEED = s
-            draws.append(metrics.ndcg_at_k(test, "path", LABEL, 20))
+            draws.append(metrics.ndcg_at_k(test, "path", LABEL, 20,
+                                           expected=False))
     finally:
         metrics.TIE_SEED = seed
     check("89 upgrades rankable at 20; over 30 fixed orders 0.466 to 0.517; "
@@ -431,28 +433,37 @@ def case_script(tmp: pathlib.Path) -> None:
         return
     at = "2026-04-01,2026-05-15"
     p = subprocess.run([sys.executable, str(ROOT / "ml/model/stability.py"),
-                        "--at", at], cwd=tmp, capture_output=True,
-                       text=True, timeout=1800)
+                        "--at", at, "--contest"], cwd=tmp,
+                       capture_output=True, text=True, timeout=1800)
     out = p.stdout + p.stderr
-    check("stability.py --at exits cleanly", p.returncode, 0)
+    check("stability.py --at --contest exits cleanly", p.returncode, 0)
     if p.returncode:
         print(out[-2500:])
         return
     f = tmp / "data" / "stability_label_alias_cv_tuned_at.csv"
     t = pd.read_csv(f, dtype={"cut": str, "commit": str})
-    check("a sweep of the shipped model writes item 15's columns at every "
-          "date", [k for k in CONTEST_KEYS if k not in t or t[k].isna().any()],
-          [])
+    check("a sweep of the shipped model with --contest writes item 15's "
+          "columns at every date",
+          [k for k in CONTEST_KEYS if k not in t or t[k].isna().any()], [])
     check("and prints none of their numbers, only where they are",
           ("none are printed here" in out,
            "on the same test halves" in out, "then the model" in out),
           (True, False, False))
     p = subprocess.run([sys.executable, str(ROOT / "ml/model/stability.py"),
-                        "--at", at, "--tuning", "fixed"], cwd=tmp,
-                       capture_output=True, text=True, timeout=1800)
+                        "--at", at, "--tuning", "fixed", "--contest"],
+                       cwd=tmp, capture_output=True, text=True, timeout=1800)
     g = pd.read_csv(tmp / "data" / "stability_label_alias_cv_at.csv")
-    check("a sweep run another way (fixed trees) fits no R and writes none",
+    check("a sweep run another way (fixed trees) fits no R and writes none, "
+          "asked or not",
           (p.returncode, [k for k in CONTEST_KEYS if k in g]), (0, []))
+    p = subprocess.run([sys.executable, str(ROOT / "ml/model/stability.py"),
+                        "--at", at], cwd=tmp, capture_output=True,
+                       text=True, timeout=1800)
+    g = pd.read_csv(f)
+    check("and a sweep of the shipped model without --contest writes none: "
+          "the verdict is in (§36.2)",
+          (p.returncode, [k for k in CONTEST_KEYS if k in g],
+           "item 15" in p.stdout), (0, [], False))
     built = prepare(pd.read_csv(tmp / "data" / "features.csv"))
     plain = stability.run_label(built, LABEL, FEATS, "lambdarank", "cv",
                                 at.split(","), relevance="binary",
@@ -684,8 +695,9 @@ def case_files(tmp: pathlib.Path) -> None:
         check(f"refused: {name}", (code != 0, says in out, "SHIPS" in out),
               (True, True, False))
     code, out = verdict_on(tmp, None)
-    check("refused: no sweep at all, with the command that makes one",
-          (code != 0, "stability.py --at " + ",".join(DATES) in out),
+    check("refused: no sweep at all, naming the sweep kept aside that the "
+          "rule was applied to",
+          (code != 0, "stability_label_alias_cv_tuned_at-20261011.csv" in out),
           (True, True))
 
 

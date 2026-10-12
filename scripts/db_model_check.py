@@ -2,6 +2,7 @@
 Which model will the site serve?
 
     python scripts/db_model_check.py
+    python scripts/db_model_check.py --ranker model
 
 READ ONLY. Every statement in this file is a SELECT, so it is safe to run
 against the live database at any time.
@@ -26,10 +27,12 @@ model it is serving now; this prints the command that asks it.
 
 This prints every model_run row, newest first, with how many predictions
 each holds, and says which one a restarted API would serve and whether
-that is the model in artifacts/metrics.json.
+that is the ranker that ships. From 11 Oct that is path length alone
+(NOTES §36.2), whose row is artifacts/path_metrics.json; --ranker model
+asks the same of the model, artifacts/metrics.json, the fallback.
 
-Then, for the model in artifacts/metrics.json, the day each of its scores
-was written, and how many version-string rows have one. Added 1 Oct,
+Then, for that ranker, the day each of its scores was written, and how
+many version-string rows have one. Added 1 Oct,
 after this check found 5,686 of lambdarank-label_alias's scores left over
 from an earlier load beside 21,498 new ones: before that day's ml/db.py
 fix, a re-load only overwrote the rows it scored. A version's scores
@@ -47,6 +50,7 @@ database keeps that explanation as detail.griffe_message, so the same
 functions decide here.
 """
 
+import argparse
 import json
 import pathlib
 import sys
@@ -59,6 +63,7 @@ from ml.db import connect  # noqa: E402
 from ml.features.build import (METADATA_LEAVES, VERSION_KIND,  # noqa: E402
                                VERSION_LEAVES, metadata_strings,
                                version_strings)
+from ml.model.ship import PATH_METRICS, RANKERS, SHIPPED_RANKER  # noqa: E402
 
 METRICS = pathlib.Path("artifacts") / "metrics.json"
 # /health answers {"ok": true, "model_version": ...}, the model the API is
@@ -69,8 +74,18 @@ HEALTH = "https://breakrank.onrender.com/health"
 def main() -> None:
     from sqlalchemy import text
 
-    ours = (json.loads(METRICS.read_text()).get("version")
-            if METRICS.exists() else None)
+    ap = argparse.ArgumentParser(description="Which model will the site "
+                                 "serve? Read only.")
+    ap.add_argument("--ranker", choices=RANKERS, default=SHIPPED_RANKER,
+                    help="whose row to check for: path, path length "
+                         "alone, the ranker that ships (NOTES §36.2); or "
+                         "model, the fallback")
+    args = ap.parse_args()
+    metrics = PATH_METRICS if args.ranker == "path" else METRICS
+    load = ("python ml/db.py --scores" if args.ranker == SHIPPED_RANKER
+            else f"python ml/db.py --scores --ranker {args.ranker}")
+    ours = (json.loads(metrics.read_text()).get("version")
+            if metrics.exists() else None)
     with connect().connect() as conn:
         runs = conn.execute(text("""
             SELECT m.version, m.trained_at, m.pr_auc,
@@ -109,7 +124,7 @@ def main() -> None:
     print(f"  {'version':<34}{'trained_at':<28}{'pr_auc':>8}"
           f"{'predictions':>13}")
     for version, at, pr, n in runs:
-        mark = "   <- artifacts/metrics.json" if version == ours else ""
+        mark = f"   <- {metrics}" if version == ours else ""
         print(f"  {version:<34}{str(at)[:26]:<28}"
               f"{'-' if pr is None else f'{pr:.4f}':>8}{n:>13,}{mark}")
 
@@ -120,7 +135,7 @@ def main() -> None:
         if len(days) > 1:
             print("** These come from more than one load, and can be more "
                   "than one model's,\n** ranked together on the site. Re-run "
-                  "python ml/db.py --scores with the 1 Oct loader:\n** it "
+                  f"{load} with the 1 Oct loader:\n** it "
                   "replaces the version's scores whole.")
         print(f"version-string rows with a score: {stale_vs:,}"
               + ("   (none, as F1 intends)" if not stale_vs else
@@ -129,20 +144,20 @@ def main() -> None:
         print(f"package-metadata rows with a score: {stale_meta:,}"
               + ("   (none, as F39 intends)" if not stale_meta else
                  "   ** F39 took these out of the model; reload:\n** "
-                 "python ml/db.py --scores"))
+                 f"{load}"))
 
     if not runs:
-        print("  (none) Load one with: python ml/db.py --scores")
+        print(f"  (none) Load one with: {load}")
         return
     newest = runs[0][0]
     ask = f"To see the model it serves now:  curl -s {HEALTH}"
     print()
     if ours is None:
         print(f"A restarted API would serve {newest}. There is no "
-              f"{METRICS} here to compare it with.")
+              f"{metrics} here to compare it with.")
         print(ask)
     elif newest == ours:
-        print(f"A restarted API serves {ours}, the model in {METRICS}.")
+        print(f"A restarted API serves {ours}, the one in {metrics}.")
         print(ask)
         print("It reads that model's scores on every request, so if that "
               f"names\n{ours}, the scores loaded under it are live, with no "
@@ -150,9 +165,14 @@ def main() -> None:
               "still does after that,\nMODEL_VERSION is pinning it: set "
               f"MODEL_VERSION={ours} where\nthe API runs, or remove it, "
               "and restart again.")
+    elif args.ranker != SHIPPED_RANKER:
+        print(f"A restarted API would serve {newest}, not {ours}, the "
+              f"fallback in {metrics},\nwhich is not meant to be served "
+              "(NOTES §36.2).")
+        print(ask)
     else:
         print(f"** A restarted API would serve {newest}, NOT {ours}, the "
-              f"model in\n** {METRICS}: {newest} has the newer trained_at.")
+              f"one in\n** {metrics}: {newest} has the newer trained_at.")
         print(f"** Fix without touching data: set MODEL_VERSION={ours} "
               "where the API runs,\n** and restart it. That setting exists "
               "for exactly this (api/config.py on main).")

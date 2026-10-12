@@ -62,6 +62,7 @@ sys.path.insert(0, str(ROOT))
 from ml.features.build import (BOOLEAN, CATEGORICAL, NUMERIC,  # noqa: E402
                                add_features, drop_version_strings)
 from ml.holdout import GROUP, HOLDOUT_START, drop_holdout  # noqa: E402
+from ml.model.metrics import CONVENTION  # noqa: E402
 from ml.model import train as T  # noqa: E402
 
 PASS, FAIL = "  ok  ", "  FAIL"
@@ -328,10 +329,12 @@ def case_scripts(tmp: pathlib.Path) -> None:
     check("the report prints each cut's setting", "setting" in out, True)
 
     stamp = str(HOLDOUT_START.date())
+    # Stamped with the convention train.py quotes from 11 Oct (NOTES
+    # §36.2); the stamp this file tests is the tuning.
     sweep = pd.DataFrame({"cut": ["2026-04-01", "2026-05-01", "2026-06-01"],
                           "skipped": False, "lift_vs_pop": [2.5, 2.7, 2.9],
                           "beats_pop": True, "holdout_from": stamp,
-                          "relevance": "binary"})
+                          "relevance": "binary", "convention": CONVENTION})
     sweep.assign(tuning="cv").to_csv(
         data / "stability_label_alias_cv_tuned.csv", index=False)
     sweep.head(2).assign(tuning="fixed").to_csv(

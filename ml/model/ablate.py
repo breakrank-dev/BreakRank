@@ -50,7 +50,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import assert_no_holdout  # noqa: E402
-from ml.model.metrics import evaluate  # noqa: E402
+from ml.model.metrics import CONVENTION, evaluate  # noqa: E402
 from ml.model.train import (RELEVANCE, SHIPPED_RELEVANCE,  # noqa: E402
                             SHIPPED_TUNING, TUNING, cv_tree_count, cv_tune,
                             fit_fixed, prepare, relevance_problem,
@@ -255,6 +255,9 @@ def main() -> None:
     base = t.loc["everything", "pr_auc"]
     t["vs_full"] = (t["pr_auc"] / base).round(2)
     print(t.round(4).to_string())
+    print("(every number averages over the order of tied scores, the "
+          "convention from 11 Oct,\n NOTES §36.2; §30.3's and §32.3's "
+          "tables took scikit-learn's PR-AUC and one fixed\n order of ties)")
 
     # The floor: the largest swing produced by removing a feature the model
     # never used. Absolute value — a control can move PR-AUC UP as easily
@@ -326,7 +329,9 @@ def main() -> None:
     out_path = DATA / (f"ablation_{label}"
                        + ("_graded" if rel == "graded" else "")
                        + ("_tuned" if tuned else "") + ".csv")
-    t.to_csv(out_path)
+    # Stamped, as sweep rows are (NOTES §36.3): an older file under this
+    # name took the old convention and has no stamp.
+    t.assign(convention=CONVENTION).to_csv(out_path)
     print(f"\nsaved -> {out_path}")
 
 

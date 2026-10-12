@@ -2993,7 +2993,8 @@ Each of the first four both fixes a defect AND raises the headline.
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
    *[10 Oct: F25 is now which ranker ships, against path length alone,
-   which the model did not beat (§34.2). Its rule is §36.1.]*
+   which the model did not beat (§34.2). Its rule is §36.1. 11 Oct:
+   path length alone ships (§36.2).]*
 16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
 
 Items 1–5 are about a week and turn the project from "good student
@@ -6049,6 +6050,7 @@ changed the question: the shipped model does not beat a rule with nothing
 learned, shortest import path first, on either of §34.1's measures. By
 §34.1, item 15 moves up and decides which ranker the site serves and the
 report presents, and it was decided on 10 Oct that a rule settles it.
+The verdict is §36.2: path length alone ships.
 
 What was known when §36.1 was written: P's and M's numbers at the seven
 dates (§34.2). What was not: R, as cross-validation chooses it at the
@@ -6269,3 +6271,299 @@ One, evaluate() dropping the averaged precision@10, survived the first
 pass, because the test's top tie held exactly ten rows, which fill the
 top ten the same in any order; the test now has a tie across the 10th
 place.
+
+### 36.2 The verdict: path length alone ships (11 Oct)
+
+Run 11 Oct, about 23:00 India time, on the Mac and venv of §34.2, after
+§36.1 was pushed (cb73049). Before it: features.csv dated 10 Oct 20:20,
+§33.3's build (11,811,291 bytes, md5
+58c8070d739ee56beef9e5913a402557), and 10 Oct's sweep copied aside as
+`data/stability_label_alias_cv_tuned_at-20261010.csv`. Then
+`stability.py --at` at the seven dates, `ship_verdict.py` and
+`path_verdict.py`. `git status` was clean afterwards. This sweep is the
+record of the verdict. The next sweep writes over it, so it is copied
+aside first, as `data/stability_label_alias_cv_tuned_at-20261011.csv`.
+
+**It checked out.** The sweep's own table repeats §33.3's at every
+date: the same setting and tree count, PR-AUC, lift and nDCG@20. And
+path_verdict.py printed §34.2 again. The verdict's checks passed:
+path_verdict's stamps, item 15's columns with no gap, and §34.2's data,
+the same test rows and positives at every date and P's three numbers
+exactly. The model, refitted, came out with §34.2's numbers exactly, so
+step 1's M against P differs from §34.2's by F44's averaging alone. It
+ran on LightGBM 4.7.0, scikit-learn 1.9.0, pandas 3.0.5, numpy 2.5.2
+and Python 3.12.14, 10 CPUs, OMP_NUM_THREADS unset, commit cb73049 with
+no changes. Test halves d162e0be0045, 1039daf190a3, 805733c54146,
+c0afbe42b092, 1cb6763a713c, 0ad860d984c7, 38b1134b3eb6.
+
+**The five rankers.** PR-AUC with ties averaged:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.1880 | 0.2105 | 0.2298 | 0.2624 | 0.2527 |
+| 2025-10-06 | 0.1956 | 0.2125 | 0.2571 | 0.2918 | 0.2672 |
+| 2025-12-03 | 0.2232 | 0.2598 | 0.3054 | 0.3153 | 0.3331 |
+| 2026-01-18 | 0.2289 | 0.2662 | 0.2033 | 0.2809 | 0.2976 |
+| 2026-03-02 | 0.2088 | 0.1627 | 0.1698 | 0.1986 | 0.1637 |
+| 2026-04-02 | 0.2537 | 0.3171 | 0.2721 | 0.2984 | 0.3437 |
+| 2026-05-04 | 0.2928 | 0.3667 | 0.2446 | 0.2994 | 0.3629 |
+| **median** | 0.2232 | 0.2598 | 0.2446 | 0.2918 | 0.2976 |
+
+nDCG@20, averaged over every order of the ties:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.5970 | 0.5721 | 0.5543 | 0.5635 | 0.5478 |
+| 2025-10-06 | 0.5970 | 0.5450 | 0.5710 | 0.6016 | 0.5459 |
+| 2025-12-03 | 0.5859 | 0.6243 | 0.5766 | 0.5834 | 0.6050 |
+| 2026-01-18 | 0.5962 | 0.6425 | 0.5994 | 0.5975 | 0.6236 |
+| 2026-03-02 | 0.5779 | 0.5297 | 0.5277 | 0.5366 | 0.5298 |
+| 2026-04-02 | 0.5582 | 0.5639 | 0.6466 | 0.6082 | 0.6032 |
+| 2026-05-04 | 0.5789 | 0.5854 | 0.6377 | 0.6090 | 0.6096 |
+| **median** | 0.5859 | 0.5721 | 0.5766 | 0.5975 | 0.6032 |
+
+precision@10, the same way, not ruled on:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.2854 | 0.2771 | 0.2829 | 0.2794 | 0.2671 |
+| 2025-10-06 | 0.2880 | 0.2675 | 0.2618 | 0.2868 | 0.2580 |
+| 2025-12-03 | 0.2993 | 0.3029 | 0.2707 | 0.2833 | 0.2800 |
+| 2026-01-18 | 0.3083 | 0.3115 | 0.2881 | 0.2953 | 0.3072 |
+| 2026-03-02 | 0.2840 | 0.2628 | 0.2238 | 0.2348 | 0.2238 |
+| 2026-04-02 | 0.2873 | 0.2745 | 0.2760 | 0.2719 | 0.2719 |
+| 2026-05-04 | 0.3103 | 0.2957 | 0.3033 | 0.3033 | 0.2967 |
+| **median** | 0.2880 | 0.2771 | 0.2760 | 0.2833 | 0.2719 |
+
+R had 4 to 21 trees and gave 8 to 12 distinct scores; CV chose five
+settings across the seven dates (15/0.05/100, 15/0.05/30, 7/0.05/10,
+7/0.05/100, 7/0.05/30).
+
+**The rule, step by step.**
+
+1. R against P: PR-AUC ahead at 6 dates and behind at 1, a median of
+   1.1630x, short of 1.25x; nDCG@20 higher at 4 and P's at 3. R wins
+   neither measure, so it does not beat P. M against P: PR-AUC ahead at
+   4 and behind at 3, a median of 1.0725x; nDCG@20 higher at 3 and P's
+   at 4. M does not beat P.
+2. Neither beats P, so P stands.
+3. The order inside P's ties: P→M's nDCG@20 is higher than P's at 4
+   dates and lower at 3. No order is claimed inside a tie.
+
+**Path length alone ships**, with no order inside its ties.
+
+**What F44 did to §34.2** (§36.1). M's numbers are §34.2's, so the two
+rulings differ by F44 alone, and they agree. Averaged over tie orders,
+M's nDCG@20 is higher than P's at 3 dates and P's at 4, as in the fixed
+order; PR-AUC was F42's already. §34.1's list stands as it is.
+Averaged over tie orders, P's precision@10 is higher than M's at all
+seven dates again (median 0.2880 against 0.2760 in this sweep), so
+§35.2's sentence keeps its count and takes these numbers. The averaging
+moved M's nDCG@20 down at every date, by 0.005 to 0.031, and P's by
+-0.007 to +0.009; it moved P's precision@10 down at every date, by
+0.003 to 0.011. One fixed order of the ties is one draw, repeated at
+every date by the nested test halves (F44): it happened to favour M
+inside an upgrade and P in the top ten. The counts the rule reads did
+not move. F44 expected the model's numbers to move little, since the
+model "rarely ties" (§36); they moved more than P's. Its scores tie
+more often than that assumed.
+
+**Read beside it, not ruled on.**
+
+- Of the two the rule set against P, R came closer. Its PR-AUC was
+  ahead of P's at 6 dates, by a median of 1.16x (0.78x to 1.25x), and
+  its nDCG@20 higher at 4. What R adds to P is has_export_path, which
+  is tied to the label more directly than depth is (§36.1), so R's lead
+  is also the one most open to that circularity.
+- Ordering P's ties by the model raised pooled PR-AUC at 6 dates; the
+  median ratio over the seven is 1.23x (0.95x to 1.49x). Step 3 does
+  not read PR-AUC (§36.1), and judged on both measures, the draft's way,
+  P→M would still not have shipped: 1.23x is under 1.25x, and its
+  nDCG@20 is higher at 4 dates only. Its precision@10 is lower than P's
+  at all seven: inside a depth, the model's order put fewer used changes
+  in the top ten than the average order of the tie does.
+- R→M, which the rule reaches only where R stands, would beat P by the
+  one test if it were asked: PR-AUC ahead at 6 dates, by a median of
+  1.34x (0.78x to 1.49x), and nDCG@20 higher at 4. Its lead is on
+  pooled PR-AUC, which also counts how ties are ordered across
+  upgrades, where no one looks (§36.1's reason for judging step 3 on
+  nDCG@20 alone), and it rests on R's export flag. The rule did not ask,
+  and nothing ships on it.
+- R and M were not set against each other, since neither beat P. Read
+  here: R's PR-AUC is above M's at 3 dates, its nDCG@20 at 4.
+- P's precision@10 is the highest of the five at 5 dates, and R's at
+  the other 2.
+
+**F45. Under P's scores the site would order each depth by usage.**
+The API sorts a release's changes by score, then by `user_count`, then
+by symbol path and sub-target (api/routes/packages.py on main,
+c02ad2a). That user_count is usage_index's exact-path count: the count
+the strict `label` is made from, and one of the counts label_alias
+takes its maximum over (labels.py). Every change at one depth ties
+under P, so inside each depth the changes that scanned packages import
+by their own path would come first, by how many do, and the rest would
+follow by name. That is an order taken from the usage data, measured
+nowhere here, and not the "no particular order" §36.1 fixed for the
+site. The second key decides inside M's ties as well, which item 15's
+sweep showed are more common than F44 assumed. *Fix*, by §36.1:
+user_count stops ordering scored changes, so inside a depth the site
+lists them by name and says they are in no particular order. Unscored
+rows, and the fallback the site already labels "ranked by usage", keep
+their order by usage. It is Varad's code, and he is told with the
+load. Any other choice is a decision of its own, recorded with its
+reason, and the report describes what the site does. The report's
+numbers are P's, and they measure P's order with its ties averaged, not
+any order inside a tie. Found 11 Oct, reading the API before the load.
+
+**What follows: §36.1's list for P, in this order.**
+
+1. **The convention, everywhere** (F42, F44). evaluate()'s and
+   intervals()' defaults move to ties averaged, PR-AUC and the
+   within-upgrade measures alike, and every sweep row and model_run note
+   says which convention it was measured on, so no number is compared
+   across the two. A sweep on the new convention does not write §34.2's
+   fixed-order numbers, so ship_verdict.py and path_verdict.py run only
+   on the two sweeps kept aside.
+2. **P's numbers for the report**, with the intervals the model's have.
+   On the single split: P's PR-AUC, precision@10 and nDCG@20, and its
+   lift over popularity with the paired interval. At the thirteen dates:
+   both sweeps run again, writing P's lift over popularity and its
+   interval at each date. On the holdout, when it is opened:
+   final_eval.py reports P, with M and popularity beside it.
+3. **The site serves P.** Its scores are loaded under a name of their
+   own, with a model_run row of its single-split numbers; M's scores
+   stay as the fallback, and a change with no depth scores as the
+   deepest in its release. Then one API restart (§28.5), and Varad is
+   told the name, the restart, and F45's fix.
+4. **The stories.** stories.py runs again on P's order under §31.1's
+   rules, a tied list counted by its average over tie orders, and the
+   demo follows it.
+5. **The report and deck.** P is BreakRank's ranker: changes ordered by
+   how short their public import path is. M and R are what was tried,
+   with the rules that set them aside (§34.2 and this one). P's numbers
+   replace the model's, §35.2's paragraph on the line is rewritten from
+   §29.2, and the precision@10 sentence takes this sweep's numbers.
+
+### 36.3 Shipping path length: what the code does now, fixed before the runs (12 Oct)
+
+§36.2's list, items 1 to 4, as code, written and tested before anything
+below ran on the real data. What each run should print is set down
+here first; §36.4 records what it printed.
+
+**One convention** (item 1). `metrics.CONVENTION` is "ties-averaged":
+evaluate(), precision_at_k(), ndcg_at_k() and intervals() average every
+number over every order of tied scores unless told otherwise (`ties=False`
+for scikit-learn's PR-AUC, `expected=False` for one fixed order of the
+ties), so the old way can still be asked for, and fold_effect.py and
+label_blindspot.py ask for it, since they re-measure results recorded
+on it (§11.5, §11.6), as they keep binary relevance. Every sweep row
+carries `convention`, and model_run's notes say `convention=`. A sweep
+without the stamp was measured the old way, and train.py does not quote
+it; compare_sweeps.py does not set it beside a stamped one; and
+path_verdict.py and ship_verdict.py refuse a stamped one, since their
+rules were applied to the old convention and are not applied again.
+Each now reads by default the sweep its verdict was made on, kept aside
+(10 Oct's for §34.2, 11 Oct's for §36.2), and every refusal names the
+two. The F42 columns (`pr_auc_ties` and the rest) stay in a sweep row
+and now repeat the plain ones; the report does not show them twice.
+ablate.py and baselines.py move to the convention, say so, and stamp
+the files they write; §30.3's and §32.3's tables stand as measured.
+Item 15's fits run only with `stability.py --contest`, and only in a
+sweep run as the shipped model is, as §36.1 had it; the file they write
+is stamped, so ship_verdict.py does not rule on it: the verdict is in,
+and `--contest` is for reading and for the tests.
+
+**Path length's numbers** (item 2). `ml/model/ship.py` is the one place
+that says what ships: `path_scores` (minus public_depth; a change with
+no depth scores as the deepest of the frame it is measured on, or, for
+the site, of its own release), the name of its model_run row
+(`path-length` for label_alias, the label's name added for any other),
+the file that row goes to (`artifacts/path_metrics.json`), and the seven
+reference dates, which a test keeps equal to path_verdict.py's.
+baselines.py's `path` column is path_scores. Each sweep row carries
+`path_lift_vs_pop`, its paired interval `path_lift_lo` to
+`path_lift_hi` (both PR-AUCs on the same resamples, so the ratio's
+interval is one number's), and `path_beats_pop`, and the report prints
+the count, the count clear of its interval, the median and the range,
+as it prints the model's. train.py prints path length's four numbers on
+the test half with their intervals and the model's lift over it, writes
+path_metrics.json with them and, in its notes, path length's range
+across both sweeps' dates, a date the two share counted once (thirteen,
+not fourteen); the `--at` file, which every `--at` run writes over, is
+quoted only when it holds exactly the seven reference dates. Path
+length's row is the same whatever that run fitted (`model=` in its
+notes names the run it was written beside). The model's row keeps its
+numbers, now on the new convention, says `convention=`, and drops the
+three F42 fields that repeated its own. final_eval.py leads with path
+length and puts its four numbers and the convention in the ledger, in
+columns added before the holdout was ever opened; a ledger with other
+columns stops it before any number is shown.
+
+**The site** (item 3). `ml/db.py --scores` loads path length's scores
+for every row of features.csv and holdout.csv under path_metrics.json's
+row, and says how many rows had no depth (0 is expected: public_depth
+is missing only where module_depth is); `--ranker model` loads the
+model's under metrics.json's, as before. db_model_check.py asks after
+the row that ships, and `--ranker model` after the fallback, which it
+says is not meant to be served. The order inside a tie on the site is
+F45's fix, Varad's.
+
+**The stories** (item 4). stories.py ranks by path length unless told
+`--ranker model`, lists a release as the site will once F45's fix is in
+(by score, then by name), and counts a list by its average over every
+order of its ties: hits@10 and the users they carry by
+`metrics._expected`, and a tied change's place as the middle of the
+places its tie spans, printed as a span. One rule is added, since path
+length ties a release's changes far more than the model did: a used
+change tied with the whole of its list sits at exactly the half, and
+counts as not ranked rather than as buried, so it is never the failure
+story; a release the ranker made no order in is a random order, and
+the success rule already scores it so. §31.1's rules otherwise stand.
+
+**What the runs should show.** `python ml/model/train.py` prints the
+model's table with every number tie-averaged (its PR-AUC the report's
+0.289, §35.2, not the 0.2938 model_run holds from §33.4, which was
+scikit-learn's convention; a refit can move it a little), then path
+length's block, then two model_run rows; path_metrics.json's `pr_auc`
+should be the 0.265 of §34.2's single split, which nothing fitted can
+move, and its notes end with the clause beginning "across 13 cut
+dates" once both sweeps are rerun. `stability.py` and `stability.py
+--at` at the seven dates each print the model's table as before, with a
+`convention` column in the file and a line for path length's lift. At
+the seven reference dates path length's lift over popularity should be
+2.5x to 4.8x (§34.2), with its intervals beside it for the first time.
+`ml/db.py --scores` should write 21,452 scores under `path-length`,
+replacing nothing, and leave `lambdarank-label_alias-tuned`'s 21,452 in
+place; db_model_check.py then says a restarted API would serve
+`path-length`, and /health names the old model until the restart.
+stories.py prints its two stories from the test half; which releases
+they are is recorded in §36.4, not guessed here.
+
+Tested by `scripts/test_path_ships.py`, eight cases: the convention in
+every function, and the old way still there to ask for; ship.py's score
+on a frame and inside a release, its names and its dates; the sweep's
+columns, stamp and report, and a sweep from before the stamp still read
+as before; train.py's two rows on the fixture, path length's numbers and
+intervals recomputed from features.csv alone, its range over thirteen
+dates with the shared one counted once, an `--at` sweep at other dates
+left out, and the rows that are not quoted; the loader's scores for
+every row, a missing depth scored inside its release, the row they go
+under, which ranker each option loads, and db_model_check.py's answer
+for both; stories.py's tie spans, averaged counts and the whole-list
+tie; what refuses; and final_eval.py's order, ledger row, second opening
+and refusals. Fifty guards were broken on purpose, ten in metrics.py,
+six in ship.py and baselines.py, nine in stability.py, eight in
+train.py, six in the loader and db_model_check.py, five in stories.py,
+two in the verdict scripts and compare_sweeps.py, and four in
+final_eval.py, and the test failed on each; five survived the first pass
+and the test was strengthened for each (a fixture with no missing depth,
+a tie that nothing could break, a release that was the frame's deepest,
+a story the two rules agreed on, and a flag read only on the command
+line). An independent review of the code and of this section before
+the runs found the `--at` quoting gap, the whole-list tie, and ten
+smaller things, all closed, among them the ablation and baseline files
+now carrying the stamp, and the verdict scripts' advice to run a sweep
+again, which a stamped sweep would make a dead end. test_ship.py and
+test_path_baseline.py were brought to the new defaults, and the sweeps
+that test_holdout.py, test_intervals.py, test_relevance.py and
+test_tuning.py hand train.py now carry the stamp.

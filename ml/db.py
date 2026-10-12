@@ -4,6 +4,7 @@ Load the pipeline's CSVs into Postgres. The last piece before the site works.
     python ml/db.py --dry-run          # validate everything, touch nothing
     python ml/db.py                    # package, release, breakage, usage_index
     python ml/db.py --scores           # also model_run + prediction
+    python ml/db.py --scores --ranker model   # the model's, the fallback
 
 Reads  data/packages.csv        -> package
        data/changes.csv         -> release, breakage
@@ -11,8 +12,19 @@ Reads  data/packages.csv        -> package
                                    the releases that changed nothing
                                    (optional; see release_plan)
        data/usage.csv           -> usage_index
-       artifacts/metrics.json   -> model_run          (only with --scores)
-       artifacts/ranker.txt     -> prediction         (only with --scores)
+       with --scores, the ranker that ships (NOTES §36.2), path length:
+       artifacts/path_metrics.json -> model_run
+       data/features.csv, holdout.csv -> prediction, minus public_depth
+       or with --ranker model, the model, kept as the fallback:
+       artifacts/metrics.json   -> model_run
+       artifacts/ranker.txt     -> prediction
+
+WHICH SCORES (--ranker, from 11 Oct). Item 15's rule (NOTES §36.1) found
+that no learned ranker beats path length alone, so --scores loads path
+length's under its own name (ml/model/ship.py), and the model's stay in
+the table as the fallback. A load under a new name is served only after
+the API restarts (§28.5). path_metrics.json is written by train.py, with
+path length's numbers on the single split and across the sweeps' dates.
 
 The database is the boundary between the two halves of this project. The
 pipeline writes, the API reads, neither calls the other's code — which
@@ -60,6 +72,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.contract import bump_type  # noqa: E402
 from ml.holdout import HOLDOUT_FILE, HOLDOUT_START  # noqa: E402
+from ml.model.ship import (PATH_METRICS, RANKERS,  # noqa: E402
+                           SHIPPED_RANKER, path_scores)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -596,7 +610,10 @@ def executemany(conn, sql: str, rows: list[dict]) -> None:
 
 
 def write_all(conn, changes, usage, packages, caps, score_map,
-              releases=None) -> None:
+              releases=None, metrics=None) -> None:
+    """Every write, in one transaction. `metrics` is the model_run row the
+    scores go under: artifacts/metrics.json (METRICS) unless given, or
+    path length's, PATH_METRICS (NOTES §36.2)."""
     from sqlalchemy import text
 
     pkgs = package_rows(changes, packages)
@@ -716,7 +733,7 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         return
 
     # RULE 2: model_run must exist before anything references its version.
-    run = json.loads(METRICS.read_text())
+    run = json.loads((metrics or METRICS).read_text())
 
     # THE FLOOR, AS A COLUMN. PR-AUC's floor is the positive rate, so a
     # stored pr_auc without it cannot be read by anyone who was not in the
@@ -804,8 +821,10 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         sys.exit(f"{run['version']} holds {before:,} scores, and this run has "
                  f"{len(preds):,}, under half. Nothing was written.\nA smaller "
                  "dataset under a name the site already serves would wipe the "
-                 "rest of its scores.\nGive it its own name: python "
-                 "ml/model/train.py --version <name>, then this again.")
+                 "rest of its scores.\nGive it its own name: for the model, "
+                 "python ml/model/train.py --version <name>; path\nlength's "
+                 "row is named by ml/model/ship.py (path_version). Then this "
+                 "again.")
     conn.execute(text("DELETE FROM prediction WHERE model_version = :v"),
                  {"v": run["version"]})
     executemany(conn, """
@@ -824,7 +843,7 @@ def write_all(conn, changes, usage, packages, caps, score_map,
 
 # ----------------------------------------------------------------- scoring
 
-def score_everything() -> dict:
+def score_everything(ranker: str = "model") -> dict:
     """Score EVERY row, not just the test half.
 
     Training measures on held-out data; serving needs a score for every
@@ -832,12 +851,15 @@ def score_everything() -> dict:
     are different things, and conflating them is how training scores end
     up being reported as results. The metrics in model_run come from the
     test half; these scores cover everything.
+
+    ranker "path" scores by path length alone (NOTES §36.2): minus
+    public_depth, nothing fitted, and a change with no depth scores as
+    the deepest in its own release (ship.path_scores). "model" scores by
+    artifacts/ranker.txt, the model.
     """
-    import lightgbm as lgb
-
-    from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC
-
-    for p in (FEATURES, RANKER, METRICS):
+    need = ((FEATURES, PATH_METRICS) if ranker == "path"
+            else (FEATURES, RANKER, METRICS))
+    for p in need:
         if not p.exists():
             sys.exit(f"{p} not found — run ml/model/train.py first.")
 
@@ -863,11 +885,27 @@ def score_everything() -> dict:
         print(f"note: {HOLDOUT_FILE} not found, so releases from "
               f"{HOLDOUT_START.date()} on get no score this run. "
               "Rebuild with ml/features/build.py.")
-    for c in CATEGORICAL:
-        df[c] = df[c].astype("category")
-    raw = lgb.Booster(model_file=str(RANKER)).predict(
-        df[NUMERIC + BOOLEAN + CATEGORICAL])
-    df["score"] = raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
+    if ranker == "path":
+        # The site's lists are releases, so a change with no depth goes
+        # where the deepest of its own release goes (§36.1). public_depth
+        # is missing only where the module depth is (ship.py), so the
+        # count printed here should read 0.
+        none = int(pd.to_numeric(df["public_depth"], errors="coerce")
+                   .isna().sum())
+        df["score"] = path_scores(df, within=["package", "version_from",
+                                              "version_to"])
+        print(f"  path length alone: {len(df):,} rows scored, {none:,} with "
+              "no depth (scored as the deepest in their release)")
+    else:
+        import lightgbm as lgb
+
+        from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC
+
+        for c in CATEGORICAL:
+            df[c] = df[c].astype("category")
+        raw = lgb.Booster(model_file=str(RANKER)).predict(
+            df[NUMERIC + BOOLEAN + CATEGORICAL])
+        df["score"] = raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
 
     return {(r.package, r.version_to, r.symbol, r.kind,
              _text(r, "sub_target")): r.score
@@ -947,6 +985,10 @@ def main() -> None:
                     help="also write model_run and prediction")
     ap.add_argument("--allow-missing-sub-target", action="store_true",
                     help="load a knowingly lossy copy before migration 004")
+    ap.add_argument("--ranker", choices=RANKERS, default=SHIPPED_RANKER,
+                    help="whose scores --scores loads: path, path length "
+                         "alone, the ranker that ships (NOTES §36.2); or "
+                         "model, the model, kept as the fallback")
     args = ap.parse_args()
 
     changes, usage, packages = load_frames()
@@ -967,11 +1009,15 @@ def main() -> None:
         dry_run(changes, usage, packages, releases)
         return
 
-    score_map = score_everything() if args.scores else None
+    score_map = score_everything(args.ranker) if args.scores else None
+    metrics = PATH_METRICS if args.ranker == "path" else METRICS
+    if args.scores:
+        print(f"scores: {args.ranker}, under the model_run row in {metrics}\n")
     engine = connect()
     with engine.begin() as conn:
         caps = check_schema(conn, args.allow_missing_sub_target)
-        write_all(conn, changes, usage, packages, caps, score_map, releases)
+        write_all(conn, changes, usage, packages, caps, score_map, releases,
+                  metrics=metrics)
     print("\ndone. Every write above is idempotent — rerun it any time.")
 
 

@@ -115,8 +115,11 @@ def case_by_hand(sc: pd.DataFrame) -> None:
         rows = np.repeat(np.arange(len(df)), counts[codes])
         stacked = df.iloc[rows]
         y = stacked[LABEL].to_numpy(int)
-        ap_m = average_precision_score(y, stacked["model"])
-        ap_p = average_precision_score(y, stacked["popularity"])
+        # By the convention from 11 Oct (NOTES §36.2): PR-AUC with its ties
+        # averaged over the stacked copies, and precision@10 and nDCG@20
+        # over the order of each upgrade's ties, the functions' defaults.
+        ap_m = M.average_precision_ties(y, stacked["model"])
+        ap_p = M.average_precision_ties(y, stacked["popularity"])
         p10, n20, w10, w20 = [], [], [], []
         for c, (_, g) in zip(pd.factorize(key)[1],
                              df.groupby(key, sort=False)):
@@ -224,9 +227,12 @@ def case_scripts(tmp: pathlib.Path) -> None:
           in out, True)
 
     stamp = str(HOLDOUT_START.date())
+    # Stamped with the convention train.py quotes from 11 Oct (NOTES
+    # §36.2); the stamps this file tests are the others.
     sweep = pd.DataFrame({"cut": ["2026-04-01", "2026-05-01"],
                           "skipped": False, "lift_vs_pop": [1.8, 1.3],
-                          "beats_pop": True, "holdout_from": stamp})
+                          "beats_pop": True, "holdout_from": stamp,
+                          "convention": M.CONVENTION})
     sweep.assign(lift_lo=[1.4, 0.9], lift_hi=[2.3, 1.8]).to_csv(
         data / "stability_label_alias_cv.csv", index=False)
     code, out = run("ml/model/train.py", tmp, "--tuning", "fixed")
