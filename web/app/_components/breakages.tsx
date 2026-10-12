@@ -123,11 +123,13 @@ export function HonestFooter() {
   return (
     <div className="mt-10 space-y-3 border-t border-slate-800 pt-4 text-xs leading-relaxed text-slate-600">
       <p>
-        <span className="text-slate-400">How good is the ranking?</span> Beats a popularity
-        baseline at every evaluation cut date, by 2.2x to 6.0x depending on the date, and at every
-        date the lower end of its 95% interval stays above 1x. Measured on releases published before
-        28 July 2026; later releases are held back, unseen, for the final evaluation.
+        <span className="text-slate-400">How is this ordered?</span> BreakRank lists a
+        release&apos;s changes by how short their public import path is, shortest first. On
+        releases published before 28 July 2026 that rule beats a popularity baseline at every
+        evaluation date, by 2.5x to 4.8x; a learned ranker did not beat the rule, so the rule
+        ships.
       </p>
+      
       <p>
         The order is a ranking within each release, not a probability that your code breaks. Usage
         counts come from a static scan of ~1,500 downstream packages and count how many of them
