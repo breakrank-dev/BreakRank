@@ -28,6 +28,7 @@ class BreakagesResponse(BaseModel):
                     "no_source | no_baseline | yanked"
     )
     total: int
+    n_imported: int
     breakages: list[Breakage]
 
 

@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   BreakageList,
   HonestFooter,
+  NoneImportedNote,
   RankingBadge,
   statusNote,
   type Breakage,
@@ -18,6 +19,7 @@ type Result = {
   ranking: string;
   analysis_status: string;
   total: number;
+  n_imported?: number;
   breakages: Breakage[];
 };
 
@@ -181,6 +183,10 @@ export default function Home() {
                   analysis_status: {data.analysis_status}
                 </p>
               </div>
+            )}
+
+            {data.total > 0 && data.n_imported === 0 && (
+                          <NoneImportedNote total={data.total} />
             )}
 
             <BreakageList items={data.breakages} />
