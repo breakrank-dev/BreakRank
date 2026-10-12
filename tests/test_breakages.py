@@ -78,14 +78,14 @@ def test_unknown_package_returns_not_tracked():
     """Decision 1."""
     r = client.get("/packages/definitely-not-real/releases/1.0.0/breakages")
     assert r.status_code == 404
-    assert r.json()["detail"]["code"] == "not_tracked"
+    assert r.json()["error"]["code"] == "not_tracked"
 
 
 def test_unknown_version_of_known_package_returns_not_tracked():
     """Decision 1: the version matters, not just the package."""
     r = client.get("/packages/breakrank-fixture/releases/9.9.9/breakages")
     assert r.status_code == 404
-    assert r.json()["detail"]["code"] == "not_tracked"
+    assert r.json()["error"]["code"] == "not_tracked"
 
 
 def test_limit_is_capped():
@@ -162,3 +162,8 @@ def test_real_data_ranks_by_model():
 def test_n_imported_is_between_zero_and_total():
     body = client.get(BASE).json()
     assert 0 <= body["n_imported"] <= body["total"]
+
+def test_bad_input_uses_the_error_shape():
+    r = client.get(BASE + "?limit=0")
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "invalid_request"
