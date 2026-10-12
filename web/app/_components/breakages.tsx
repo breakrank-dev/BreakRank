@@ -100,13 +100,21 @@ export function NoneImportedNote({ total }: { total: number }) {
 }
 
 export function RankingBadge({ ranking }: { ranking: string }) {
+  if (ranking !== "model") {
+    return (
+      <span className="rounded-full bg-slate-800 px-2.5 py-1 text-xs text-slate-400">
+        ranked by usage (no score)
+      </span>
+    );
+  }
   return (
-    <span
-      className={`rounded-full px-2.5 py-1 text-xs ${
-        ranking === "model" ? "bg-emerald-950/50 text-emerald-300" : "bg-slate-800 text-slate-400"
-      }`}
-    >
-      {ranking === "model" ? "ranked by model" : "ranked by usage (no model score)"}
+    <span className="inline-flex flex-col items-end gap-1 text-right">
+      <span className="rounded-full bg-emerald-950/50 px-2.5 py-1 text-xs text-emerald-300">
+        shortest import path first
+      </span>
+      <span className="text-[11px] text-slate-500">
+        Changes at one depth are in no particular order.
+      </span>
     </span>
   );
 }
