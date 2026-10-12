@@ -46,7 +46,7 @@ WHERE pk.name = :name
   AND r.version = :version
   AND (:include_private OR b.is_private = FALSE)
 ORDER BY p.score DESC NULLS LAST,
-         COALESCE(u.user_count, 0) DESC,
+         CASE WHEN p.score IS NULL THEN COALESCE(u.user_count, 0) END DESC,
          b.symbol_path ASC,
          b.sub_target ASC
 LIMIT :limit

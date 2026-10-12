@@ -73,7 +73,8 @@ BREAKAGES_SQL = text("""
                    AS release_imported,
                ROW_NUMBER() OVER (
                    PARTITION BY n.release_id
-                   ORDER BY p.score DESC NULLS LAST, COALESCE(u.user_count, 0) DESC,
+                    ORDER BY p.score DESC NULLS LAST,
+                            CASE WHEN p.score IS NULL THEN COALESCE(u.user_count, 0) END DESC,
                             n.symbol_path ASC, n.sub_target ASC
                ) AS rn
         FROM newest_copy n
@@ -162,9 +163,8 @@ def analyze(body: AnalyzeRequest) -> AnalyzeResponse:
             )
         )
 
-    # Packages whose changes are imported most widely first. user_count is a
-    # plain count, so unlike the score it can be compared across packages.
-    results.sort(key=lambda p: (-_max_user_count(p), p.package))
+        # Packages in name order: an order by usage counts was never measured (F45).
+    results.sort(key=lambda p: p.package)
 
     return AnalyzeResponse(
         model_version=config.MODEL_VERSION,
@@ -204,7 +204,3 @@ def _release_result(release, rows) -> ReleaseResult:
             for row in rows
         ],
     )
-
-
-def _max_user_count(package: PackageResult) -> int:
-    return max((b.user_count for r in package.releases for b in r.breakages), default=0)
