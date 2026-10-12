@@ -5631,6 +5631,167 @@ number is 0.289. The rest is 9 Oct's: 23,267 breakage rows sent, 27,900
 in the table, 232 releases with no status the files can establish, and
 F32's four packages on which releases.csv and changes.csv disagree.
 
+### 33.5 The database, step 3 of §33.1: 'unknown', the rows the loader stops writing, the deletion step (12 Oct). The rule, fixed before the run
+
+Varad applied migration 007 on 12 Oct: `release.analysis_status` accepts
+`unknown` and it is the column's default. Written before any of it ran,
+and pushed first. Nothing here adds, renames or drops a column; tables,
+the key, the upsert and the scores stay as they are.
+
+**What the loader writes from this round (ml/db.py).**
+
+1. **A release the files cannot establish is written as `unknown`.**
+   That is a release changes.csv names only as the older side of a pair
+   and releases.csv gives no usable row for (§14's agreement rule, in
+   release_plan): 232 of them on 9 Oct (§33.4). Until now the loader
+   wrote them with no status, a new row took the column's default,
+   `analysed` before 007, and the site read "diffed, changes found, 0
+   changes" for a release nobody compared; 007's own comment names the
+   232. From today they are written `unknown`, n_changes 0, where the
+   database's CHECK accepts the value, which the loader reads from the
+   constraint as before. On a row already in the table, `unknown`
+   replaces only the pair `analysed` with n_changes 0, which was never a
+   verdict but the old default on a row written without one; a real
+   status (analysed_clean, no_baseline, analysis_failed, no_source,
+   yanked) stays, since an earlier load's files established it and
+   today's merely do not. On a database without 007 the loader writes no
+   status for them, as before, and says so. After the release upsert the
+   load counts the rows still reading `analysed` with 0 changes, which
+   should be 0, or name releases outside today's files, each of which is
+   then looked at (cryptography 48.0.1, Varad's question of 12 Oct, is
+   either one of the 232 or one of these).
+2. **The loader stops writing the rows F1 and F39 take out of the
+   model.** build.py's own two functions decide, `version_strings()` and
+   `metadata_strings()` (§33.1, §32.1), from the symbol, the kind and
+   griffe's explanation: the functions build.py drops by before any
+   feature is computed, and db_model_check.py counts by. A release left
+   with nothing is written **analysed_clean with n_changes 0**: it was
+   diffed, and what the diff found was its version string, which is not
+   a change. n_changes counts the rows written, once per database key
+   (`written_counts`): griffe reports pygments' `CppLexer.tokens` twice
+   for one release and the loader drops the second before the insert
+   (§8), so until today that release's n_changes was one more than its
+   rows; now the count is the rows the table holds, which is also what
+   the deletion step recounts to. The agreement check between
+   releases.csv and changes.csv (release_plan) still compares the
+   ingest's own counts, which include those rows, because both files came
+   from the ingest; only what is written changes. Expected from today's
+   files: 1,815 rows fewer than changes.csv holds (§33.2's count, made
+   on labelled.csv, which has changes.csv's rows) and 895 releases
+   analysed_clean that read `analysed` today (§33.2's all-clear, the
+   holdout's 160 among them).
+3. **The dry run says the same**: the rows it would not write, by rule,
+   and the releases it would write as unknown. **db_extras.py** (read
+   only) builds "what we sent" from the same rows, so after the deletion
+   step it does not report 1,815 rows as sent and missing; the ones still
+   in the table it counts on a line of their own.
+
+**What the deletion step removes (scripts/db_drop_versions.py, new).**
+Every breakage row already in the table that the same two rules mark,
+reading `symbol_path`, `kind` and `detail.griffe_message`, whichever load
+wrote it: the rows of today's files and the rows of earlier loads alike,
+since the rule is about what a row is, not which run wrote it. Not the
+rows of the package `breakrank-fixture`, which are Varad's (§8.1, §13.3);
+they are counted and left. With a row go its prediction rows, which are
+earlier models' (path length's and the model's current scores exclude
+these rows: 0 and 0 in db_model_check on 10 and 12 Oct, §33.4, §36.4).
+In the same transaction every release that lost rows has n_changes
+recounted from the table, and one left with none and reading `analysed`
+becomes analysed_clean, as the loader would write it. The script's
+default is a dry run of SELECTs only, which prints the count by rule and
+by name, its share of the table, the releases affected and the ones left
+with nothing, and the predictions by model version. `--expect N` deletes,
+and only when N is the count the script computes at that moment, so the
+number Varad read is the number that goes; any other N stops it before
+the transaction opens. What to expect: at least §33.2's 1,815, since
+those rows are in the table, plus the same kind of row from earlier
+loads, so between 1,815 and about 2,800 of the 27,900, 6.5% to 10%. A
+count outside that bracket means the rule read something the two
+functions would not, and the run stops there. The order on Neon: the dry
+run; its output to Varad; a Neon branch made as the restore point; the
+delete with `--expect`; then `python ml/db.py` without `--scores`, since
+the scores stand, which writes the 232 as unknown and the counts the
+table now has; then db_prune's dry run. db_prune's 5% guard is untouched,
+because none of this went through it.
+
+**db_prune.py** names the rows the deletion step is for as a category of
+its own, counted and never deleted there. Until today it could not see
+them: the ones in today's changes.csv counted as "ours" and were skipped
+without a word, and the ones from earlier loads were split between
+superseded and aged out (an independent review of this section checked
+the first wording, which said a dry run would have refused at 6.5%, and
+found it false: against a scratch table holding the 62 rows of a test
+dataset, the old db_prune read "would delete 0 rows"). It reads the
+explanation from the table for that. **db_model_check.py** counts them in
+the whole table too, not only among the rows with a score, so the
+deletion's effect is one number: 0 after.
+
+**Tested by** `scripts/test_db_loader.py`, three cases added (9 to 11,
+23 checks): the rows not written and the release left clean, with the
+agreement check on the ingest's counts and n_changes once per key, on a
+second fixture that has one row of each kind the rule distinguishes (a
+changed `__version__`, a module's changed `version`, a changed
+`__copyright__`, a removed `__version__`, a `version` changed to `unset`,
+a class's `VERSION`, and that one reported twice under one key); the dry
+run on a file of nothing but version strings; the `unknown` upsert with
+007, without it, and without 005; and check_schema reading the CHECK
+constraint, assuming `unknown` only when it names it. And
+`scripts/test_db_drop.py`, new, seven cases and 34 checks: the rule
+applied to rows as the table holds them, a row with no explanation
+included (a dunder goes on its name, a bare `VERSION` stays); the fixture
+skipped and counted; the plan (which releases lose rows, which are left
+with none, and that a `no_baseline` release left with none does not
+become clean); the transaction's order and the guard on the clean
+update; `--expect` (none: a dry run that opens no transaction; wrong:
+refused before one opens; right: deletes and reads the table again; an
+empty table: nothing opened); db_prune's category, first whatever else
+the row is, the fixture's rows left in the aged-out group as before; and
+db_extras's count, reading the griffe message out of `detail` as a dict,
+a string or nothing. Both files pass on pandas 2.2.3 and 3.0.2.
+Thirty-seven guards were broken on purpose, twenty in the loader, twelve
+in the deletion step, three in db_prune and two in db_extras, and each
+turned a check to FAIL; two first made the test crash instead, and the
+test was changed to fail cleanly. The independent review also found the
+rows of this section's first draft that the code did not match: the
+second fixture had no module-level `version` whose value changed to
+another value, db_extras had not been changed and would have reported
+every row the loader stopped writing as "sent and not in the table", the
+dry run crashed on a file of nothing but version strings, and n_changes
+counted a duplicate key twice; each is fixed above and tested.
+
+**And against a real Postgres**, the whole sequence, on a 7,874-row
+dataset made for it (dbint's synthetic changes.csv with griffe-shaped
+explanations and 71 rows added: 51 version strings, 11 metadata strings
+and 9 that look like them and stay; 7 of the 62 are all that 6 new
+releases have): migrations 001 to 006, the old loader (5811d22), which
+wrote 486 releases, 60 of them `analysed` with 0 changes, and 7,874
+rows; then by hand what Neon has and the files do not: a
+`breakrank-fixture` release with a version string among its rows, two
+releases from an earlier load with one such row each (`analysed` and
+`no_baseline`), and an earlier model's 1,176 scores, 58 of them on such
+rows; then migration 007. On that table: db_prune's dry run read 64
+in the new category, 2 aged (the fixture's), 0 to delete;
+db_model_check 52 version-string and 12 metadata rows in the table; the
+deletion step's dry run 64 (0.8% of 7,878), 48 releases losing rows, 8
+left with none, 7 of them to become clean; `--expect 63` refused with
+nothing deleted; `--expect 64` deleted 58 predictions and 64 rows,
+recounted 48 releases, 7 now analysed_clean, and read 0 marked rows
+after. What stayed is exactly the 9 that should (removed `__version__`s,
+`Config.VERSION`s, `version` to `unset`, removed `__author__`s) and the
+fixture's. Then the loader: 60 `analysed`/0 became `unknown`, the 6
+only-a-version-string releases were written analysed_clean, every
+release's n_changes equals its rows in the table, the earlier-load
+`analysed` release reads analysed_clean and the `no_baseline` one still
+`no_baseline`; a second load changed nothing. And the upsert's CASE on
+its own: an unknown release set by hand to `no_baseline` stayed, one set
+to `analysed`/0 became `unknown`, one set to analysed_clean stayed. The
+sequence was run three times, the last on the code delivered, and once
+more by the independent review on a server and a dataset of its own,
+rebuilt from the same script byte for byte, with the same numbers every
+time; db_extras before the deletion step read 2 rows not sent (the
+fixture's) and 64 the loader no longer writes, 0 sent and missing, and
+after it 2 and 0. The Neon runs go in §33.6.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
@@ -6850,3 +7011,87 @@ numbers (§36.2). The line's paragraph is rewritten on one convention.
 The demo moves from redis 7.3.0 → 7.3.1 to redis 7.4.1 → 8.0.0; the
 failure story is unchanged in kind and now explained by the rule
 itself.
+
+## 37. The guide's three asks at the mid-semester review (22 Sep), and where each stands (12 Oct)
+
+Recorded on 12 Oct, from Vaibhav's account. The review deck and report
+of 22 Sep are §20.4's. The guide was impressed and asked for three
+changes. None was written down here at the time, and the plan to 20 Nov
+grew around them without naming them, so this section does.
+
+**Ask 1. The tool should change the code, not only rank the changes.**
+Her words, as remembered: rank first, then change the codebase, in real
+time, or change the whole codebase and hand it over. *Where it stands:*
+this is the fixer, the second half of the plan to 20 Nov (the plan doc's
+table of change kinds and what the fixer does with each). The design
+answer is a reviewable diff, never a silent edit: the tool locates every
+line of the user's project that uses a changed name, rewrites the
+mechanical kinds (a parameter moved or made keyword-only, a changed
+default, a moved import) and flags the rest with the exact lines, and
+the output is a diff or a pull request the user applies, with the
+project's own tests run on it. That is the form every serious tool of
+this kind takes (ruff's NumPy 2 rule, bump-pydantic, MLCatchUp), and it
+is what the panel should be shown: a tool that edits a codebase without
+a review step is one nobody would run on their own code. The fixer's
+design goes into NOTES this week (§38), before any code; the count of
+how many of today's changes each kind of fix covers sizes it. Nothing of
+it exists yet beyond the design in the plan doc, and it is the item on
+the plan that cannot slip.
+
+**Ask 2. Why LambdaRank? What else was tried, and where are the other
+models' metrics?** *Where it stands:* answered more fully than she
+asked, and not in LambdaRank's favour. Every comparison was made under a
+rule fixed before the run, at seven cut dates, with PR-AUC, precision@10
+and nDCG@20 and their intervals; each has its section and its script:
+
+| compared | result | where |
+|---|---|---|
+| three labels for "used downstream" | `label_alias` ships: worst-case lift 2.30x against 1.91x | §24 |
+| LambdaRank taught binary vs graded relevance | binary stays; graded won nothing clearly | §25 |
+| six baselines: every change alike, semver, popularity, kind prior, a logistic regression on the same 17 features, path length | popularity and the regression are the ones that matter; the regression carries 90% of the ranker's lift | §5.2, §29.2, §30.3 |
+| LambdaRank vs a LightGBM classifier (the book's own sequence) | classifier median lift 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x; neither clearly ahead | §29.2 |
+| boosted trees vs the logistic regression | the classifier ahead at 6 of 7 dates by 1.2499x, a hair under the 1.25x fixed; no claim that trees capture structure a line cannot | §29.2 |
+| trees sized by the data (CV tuning) vs fixed | tuned ships: median lift 5.20x against 4.08x | §30 |
+| the 17-feature model vs path length alone, a rule with nothing fitted | no difference the rule can see on either measure | §34 |
+| what ships: path length, a two-feature LambdaRank, the 17-feature model, and the model's order inside the rule's ties | **path length alone ships**; the model is the fallback | §36 |
+
+So the honest answer to "why LambdaRank" is now: it was the right tool
+for the question as the book posed it (order one upgrade's changes, not
+classify them one at a time), it was measured against a classifier, a
+regression and a rule under tests fixed in advance, and the rule won.
+What the learned model contributed was the finding: its gain table and
+ablation pointed at path length, and the comparison then confirmed that
+one feature was the model. The report presents it that way (§36.5), and
+the table above is the "proof" she asked for, in one place. A panel will
+ask the follow-up, "then why machine learning at all?", and the answer
+is in three parts: the label (whether real downstream code imports a
+change, measured over 39,154 used symbols, is what makes any ranking
+checkable), the pipeline that produces the changes, and the fixer, which
+is where the work goes from here. A rule that beats the model is a
+result; it is told as one.
+
+**Ask 3. Does it run locally, with or without internet, or in a browser
+with internet?** *Where it stands:* today, in a browser with internet.
+The site (Vercel) calls the API (Render), which reads the database
+(Neon); nothing runs on the user's machine. The fixer changes that,
+because it has to run where the code is: a command-line tool on the
+user's project, and a GitHub Action on a pull request. Decided today,
+for the design (§38): the tool runs offline for every release already
+analysed. The data it needs is small, every analysed change with its
+score and usage count, about 28,000 rows, and ships inside the tool, so
+rank, locate and fix work with no network at all for the 351 packages
+and 3,204 releases the database holds today (§36.4's load). Internet is needed only for a package or
+version the bundle does not have (the source distributions have to be
+downloaded to diff them), and the tool says so and stops rather than
+guessing. The web site stays as the online face. This also protects the
+demo: the book's own warning is that the backend sleeps and the hall's
+Wi-Fi fails, and a command-line run on a laptop does neither.
+
+**What this changes in the plan.** The fixer design (§38) is written
+this week with the offline bundle as a requirement, not a nicety; the
+"models compared" table above goes into the report and deck as its own
+page, since it is a direct answer to the guide; and the guide is told
+the result before the next review, as a finding, with the table. The
+question for her that is still open is the plan doc's: whether 20 Nov
+is the final evaluation, which decides whether the holdout is opened on
+16 Nov.
