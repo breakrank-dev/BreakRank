@@ -5946,6 +5946,8 @@ same way.]*
 
 ### 35.2 What the report says now (10 Oct)
 
+*[Superseded 12 Oct: path length ships, and the wording is §36.5's.]*
+
 Replacing §32.3's paragraph, slide, site copy and demo, until item 15
 (F25) decides what ships. PR-AUC with ties averaged throughout (§35.1),
 with two exceptions, each named as such where it appears: §32.3's
@@ -6602,8 +6604,8 @@ convention, since the fallback was not reloaded.
   PR-AUC moved a little, now on the same convention as everything else.
 - The sweep's own dates (2025-08-07, 10-10, 12-05, 2026-01-21, 03-05,
   04-05, 05-06): path length 3.96x, 4.81x, 4.81x, 3.09x, 3.73x, 2.56x,
-  2.64x, median 3.73x, above 1.0x at every date; the model 4.84x to
-  2.34x, median 3.80x, §35.1's tie-averaged figures. There the model's
+  2.64x, median 3.73x, above 1.0x at every date; the model 2.34x to
+  6.37x, median 3.80x, §35.1's tie-averaged figures. There the model's
   PR-AUC is above path length's at 5 of 7 (median 1.10x, 0.85x to
   1.33x) and its nDCG@20 at 3 of 7: read, not ruled on, as in §34.2.
 - **Across the thirteen dates**, path_metrics.json's notes: beats
@@ -6659,8 +6661,192 @@ was the first). The remade file is kept under the 11 Oct name,
 `data/stability_label_alias_cv_tuned_at-20261011.csv`, and this
 paragraph is its provenance. git status was clean after the runs.
 
+**Varad's reply, the same evening.** F45 is in, on main and live, and
+/health names `path-length`. BREAKAGES_SQL and /analyze's per-release
+order are now `p.score DESC NULLS LAST`, then `CASE WHEN p.score IS NULL
+THEN COALESCE(u.user_count, 0) END DESC`, then symbol_path and
+sub_target: a scored tie is listed by name, and unscored rows and the
+usage fallback keep their order by usage; the two endpoints return the
+same order, and the test that compares them passes. /analyze's packages,
+once sorted by their highest user_count, another order nobody measured,
+are in name order. pytest.ini with `testpaths = tests` is in, so a plain
+pytest runs his tests and not scripts/test_*.py. On the site the badge
+reads "shortest import path first", with "Changes at one depth are in no
+particular order." under it, in place of "ranked by model" (a rule is
+not a model); unscored releases read "ranked by usage (no score)"; the
+footer carries the paragraph in §36.5, in place of the 2.2x to 6.0x
+text. The API's `ranking` field still says "model" wherever a score
+exists; renaming it is offered, and answered in §36.5. And the preset,
+cryptography 47.0.0, now starts with `cryptography.utils.DeprecatedIn46`,
+the shortest path, not `RevokedCertificate`, so its line on the site is
+rewritten (§36.5).
+
 **What follows.** Item 5 of §36.2's list: the report and deck present
 path length as the ranker, with the numbers above; §35.2's paragraphs
-are rewritten (§36.5). F45's fix and the restart are Varad's. The
-'unknown' status, the deletion step and db_prune follow, now that
-migration 007 is on Neon.
+are rewritten (§36.5). The 'unknown' status, the deletion step and
+db_prune follow, now that migration 007 is on Neon.
+
+### 36.5 What the report says now (12 Oct)
+
+Replacing §35.2's paragraph, slide, site copy and demo, and §29.3's and
+§30.3's paragraphs on the line. Every number averages over the order of
+tied scores (§36.3); the numbers are §36.4's. §32.3's ablation paragraph
+stands as measured, on the old convention and named as such, until
+ablate.py runs again; §30.3's reachability result pointed at what
+ships, one of its two features, alone.
+
+**For the report:**
+
+> BreakRank lists a release's changes by how short their public import
+> path is, shortest first: the number of dots in the shortest name a
+> user can write for the symbol, taken from the package's own alias
+> graph. Nothing is fitted. The rule was not the first idea: it came out
+> of the learned model, whose gain table put a third of its weight on
+> that one feature and whose ablation found the two reachability
+> features alone matching all seventeen, and it was then measured
+> against the model by a test fixed in advance. On the test half of the
+> development data, releases before 28 July 2026 (1,954 rows: 1,510
+> distinct changes in 190 upgrades), the rule reaches PR-AUC 0.265
+> against a floor of 0.079, 2.6 times the popularity baseline (95%
+> interval 1.7–3.9). Across thirteen cut dates, seven fixed in advance
+> and six more placed by the same procedure on the current data, it
+> beats popularity at every one, by 2.5x to 4.8x with the date (median
+> 4.05x), and at every date the lower end of its own 95% interval stays
+> above 1.0x; the lowest is 1.3x. One release can move the lift: when
+> sglang 0.5.10, whose 2,296 changes no scanned package uses, leaves the
+> test half, the popularity baseline recovers and the rule's lift falls
+> from 4.4x to 2.6x. Inside an upgrade, the rule's precision@10 is 0.287
+> (0.187–0.407) over 17 upgrades and its nDCG@20 0.558 (0.404–0.707)
+> over 11.
+>
+> Two learned rankers were set against it: a LambdaRank model on 17
+> features, and a model fitted the same way on the two reachability
+> features alone. The measures and their margins were fixed before the
+> 17-feature model was scored against the rule, and the rule for what
+> ships before the two-feature model was fitted. To ship, a model had to
+> win on at least one of two measures at the seven dates fixed in
+> advance and lose on neither: across releases, a higher PR-AUC at six
+> of seven by a median factor of at least 1.25; inside an upgrade, a
+> higher nDCG@20 at six of seven. The 17-feature model's PR-AUC is
+> higher at four dates and lower at three, a median factor of 1.07 (0.81
+> to 1.37); its nDCG@20 is higher at three. The two-feature model is
+> ahead on PR-AUC at six dates by a median factor of 1.16, short of the
+> bar, and higher on nDCG@20 at four. Letting the model order the
+> changes the rule cannot tell apart raised nDCG@20 at four dates of
+> seven. The rule's precision@10 is higher than the 17-feature model's
+> at all seven dates (medians 0.288 and 0.276). So the rule ships, and we
+> do not claim that a learned ranker orders a release's changes better
+> than the shortest public path first. What the project adds is the
+> pipeline around that ordering: the API diff, a label checked against
+> real downstream imports, the all-clear for releases with nothing to
+> fix, and the fixer.
+>
+> The 17-feature model, kept as the fallback, scores 0.289 on the same
+> test half (0.225–0.426), 2.8 times popularity (1.7–5.4) and 1.09 times
+> the rule (0.78–1.74); across the thirteen dates its lift over
+> popularity runs from 2.1x to 6.6x (median 4.2x), and sglang 0.5.10
+> moves it the same way, from 4.7x to 2.8x. A logistic regression on the
+> same 17 features beats popularity at every date too; the rule's PR-AUC
+> is above the regression's at six of the seven reference dates (medians
+> 0.223 and 0.182), and the shipped model's is above it at all seven, by
+> a median factor of 1.32. Whether boosted trees capture structure a
+> linear model cannot was tested once, in advance, on a tree classifier
+> against the regression: ahead at six of seven dates by a median factor
+> of 1.2499, under the 1.25 we had fixed, by scikit-learn's convention,
+> the only one that run has. No such claim was made, and a later model's
+> 1.32 on another convention does not reopen a verdict given once; since
+> neither learned ranker beats the rule, nothing in the result rests on
+> it.
+>
+> PR-AUC is the average precision expected over every order of tied
+> scores (McSherry and Najork, 2008), and precision@10 and nDCG@20 are
+> averaged over every order of the ties the same way; a rule that scores
+> every change at one depth alike has no order inside a depth, and these
+> conventions score it as such. scikit-learn's convention, which counts
+> a run of ties as one threshold, read popularity 1% to 10% higher and
+> the model under 4% higher. Intervals come from 2,000 resamples of
+> whole upgrades with nothing refitted, so they leave out how far a
+> refit moves a learned model's result; the rule has nothing to refit.
+
+For a slide:
+
+- Ships: shortest public import path first. Nothing fitted.
+- Beats popularity at all 13 cut dates, 2.5x–4.8x (median 4.05x);
+  every date's interval above 1.0x.
+- Two learned rankers set against it, the test fixed before the
+  scoring. 17 features: PR-AUC higher at 4 of 7 dates (median 1.07x),
+  nDCG@20 higher at 3 of 7. Two reachability features: ahead at 6 of 7
+  by 1.16x, under the 1.25x bar. Neither ships.
+- PR-AUC 0.265, floor 0.079; precision@10 0.287 (17 upgrades), nDCG@20
+  0.558 (11).
+- What the project adds: the API diff, the usage-checked label, the
+  all-clear, the fixer.
+
+**For the site** (in place since 12 Oct, Varad, §36.4: the badge
+reads "shortest import path first", with "Changes at one depth are in
+no particular order." under it, and the footer carries this):
+
+> BreakRank lists a release's changes by how short their public import
+> path is, shortest first. On releases published before 28 July 2026
+> that rule beats a popularity baseline at every evaluation date, by
+> 2.5x to 4.8x, and at every date the lower end of its 95% interval
+> stays above 1x. A learned ranker did not beat the rule, so the rule
+> ships. Later releases are held back, unseen, for the final evaluation.
+
+The API's `ranking` field still reads "model" wherever a score exists.
+Answered: rename its value to "scored" when convenient, beside the
+existing "usage_fallback", since the scores are whatever model_version
+names; a contract change, not urgent, and the site's own wording is
+what people read.
+
+The preset on the site is cryptography 46.0.7 → 47.0.0, the failure
+story, which under the rule lists `cryptography.utils.DeprecatedIn46`
+first (ties are listed by name, F45). Its line, replacing the model's:
+
+> Shortest import path first. The two changes at depth 2 lead, one of
+> them used downstream; `PBKDF2HMAC`, the change 10 packages use, is at
+> depth 5 and sits in the last tie, places 13 to 30 of 30. The rule's
+> failure case: a deep path with no shorter public name.
+
+If a second preset is wanted, redis 7.4.1 → 8.0.0 is the success story,
+with: "134 changes, 50 of them used downstream. The 57 shortest-path
+changes lead, tied, and 50 of them are the used ones: a random order
+would put 3.7 used changes in the first 10, this order puts 8.8 on
+average."
+
+**For the demo**, replacing §35.2's:
+
+> redis 7.4.1 → 8.0.0 made 134 changes to its public names, and
+> downstream code uses 50 of them. Shortest import path first puts 57
+> changes at the top, tied, 49 of them parameters of `redis.Redis(...)`
+> moved or given new defaults, and the used changes are 50 of those 57.
+> A random order would put 3.7 of the used changes in the first 10; this
+> order puts 8.8 there on average. Across the 9 test-half releases with
+> a used change and 20 or more changes, the rule's top 10 beats a random
+> order at 7, finding 30 used changes where a random order would find
+> 13.1.
+
+Told with it, before anyone asks: 49 of the 50 count as used because 2
+scanned packages import `Redis`; whether either passes those arguments,
+the label cannot see; the 50th, `URL_QUERY_ARGUMENT_PARSERS`, is used by
+one. The order inside the 57 is no order: the site lists them by name
+and says so. And the failure, from cryptography 46.0.7 → 47.0.0:
+`PBKDF2HMAC`, used by 10 packages, the most in its release, sits at
+depth 5 in the last tie, places 13 to 30 of 30, below two depth-2
+changes and a tie of ten on a shorter path, eight of them removed
+elliptic curves. The rule cannot rank it higher, because the rule is its
+path. §31.2's coda
+stands: the label measures use, not breakage.
+
+**What changed against §35.2.** The ranker is the rule; the model's
+paragraph is what was tried. The lift the report leads with is the
+rule's (2.6x on the single split, 2.5x to 4.8x at the dates) where it
+was the model's (2.8x, 2.1x to 6.6x). The model's precision@10 and
+nDCG@20 are restated from their average over tie orders (0.281 and
+0.569 on the single split; §35.2 had 0.282 and 0.595 in the fixed
+order), and the "rule's precision@10 is higher at all seven" sentence
+is restated from 11 Oct's sweep, where it holds with the averaged
+numbers (§36.2). The line's paragraph is rewritten on one convention.
+The demo moves from redis 7.3.0 → 7.3.1 to redis 7.4.1 → 8.0.0; the
+failure story is unchanged in kind and now explained by the rule
+itself.
