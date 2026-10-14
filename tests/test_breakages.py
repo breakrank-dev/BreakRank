@@ -167,3 +167,9 @@ def test_bad_input_uses_the_error_shape():
     r = client.get(BASE + "?limit=0")
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "invalid_request"
+
+def test_cors_allows_only_the_site():
+    ok = client.get("/health", headers={"Origin": "https://break-rank.vercel.app"})
+    assert ok.headers.get("access-control-allow-origin") == "https://break-rank.vercel.app"
+    other = client.get("/health", headers={"Origin": "https://example.com"})
+    assert "access-control-allow-origin" not in other.headers
