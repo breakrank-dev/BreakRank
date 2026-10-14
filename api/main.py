@@ -23,9 +23,9 @@ app = FastAPI(title="BreakRank API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://break-rank.vercel.app", "http://localhost:3000"],
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type"],
 )
 
 
