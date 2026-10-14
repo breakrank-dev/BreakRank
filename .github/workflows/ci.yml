@@ -43,6 +43,9 @@ jobs:
 
       - name: Load the test package
         run: python -m db.seed
+      
+      - name: Add a stand-in for the live model (CI only)
+        run: psql "$DATABASE_URL" -c "INSERT INTO model_run (version, notes) VALUES ('ci-stand-in', 'CI only: newer than v0-fake, scores nothing')"
 
       - name: Run tests
         run: python -m pytest
