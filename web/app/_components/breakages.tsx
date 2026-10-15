@@ -33,7 +33,7 @@ export const STATUS_NOTES: Record<string, string> = {
   no_source: "This release shipped no source code, so it could not be analysed.",
   no_baseline: "This is the oldest release we hold, so there is nothing to compare it against.",
   yanked: "This release was withdrawn by its maintainers.",
-  unknown: "We hold this release but have not compared it with the one before it.",
+  unknown: "We hold this release, but we can't confirm it was compared with the one before it.",
 };
 
 export function statusNote(status: string): string {
