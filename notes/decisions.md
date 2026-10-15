@@ -386,3 +386,39 @@ and breaks a promise we made, a test fails.
 They assume fixture rows exist and break if the table is truncated. Deliberate
 trade for real integration coverage now; the proper fix is a per-run test
 database.
+
+### The all-clear is decided by the pipeline (12 Oct 2026)
+Version strings and package metadata (__version__, __author__, ...) are dropped by the loader only when their value changed (ATTRIBUTE_CHANGED_VALUE); removing one is still a real breaking change. A release whose only changes were these reads analysed_clean.
+Why: one source of truth (the pipeline), and the API needs no list of names.
+
+### 'unknown' analysis status, and it is the default (migration 007)
+A release the data can't establish as compared reads 'unknown', and the site says "We hold this release, but we can't confirm it was compared with the one before it."
+Why: "not measured" must not look like "measured, nothing found".
+
+### POST /analyze
+Only exact pins (==) are used; every other line comes back in "skipped" with a reason. Results are grouped by package, then release, newest first, and each release is ranked on its own. Releases are never merged into one list, because a score only orders changes within one release. A change that appears in several releases is shown once, under the newest. At most 10 releases per package and 5 changes per release by default. Packages are listed by name.
+
+### A mistyped MODEL_VERSION stops the API at startup
+Why: otherwise a typo on Render quietly ranks every list by usage, and nobody notices until a demo.
+
+### Path length ships; ties are listed by name (F45, 12 Oct 2026)
+Each release's changes are ranked by shortest public import path, because neither learned ranker beat that rule. Changes at the same depth tie, and ties are listed by name, not by usage count, because a usage order was never measured and the label is built from those counts. Unscored rows keep the usage order. The site says "shortest import path first; changes at one depth are in no particular order."
+
+### The "none imported" note
+The release endpoint returns n_imported. When a release has changes but none is imported by any scanned package, the site says so. Zero imports is not zero use: the scanner reads imports, not method calls.
+
+### Explanation wording
+"N of the ~1,500 scanned packages import it", not "N packages in the ecosystem call it". The count covers the scan, not the whole ecosystem, and it measures imports, not calls.
+
+### One error shape
+Every error is {"error": {"code", "message"}}; an untracked release is 404 with code not_tracked.
+
+### CORS limited to the site
+Only https://break-rank.vercel.app and http://localhost:3000 may call the API from a browser. Vercel preview links are blocked, which is acceptable.
+
+### CI runs against a throwaway Postgres
+CI builds an empty database from the migrations, loads the test package with db/seed.py, and adds a stand-in "live" model (newer than v0-fake, with no scores) so tests see the same model selection as production. The stand-in exists only in CI and must never be added to seed.py or Neon.
+Why: CI can't touch real data and no longer needs the database secret.
+
+### Deleting data: dry run, exact count, restore point (15 Oct 2026)
+Every step that deletes or rewrites rows runs on its own: a read-only dry run first, then the real run with --expect <the dry run's count>, which refuses if the table changed in between, and a Neon branch made just before as the restore point. Used on 15 Oct for the version/metadata delete (2,336 rows) and the repair (316 releases), and approved for db_prune (72 rows). The rules are in NOTES §33.5–§33.8.
