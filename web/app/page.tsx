@@ -28,6 +28,7 @@ type Result = {
 const PRESETS = [
   { pkg: "cryptography", version: "47.0.0" },
   { pkg: "sglang", version: "0.5.10" },
+  { pkg: "cryptography", version: "50.0.1" },
 ];
 
 export default function Home() {
