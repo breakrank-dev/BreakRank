@@ -51,6 +51,18 @@ breakrank-fixture, which no changes.csv contains. That is luck rather
 than design — the classifier cannot tell a fixture from a real aged-out
 release — but the outcome is right: his rows are his to remove.
 
+AFTER A DELETE, THE RELEASES RECOUNT (NOTES §33.7, 15 Oct). release.n_changes
+is a denormalised count the loader writes from its files, and until today
+a prune left it as it was, so a release that lost rows here kept a count
+of rows that were gone (§33.6 found 159 releases whose count was not
+their rows, from every cause, this among them). Now, in the same
+transaction as the delete, every release that lost a row has n_changes
+set from the table, where the database has the column (migration 005),
+and a release left with no row at all is printed by name and NOT
+relabelled: an `analysed` one that today's files do not name becomes
+`unknown` on the next run of scripts/db_repair_counts.py (§33.7, rule
+2), and one today's files name is the loader's.
+
 A FOURTH GROUP, COUNTED AND NEVER DELETED HERE (NOTES §33.5, 12 Oct): the
 version-string and package-metadata rows, F1's and F39's, which the
 loader no longer writes and scripts/db_drop_versions.py removes with a
@@ -93,17 +105,19 @@ def classify(found: list, ours: set, live_rel: set) -> dict:
     the current changes.csv does not have: an un-importable root is wrong
     wherever it came from; a row of a release the current run re-analysed
     is superseded; the rest aged out of the window and are kept (NOTES
-    §8), the fixture's rows with them."""
+    §8), the fixture's rows with them. A row may carry more fields after
+    the seventh (main() adds release_id); only the first seven are read
+    here."""
     out = {"versions": [], "bad": [], "superseded": [], "aged": []}
     if not found:
         return out
-    frame = pd.DataFrame([tuple(r) for r in found],
+    frame = pd.DataFrame([tuple(r)[:7] for r in found],
                          columns=["id", "package", "version", "symbol",
                                   "kind", "sub_target", "explanation"])
     frame["explanation"] = frame["explanation"].fillna("").astype(str)
     marked = not_a_change(frame)
-    for is_marked, (bid, name, ver, sym, kind, sub, _msg) in zip(marked,
-                                                                   found):
+    for is_marked, row in zip(marked, found):
+        bid, name, ver, sym, kind, sub, _msg = tuple(row)[:7]
         if is_marked and name != FIXTURE_PACKAGE:
             out["versions"].append(bid)
         elif (name, ver, sym, kind, sub or "") in ours:
@@ -115,6 +129,25 @@ def classify(found: list, ours: set, live_rel: set) -> dict:
         else:
             out["aged"].append(bid)
     return out
+
+
+def recount(conn, rids: list) -> tuple[int, list]:
+    """n_changes from the table for the releases that lost rows, and the
+    ones left with none, (name, version, status), for a decision."""
+    from sqlalchemy import text
+
+    if not rids:
+        return 0, []
+    n = conn.execute(text("""
+        UPDATE release SET n_changes = (SELECT count(*) FROM breakage b
+                                        WHERE b.release_id = release.id)
+        WHERE id = ANY(:rids)"""), {"rids": rids}).rowcount
+    emptied = conn.execute(text("""
+        SELECT p.name, r.version, r.analysis_status FROM release r
+        JOIN package p ON p.id = r.package_id
+        WHERE r.id = ANY(:rids) AND r.n_changes = 0
+        ORDER BY p.name, r.version"""), {"rids": rids}).fetchall()
+    return n, [(str(a), str(b), str(c)) for a, b, c in emptied]
 
 
 def main() -> None:
@@ -170,10 +203,16 @@ def main() -> None:
             SELECT 1 FROM information_schema.columns
             WHERE table_name = 'breakage' AND column_name = 'sub_target'
         """)).fetchone())
+        # release.n_changes exists from migration 005; without it there is
+        # nothing to recount, and naming the column would abort the delete.
+        has_count = bool(conn.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'release' AND column_name = 'n_changes'
+        """)).fetchone())
         sub_sel = "b.sub_target" if has_sub else "''"
         found = conn.execute(text(f"""
             SELECT b.id, p.name, r.version, b.symbol_path, b.kind, {sub_sel},
-                   b.detail ->> 'griffe_message'
+                   b.detail ->> 'griffe_message', b.release_id
             FROM breakage b
             JOIN release r ON r.id = b.release_id
             JOIN package p ON p.id = r.package_id
@@ -232,7 +271,10 @@ def main() -> None:
               "load until the\ningest is fixed.")
         return
 
-    # predictions carry a foreign key to breakage, so they go first.
+    # predictions carry a foreign key to breakage, so they go first; then
+    # the releases that lost rows are recounted (§33.7), same transaction.
+    gone = set(doomed)
+    rids = sorted({int(tuple(r)[7]) for r in found if tuple(r)[0] in gone})
     with engine.begin() as conn:
         n_pred = conn.execute(
             text("DELETE FROM prediction WHERE breakage_id = ANY(:ids)"),
@@ -240,8 +282,23 @@ def main() -> None:
         n_brk = conn.execute(
             text("DELETE FROM breakage WHERE id = ANY(:ids)"),
             {"ids": doomed}).rowcount
+        n_rel, emptied = recount(conn, rids) if has_count else (0, [])
 
-    print(f"\ndeleted {n_pred:,} prediction rows and {n_brk:,} breakage rows")
+    print(f"\ndeleted {n_pred:,} prediction rows and {n_brk:,} breakage rows;")
+    if has_count:
+        print(f"n_changes set from the table on {n_rel:,} release(s) that "
+              "lost rows.")
+    else:
+        print("no n_changes column (migration 005 is not applied), so "
+              "nothing was recounted.")
+    if emptied:
+        print(f"** {len(emptied):,} release(s) are left with no row at all. "
+              "Their status is NOT changed here:\n** an `analysed` one that "
+              "today's files do not name becomes `unknown` on the next\n** "
+              "run of scripts/db_repair_counts.py (NOTES §33.7, rule 2); one "
+              "today's files name\n** is the loader's.")
+        for name, ver, status in emptied:
+            print(f"**   {name} {ver}   {status}")
     print("Run scripts/db_extras.py to confirm only the aged-out rows and "
           "any\nfixtures remain.")
 

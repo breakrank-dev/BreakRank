@@ -11,7 +11,7 @@ connection that records every statement, and checks each; then
 scripts/db_prune.py's classification, which must name those rows as a
 category of its own and never delete them.
 
-Eight cases (NOTES §33.5, §33.6):
+Nine cases (NOTES §33.5, §33.6, §33.7):
 
   1. The rule, written out again: a version constant or a metadata string
      whose VALUE changed goes; a removed one, one changed to `unset`, a
@@ -35,6 +35,10 @@ Eight cases (NOTES §33.5, §33.6):
      releases into today's changes.csv and earlier loads, and compares the
      file's all-clear with the table's both ways (Varad's question of
      15 Oct).
+  9. db_prune.py recounts the releases it deletes rows from, in the same
+     transaction, and names a release left with no row instead of
+     relabelling it (NOTES §33.7); its classification reads rows that
+     carry the release_id as an eighth field.
 """
 
 import contextlib
@@ -437,6 +441,151 @@ def case_split() -> None:
           (0, 0, 2))
 
 
+class PruneConn:
+    """Records db_prune's statements; answers the recount's read-back with
+    the releases left empty."""
+
+    def __init__(self, emptied):
+        self.sql, self.emptied = [], emptied
+
+    def execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        self.sql.append((sql, params))
+        if sql.startswith("UPDATE"):
+            return _Result([], rowcount=len(params["rids"]))
+        if sql.startswith("SELECT p.name, r.version, r.analysis_status"):
+            return _Result(self.emptied)
+        return _Result([])
+
+
+def case_prune_recount() -> None:
+    print("\n9. db_prune RECOUNTS WHAT IT DELETES FROM, AND NAMES THE EMPTY")
+    conn = PruneConn([("pkg", "1.1", "analysed")])
+    n, emptied = prune.recount(conn, [3, 1, 2])
+    check("one UPDATE sets n_changes from the table for the releases given, "
+          "then the empty ones are read back by name",
+          ([s.split(" WHERE")[0] for s, _ in conn.sql],
+           conn.sql[0][1]["rids"], n, emptied),
+          (["UPDATE release SET n_changes = (SELECT count(*) FROM breakage b",
+            "SELECT p.name, r.version, r.analysis_status FROM release r JOIN "
+            "package p ON p.id = r.package_id"],
+           [3, 1, 2], 3, [("pkg", "1.1", "analysed")]))
+    check("the read-back asks for n_changes = 0 among those releases only",
+          "WHERE r.id = ANY(:rids) AND r.n_changes = 0" in conn.sql[1][0],
+          True)
+    check("no status is changed by it",
+          any("analysis_status =" in s for s, _ in conn.sql), False)
+    conn = PruneConn([])
+    check("no release to recount: nothing sent",
+          (prune.recount(conn, []), conn.sql), ((0, []), []))
+    found = [
+        (1, "pkg", "1.1", "python.pkg.x", REMOVED, "", "x: removed", 11),
+        (2, "pkg", "1.1", "pkg.core.run", REMOVED, "",
+         "run: Public object was removed", 11),
+    ]
+    groups = prune.classify(found, {("pkg", "1.1", "pkg.core.run", REMOVED,
+                                     "")}, {("pkg", "1.1")})
+    check("classify reads rows that carry release_id as an eighth field",
+          (groups["bad"], groups["superseded"]), ([1], []))
+
+    # The whole delete path of main(), against a stand-in engine: the two
+    # DELETEs, then the recount, then the names of the emptied releases.
+    class PruneEngine:
+        def __init__(self):
+            self.conn, self.began = PruneConn([("pkg", "1.1", "analysed")]), 0
+
+        @contextlib.contextmanager
+        def connect(self):
+            yield self.conn
+
+        @contextlib.contextmanager
+        def begin(self):
+            self.began += 1
+            yield self.conn
+
+    table_rows = [
+        (1, "pkg", "1.1", "python.pkg.x", REMOVED, "", "x: removed", 11),
+        (2, "pkg", "1.1", "python.pkg.y", REMOVED, "", "y: removed", 11),
+        (3, "pkg", "1.2", "pkg.core.run", REMOVED, "",
+         "run: Public object was removed", 12),
+    ]
+
+    class TableConn(PruneConn):
+        has_count = True
+
+        def execute(self, stmt, params=None):
+            sql = " ".join(str(stmt).split())
+            if "information_schema.columns" in sql:
+                self.sql.append((sql, params))
+                if "n_changes" in sql:
+                    return _Result([(1,)] if self.has_count else [])
+                return _Result([(1,)])
+            if sql.startswith("SELECT b.id, p.name, r.version"):
+                self.sql.append((sql, params))
+                return _Result(table_rows)
+            if sql.startswith("DELETE"):
+                self.sql.append((sql, params))
+                return _Result([], rowcount=len(params["ids"]))
+            return super().execute(stmt, params)
+
+    engine = PruneEngine()
+    engine.conn = TableConn([("pkg", "1.1", "analysed")])
+    changes = pd.DataFrame([{
+        "package": "pkg", "package_rank": 1, "version_from": "1.1",
+        "version_to": "1.2", "symbol": "pkg.core.run", "kind": REMOVED,
+        "sub_target": "", "is_private": False, "in_dunder_all": False,
+        "module_depth": 2, "is_top_level": False, "released_at": "2026-01-01",
+        "inherited_by": 0, "was_deprecated_before": False,
+        "explanation": "x.py:3: run: Public object was removed"}])
+    def run_prune(engine):
+        saved = (prune.connect, prune.load_frames, sys.argv)
+        prune.connect = lambda: engine
+        prune.load_frames = lambda: (changes, None, None)
+        # two of three rows is over the 5% guard, which is not what this
+        # case tests, so the guard is raised for it
+        sys.argv = ["db_prune.py", "--yes", "--max-share", "1.0"]
+        out, code = io.StringIO(), None
+        try:
+            with contextlib.redirect_stdout(out):
+                prune.main()
+        except SystemExit as e:
+            code = str(e.code)
+        finally:
+            prune.connect, prune.load_frames, sys.argv = saved
+        return out, code
+
+    out, code = run_prune(engine)
+    check("the prune ran to the end", code, None)
+    kinds = [s.split(" ")[0] for s, _ in engine.conn.sql if
+             s.startswith(("DELETE", "UPDATE", "SELECT p.name"))]
+    check("with --yes: the two deletes, the recount of the releases that "
+          "lost rows, the read-back of the empty ones, in one transaction",
+          (kinds, engine.began), (["DELETE", "DELETE", "UPDATE", "SELECT"],
+                                  1))
+    update = next(params for s, params in engine.conn.sql
+                  if s.startswith("UPDATE"))
+    check("the recount names the release the un-importable rows came from",
+          update["rids"], [11])
+    check("and the output names the release left empty, status unchanged, "
+          "and says the repair step relabels it, not a person",
+          ("n_changes set from the table on 1 release(s)" in out.getvalue(),
+           "**   pkg 1.1   analysed" in out.getvalue(),
+           "NOT changed here" in out.getvalue(),
+           "becomes `unknown` on the next" in out.getvalue()
+           and "db_repair_counts.py" in out.getvalue()),
+          (True, True, True, True))
+    engine = PruneEngine()
+    engine.conn = TableConn([])
+    engine.conn.has_count = False
+    out, code = run_prune(engine)
+    check("on a database without migration 005 the delete still runs, and "
+          "nothing is recounted, said so",
+          (code, [s.split(" ")[0] for s, _ in engine.conn.sql
+                  if s.startswith(("DELETE", "UPDATE"))],
+           "no n_changes column (migration 005 is not applied)"
+           in out.getvalue()), (None, ["DELETE", "DELETE"], True))
+
+
 def main() -> None:
     rows = table()
     m = drop.marked(rows)
@@ -449,6 +598,7 @@ def main() -> None:
     case_prune()
     case_extras()
     case_split()
+    case_prune_recount()
 
     print("\n" + "=" * 60)
     if failures:

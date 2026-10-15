@@ -134,7 +134,13 @@ def load_frames():
     if packages is None:
         print(f"note: {PACKAGES} missing, so github_repo will be null. "
               "Rerun ml/ingest/run_ingest.py to produce it.\n")
-    return pd.read_csv(CHANGES), pd.read_csv(USAGE), packages
+    # Version columns read as text: a file whose versions all look like
+    # numbers ("2.10") would otherwise come back as floats, "2.1", and
+    # match nothing in the table (score_everything reads features.csv the
+    # same way; load_releases too).
+    return (pd.read_csv(CHANGES, dtype={"version_from": str,
+                                        "version_to": str}),
+            pd.read_csv(USAGE), packages)
 
 
 def package_rows(changes: pd.DataFrame, packages) -> list[dict]:

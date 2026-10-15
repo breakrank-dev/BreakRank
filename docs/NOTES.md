@@ -5915,24 +5915,48 @@ changes (§33.5). Today's files cannot fix it, since the loader writes
 only the releases they name. So a repair step of its own,
 `scripts/db_repair_counts.py`, with these rules, and nothing else:
 
-1. **n_changes is the rows in the table**, for every release, whatever
-   load wrote it. For a release today's files name this is what the
-   loader just wrote (`written_counts`, §33.5), so the step changes
-   nothing there; for the rest it is the only count anyone can defend.
+1. **n_changes is the rows in the table**, for every `analysed` release,
+   whatever load wrote it, with one exception: a release the loader
+   COUNTS, a version_to of today's changes.csv (the loader writes a count
+   for no other release, §33.5's `written_counts`), keeps the loader's
+   count when the table holds MORE rows for it than that. Those extra
+   rows are earlier loads' and this run did not produce them, which is
+   db_prune's "superseded" and db_prune's to remove, with its own
+   recount, so the step lists such releases and leaves them. Fewer rows
+   than the loader's count can only mean rows deleted since the load, and
+   is recounted. (Corrected on 15 Oct before any run, on the independent
+   review's two findings. The first wording said "for every release" and
+   claimed the step would change nothing for a release today's files
+   name, which is false whenever such a release carries a superseded row:
+   the repair would have raised its count above the loader's and the next
+   load lowered it again, until db_prune removed the row; on Neon the 58
+   superseded rows of §33.6 sit in exactly such releases. The second
+   wording excluded every release today's files name, which left a
+   release named only as a version_from, or only by a releases.csv row,
+   with a stale count forever: the loader writes no count for those, and
+   db_prune classes their rows as aged out.) A release of any other
+   status with no rows and a count that is not 0 is set to 0 as well: a
+   count of rows that are not there.
 2. **An `analysed` release with no rows that today's files do not name
    becomes `unknown`.** Before 25 Sep that is how a release nobody
    compared was written (the older side of a pair, with the default of
    the day), and nothing has established it since; `analysed` says
    "diffed, changes found", which is false for a release with none. A
    release today's files do name is the loader's to write, and the step
-   leaves it alone (none qualifies after a load: §33.6).
-3. **An `analysed_clean` or `no_baseline` release that has rows is not
-   repaired by rule.** The two kinds of fact contradict each other (a
-   verdict of nothing found, or nothing to compare against, beside rows
-   that say something was found), and which is stale cannot be read from
-   the table. The dry run lists each with its rows, and the decision is
-   written here, release by release, before the apply. Today there are
-   three (§33.6).
+   leaves it alone and lists it (none qualifies after a load: §33.6; one
+   named only by a releases.csv row of a disagreeing package would stay
+   as it is, since the loader does not write those either).
+3. **A release of any other status that has rows is not repaired by
+   rule** (analysed_clean, no_baseline, no_source, yanked,
+   analysis_failed, unknown). The two kinds of fact contradict each other
+   (a verdict of nothing found, or nothing to compare against, beside
+   rows that say something was found), and which is stale cannot be read
+   from the table. The dry run lists each with its rows, and the decision
+   is written here, release by release, before anything is done about it.
+   Today there are three (§33.6). One case resolves itself: a hold whose
+   release today's files name has, by definition, rows this run did not
+   produce, which db_prune removes as superseded and recounts; a hold on
+   a release outside today's files stays a decision.
 4. **Nothing else moves**: no row is deleted, no status other than
    `analysed` is changed, and a release today's files name keeps what the
    loader wrote.
@@ -5942,29 +5966,106 @@ releases it would change, by what changes, with the ones under rule 3
 listed in full; `--expect N` applies rules 1 and 2 in one transaction
 only when N is the number of releases it would change at that moment,
 and refuses otherwise, as `db_drop_versions.py` does. Expected on Neon
-today, from §33.6's report: 321 releases changed, the 156 `analysed`
-ones recounted (151 of them from 0) and the 165 with no rows set to
-`unknown`, plus the 3 of rule 3 as decided; and afterwards every
-release's n_changes equal to its rows, the rule 3 releases excepted
-where their decision says so, so that the sum over releases equals the
-table's 25,564 less those rows.
+today, from §33.6's report: the 165 `analysed` releases with no rows set
+to `unknown`, and of the 156 `analysed` releases whose count is not
+their rows, all but the ones holding db_prune's 58 superseded rows
+recounted (151 of the 156 read 0; the version_to releases with more
+rows than their count are listed and left to db_prune); the dry run's
+own number is the record. Afterwards every release's n_changes equals
+its rows, except the rule 3 holds and the releases db_prune has yet to
+visit, so the sum over releases is the table's 25,564 less those rows.
 
 **db_prune.py** learns the same rule 1 for the releases it deletes rows
 from: after its delete, in the same transaction, each such release's
-n_changes is set from the table, and a release left with no row is
-printed by name for a decision under rule 3, not relabelled by the
-script. Its 72 rows (14 un-importable, 58 superseded, §33.6) go only
-after this round, with Varad's OK and a dry run, as before.
+n_changes is set from the table (where the database has the column), and
+a release left with no row at all is printed by name and not relabelled
+by db_prune: an `analysed` one outside today's files becomes `unknown`
+on the repair step's next run (rule 2), and a named one is the loader's.
+Its 72 rows (14 un-importable, 58 superseded, §33.6) go only after this
+round, with Varad's OK and a dry run, as before.
 
 The order on Neon: the repair's dry run; its output to Varad with the
-rule 3 decisions proposed; the apply with `--expect`; `ml/db.py
---dry-run` and the read-only checks (nothing should change: the loader
-and the repair must agree on every release today's files name, and the
-dry run proves it); then db_prune's dry run and, with the OK, its delete.
-Tested by a new `scripts/test_db_repair.py` and additions to
-`scripts/test_db_drop.py`, on both pandas versions and against a real
-Postgres built from 001-007 that reproduces §33.6's three forms, with
-guards broken on purpose, as every round since §33.
+rule 3 decisions proposed; the apply with `--expect`; the read-only
+checks (db_model_check, db_extras, the status count by SQL; the loader
+is not run, and its dry run reads only the files, so it has nothing to
+say about the table); then db_prune's dry run and, with the OK, its
+delete; then the repair's dry run once more, for the releases db_prune
+emptied, and its apply if there are any. Tested by a new
+`scripts/test_db_repair.py` and additions to `scripts/test_db_drop.py`,
+on both pandas versions and against a real Postgres built from 001-007
+that reproduces §33.6's three forms, with guards broken on purpose, as
+every round since §33.
+
+**The code and what it was tested by (15 Oct, after the rule above was
+pushed as 9f8c22a; the correction to rule 1 and the wording of the
+emptied releases came from the review of this code, before any run).**
+`scripts/db_repair_counts.py`: a dry run of SELECTs only that prints
+each rule's releases by name (the first twelve), the counted releases
+with more rows than the loader's count, and the rule 3 holds in full
+with their rows; `--expect N` applies rules 1 and 2 in one transaction (the
+counts, then the status, the status update guarded by "still
+`analysed`, still no rows") and reads the table again; a database whose
+CHECK does not name `unknown` is refused before anything. "Today's files
+name" is read in the broad sense: changes.csv's version_to and
+version_from, and any releases.csv row whatever its status; the loader's
+`load_frames` now reads the version columns as text, as `load_releases`
+and `score_everything` already did, so a file whose versions all look
+like numbers cannot turn "1.10" into "1.1" on the way (the review's
+finding; no such file exists today). db_prune.py recounts, in its
+delete's transaction, every release it took a row from, skips the
+recount and says so on a database without migration 005 (the review
+found the first version crashed there), and prints by name, status
+unchanged, any release left with no row. `scripts/test_db_repair.py`,
+five cases and 28 checks, on a seventeen-release fixture with one of
+every kind the rule distinguishes (a stale count up and down, never
+compared, named by changes.csv only, named by releases.csv only, clean
+with rows, no_baseline with rows, a stale count on an empty clean
+release, a release in both rules, an unnamed `analysed` release with
+rows that rule 2 must never touch, a counted release with more rows than
+its count that rule 1 must never touch, a counted one with fewer, a
+version_from-only one and a releases.csv-only one with stale counts
+that rule 1 must recount); `scripts/test_db_drop.py` gains a ninth case
+(51 checks now): the recount's SQL and read-back, and db_prune's whole
+delete path through a stand-in engine, the two deletes, the recount and
+the names of the emptied, and the same on a database without the column.
+Both pass on pandas 2.2.3 and 3.0.2. Twenty-seven guards were broken on
+purpose, twenty-one in the repair step and six in db_prune, and each
+turned a check to FAIL; three survived first (rule 2 without its "no
+rows" condition, a prune that skipped the recount, and rule 1's
+exclusion read off the broad set instead of the counted one) and the
+fixtures were strengthened until they were caught; the 41 of §33.5 still
+are. An independent review of the first version found rule 1's
+deviation from rule 4 and then, in the fix, the exclusion drawn too
+wide; the pre-005 crash; the "decided by hand" wording on emptied
+releases (which rule 2 decides); the version dtype; and four wordings in
+the printed output. Each is fixed and the ones that are code have a
+check.
+
+Against a real Postgres: §33.5's scratch table (001-006, the old loader,
+the fixture, the earlier-load releases, 007) plus the forms of §33.6
+seeded by hand, pkg00 0.0.3 `analysed` 0 with 2 rows, 0.0.4 `analysed` 0
+with none, 0.0.5 analysed_clean with a row, 0.0.6 no_baseline with a row,
+0.0.7 `analysed` 5 with 2 rows, 0.0.8 `analysed` 2 with two
+un-importable rows, a stale row in pkg01 99.0.1 (a release of today's
+files whose own rows were all its version string, analysed_clean after
+the deletion step) and a stale row in pkg02 2.0.2 (a live `analysed`
+release, count 15). The deletion step and the load ran as in §33.5. Then
+the repair's dry run: rule 1 0.0.3 (0 -> 2) and 0.0.7 (5 -> 2), rule 2
+0.0.4, pkg02 2.0.2 listed as named with 16 rows against the loader's 15
+and left, rule 3 holds 0.0.5, 0.0.6 and pkg01 99.0.1 with their rows, 3
+releases to change; `--expect 2` refused with nothing changed; `--expect
+3` recounted 2 and relabelled 1 and read 0 still to change, 3 holds;
+afterwards 0.0.3 `analysed` 2/2, 0.0.4 `unknown`, 0.0.7 `analysed` 2/2,
+the holds and pkg02 untouched, and the sum of n_changes 7,820 against
+7,824 rows, the 3 hold rows and pkg02's stale row the difference. A
+second load and a second dry run changed nothing. Then db_prune: dry run
+2 un-importable, 2 superseded (99.0.1's and 2.0.2's stale rows), 8 aged,
+0 in §33.5's category; `--yes` deleted 4 rows, recounted 3 releases and
+printed two left with no row, pkg00 0.0.8 `analysed` and pkg01 99.0.1
+analysed_clean, neither relabelled. The repair's dry run then listed
+0.0.8 under rule 2 and `--expect 1` set it `unknown`; at the end the only
+two releases whose count is not their rows are the two true holds,
+0.0.5 and 0.0.6, which is what the rule says. The Neon runs go in §33.8.
 
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
