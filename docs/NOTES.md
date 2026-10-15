@@ -5792,6 +5792,180 @@ time; db_extras before the deletion step read 2 rows not sent (the
 fixture's) and 64 the loader no longer writes, 0 sent and missing, and
 after it 2 and 0. The Neon runs go in §33.6.
 
+### 33.6 The runs on Neon (13 and 15 Oct)
+
+Code: 1fbf7ba (§33.5, pushed first), 1b9c854 (the loader, the deletion
+step, db_prune, db_extras, db_model_check and the two test files), both
+13 Oct after all 20 test files passed on the Mac; b6ae484 (15 Oct,
+`scripts/db_drop_split.py`, read only, for Varad's question below).
+Everything below was run from the Mac against production, in the order
+§33.5 fixed, and every number it predicted came out as predicted.
+
+**The dry runs, 13 Oct, read only.** The deletion step: 27,900 rows in
+the table; **2,336 marked** (8.4%), 2,270 version strings and 66
+package-metadata strings; by name `__version__` 1,924, `version` 140,
+`VERSION` 120, `version_tuple` 45, `__version_tuple__` 36,
+`__version_info__` 18, `__copyright__` 13, `__date__` 12; no
+`breakrank-fixture` row among them; 1,812 releases lose rows, 1,131 are
+left with none, 1,120 of those read `analysed`; the prediction rows on
+them are two old runs', lambdarank-label_alias 58 and
+lambdarank-label_scoped 1,465, none path length's or the tuned
+fallback's. Inside §33.5's bracket of 1,815 to about 2,800. db_prune: 14
+un-importable, 58 superseded, 4,040 aged out, **2,336 in its new
+category**, would delete 72 (0.3%). db_model_check: path-length 21,452
+predictions from one day, 0 and 0 with a score, and in the whole table
+2,270 and 66. Varad read the dry run's numbers (the raw output reached
+him with the results) and made the Neon branch
+`pre-version-drop-2026-10-15` from production as the restore point, set
+never to auto-delete, and said go.
+
+**The split (15 Oct, `db_drop_split.py`, before the delete), Varad's
+question**: of the 2,336, **1,815 are rows of today's changes.csv**,
+§33.2's count to the row (the file itself: 1,815 by rule, 1,815 distinct
+keys), and **521 came from earlier loads**, every one in a release that
+has left the six-release window (0 in a release today's files still
+name). Of the 1,131 releases left with nothing, **895 are named by
+today's files**, §33.2's all-clear, and the file's list and the table's
+agree on every one (895 in both, 0 file only, 0 table only); 236 are
+earlier loads' only.
+
+**The delete**, `--expect 2336`: 1,523 prediction rows and 2,336
+breakage rows in one transaction; n_changes recounted on 1,812 releases,
+1,120 of them analysed_clean; rows the rules mark afterwards, 0.
+Statuses before: analysed 2,915 (n_changes summing to 23,274),
+analysed_clean 636, analysis_failed 61, no_baseline 178, no_source 24,
+yanked 37; 3,851 releases.
+
+**The load**, `ml/db.py` without `--scores`, its dry run first and
+identical: 23,268 changes, 39,154 used symbols, 314 packages (164 with
+no packages.csv row, F32); 351 packages and 3,204 releases written;
+releases.csv 2,053 rows, agreeing on 183 packages, disagreeing on 4
+(boto3, botocore, filelock, idna), 164 packages uncovered; statuses
+written analysed_clean 1,531, analysed 1,141, no_baseline 178,
+analysis_failed 61, yanked 37, no_source 24, **232 as unknown**, 140
+pre_release and 34 dev_release skipped; **not written 1,815** (1,757
+version strings, 58 metadata), 895 releases left with nothing and
+written analysed_clean; **21,452 rows sent, 25,564 in the table**
+(27,900 less 2,336), one duplicate key dropped before insert, 807 private
+rows kept; usage_index 39,154. And the line §33.5 asked for: **316
+releases still read `analysed` with 0 changes, none of them in today's
+files** (absl-py 2.3.0, aiofile 3.11.1 and 3.12.0, aiosqlite 0.18.0,
+argcomplete 3.6.1 to 3.7.0, and 308 more).
+
+**After.** db_prune 14 / 58 / 4,040 / 0 in the new category, would delete
+72, not run. db_model_check: path-length 21,452 (trained_at 2026-10-12
+07:18:28, pr_auc 0.2651), lambdarank-label_alias-tuned 21,452,
+lambdarank-label_alias 21,440 (58 fewer), lambdarank-label_scoped 17,669
+(1,465 fewer), v0-fake 6; 0 and 0 in the whole table. db_extras: 21,452
+keys built, 1,815 not sent, 0 sent and missing, 4,112 in the table not
+ours (14 + 58 + 4,040, the fixture's among the aged), 1,353 release rows
+not from changes.csv, 82,019 prediction rows. Statuses after: analysed
+1,566 (n_changes summing to 23,797), analysed_clean 1,756,
+analysis_failed 61, no_baseline 178, no_source 24, **unknown 229**,
+yanked 37; still 3,851 releases, and the moves reconcile: analysed fell
+by 1,349, which is the 1,120 that became clean and the 229 that became
+unknown; clean rose by 1,120; nothing else moved.
+
+**229, not 232.** Three of the 232 kept a real status, as the rule says
+they must: boto3 1.43.87, botocore 1.43.87 and openai 3.6.0 read
+analysed_clean, established by an earlier load from a releases.csv that
+agreed on them then; today's disagrees on boto3 and botocore, and does
+not cover openai, or 3.6.0 would not be among the 232. Found by running
+release_plan on the files and reading the three back.
+
+**cryptography 48.0.1**, Varad's question of 12 Oct, reads
+analysed_clean with 0 changes and 0 rows. releases.csv records it as
+`analysed, 1`, cryptography is not among the four packages the files
+disagree on, so changes.csv has that one row for it, and the load wrote
+the release analysed_clean, which it does only when every row is a
+version string or a metadata line: 48.0.0 -> 48.0.1 changed its version
+string and nothing else. (A first look with `awk` read 20 rows for it
+and was wrong: changes.csv's third column is version_from, and the 20 are
+the 48.0.1 -> 49.0.0 pair, 49.0.0's 19 rows plus its version string.)
+The rest of the package: 46.0.4 no_baseline; 46.0.5, 46.0.6, 46.0.7 and
+50.0.1 analysed_clean; 47.0.0 35 rows, 48.0.0 6, 49.0.0 19, 50.0.0 13.
+Varad adds 50.0.1 as the site's third preset, the one-click "nothing
+broke".
+
+**What the table still gets wrong, all of it outside today's files**
+(a read-only report, 15 Oct): 159 releases have an n_changes that is not
+their row count (156 `analysed`, 2 `analysed_clean` that have rows, 1
+`no_baseline` that has rows); the 316 `analysed` with 0 changes are 151
+that have rows, whose count is merely stale, and 165 that have none,
+which nobody compared; no `unknown` release has rows. The loader cannot
+speak for any of these, since today's files do not name them, and the
+deletion step recounted only the releases it touched. **What follows:**
+one repair step, with its rule written here first (§33.7): n_changes set
+from the table for every release; `unknown` for an `analysed` release
+with no rows that today's files do not name; the two clean releases with
+rows and the no_baseline one decided by hand and named; and db_prune
+taught to recount the releases it deletes from, before its 72 rows go,
+which Varad agreed can wait for that. The Neon branch stays until his
+site checks are done.
+
+### 33.7 The repair of what earlier loads left behind. The rule, fixed before the code (15 Oct)
+
+What §33.6 found is one thing in three forms: a release's `n_changes`
+and `analysis_status` were written by the load that saw it, and nothing
+since has read them against the rows the table actually holds. The
+loader upserts and never removes (§8), db_prune deleted 3,745 rows on
+16 Sep (§13.3) and recounted nothing, and before 25 Sep a release the
+loader could not classify took the column's default, `analysed` with 0
+changes (§33.5). Today's files cannot fix it, since the loader writes
+only the releases they name. So a repair step of its own,
+`scripts/db_repair_counts.py`, with these rules, and nothing else:
+
+1. **n_changes is the rows in the table**, for every release, whatever
+   load wrote it. For a release today's files name this is what the
+   loader just wrote (`written_counts`, §33.5), so the step changes
+   nothing there; for the rest it is the only count anyone can defend.
+2. **An `analysed` release with no rows that today's files do not name
+   becomes `unknown`.** Before 25 Sep that is how a release nobody
+   compared was written (the older side of a pair, with the default of
+   the day), and nothing has established it since; `analysed` says
+   "diffed, changes found", which is false for a release with none. A
+   release today's files do name is the loader's to write, and the step
+   leaves it alone (none qualifies after a load: §33.6).
+3. **An `analysed_clean` or `no_baseline` release that has rows is not
+   repaired by rule.** The two kinds of fact contradict each other (a
+   verdict of nothing found, or nothing to compare against, beside rows
+   that say something was found), and which is stale cannot be read from
+   the table. The dry run lists each with its rows, and the decision is
+   written here, release by release, before the apply. Today there are
+   three (§33.6).
+4. **Nothing else moves**: no row is deleted, no status other than
+   `analysed` is changed, and a release today's files name keeps what the
+   loader wrote.
+
+The script is a dry run by default (SELECTs only) that prints the
+releases it would change, by what changes, with the ones under rule 3
+listed in full; `--expect N` applies rules 1 and 2 in one transaction
+only when N is the number of releases it would change at that moment,
+and refuses otherwise, as `db_drop_versions.py` does. Expected on Neon
+today, from §33.6's report: 321 releases changed, the 156 `analysed`
+ones recounted (151 of them from 0) and the 165 with no rows set to
+`unknown`, plus the 3 of rule 3 as decided; and afterwards every
+release's n_changes equal to its rows, the rule 3 releases excepted
+where their decision says so, so that the sum over releases equals the
+table's 25,564 less those rows.
+
+**db_prune.py** learns the same rule 1 for the releases it deletes rows
+from: after its delete, in the same transaction, each such release's
+n_changes is set from the table, and a release left with no row is
+printed by name for a decision under rule 3, not relabelled by the
+script. Its 72 rows (14 un-importable, 58 superseded, §33.6) go only
+after this round, with Varad's OK and a dry run, as before.
+
+The order on Neon: the repair's dry run; its output to Varad with the
+rule 3 decisions proposed; the apply with `--expect`; `ml/db.py
+--dry-run` and the read-only checks (nothing should change: the loader
+and the repair must agree on every release today's files name, and the
+dry run proves it); then db_prune's dry run and, with the OK, its delete.
+Tested by a new `scripts/test_db_repair.py` and additions to
+`scripts/test_db_drop.py`, on both pandas versions and against a real
+Postgres built from 001-007 that reproduces §33.6's three forms, with
+guards broken on purpose, as every round since §33.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
