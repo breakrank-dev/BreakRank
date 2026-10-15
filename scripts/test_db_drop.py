@@ -11,7 +11,7 @@ connection that records every statement, and checks each; then
 scripts/db_prune.py's classification, which must name those rows as a
 category of its own and never delete them.
 
-Seven cases (NOTES §33.5):
+Eight cases (NOTES §33.5, §33.6):
 
   1. The rule, written out again: a version constant or a metadata string
      whose VALUE changed goes; a removed one, one changed to `unset`, a
@@ -31,6 +31,10 @@ Seven cases (NOTES §33.5):
   7. db_extras.py counts them on a line of their own too, reading the
      griffe message out of `detail` however the driver hands it back, and
      builds "what we sent" from the rows the loader sends.
+  8. db_drop_split.py (read only) splits the marked rows and the emptied
+     releases into today's changes.csv and earlier loads, and compares the
+     file's all-clear with the table's both ways (Varad's question of
+     15 Oct).
 """
 
 import contextlib
@@ -42,6 +46,7 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+import scripts.db_drop_split as split_  # noqa: E402
 import scripts.db_drop_versions as drop  # noqa: E402
 import scripts.db_extras as extras  # noqa: E402
 import scripts.db_prune as prune  # noqa: E402
@@ -361,6 +366,77 @@ def case_extras() -> None:
           extras.not_sent_any_more([], {}), set())
 
 
+def _chg(pkg, vf, vt, sym, kind, title=None, old="'1'", new="'2'"):
+    """A changes.csv row with griffe's explanation, as the ingest writes
+    it (the title is the object's bare name for a module-level attribute)."""
+    title = title or sym.rsplit(".", 1)[-1]
+    msg = (f"Attribute value was changed: {old} -> {new}"
+           if kind == CHANGED else "Public object was removed")
+    return {"package": pkg, "version_from": vf, "version_to": vt,
+            "symbol": sym, "kind": kind, "sub_target": "",
+            "explanation": f"x/y.py:3: {title}: {msg}"}
+
+
+def case_split() -> None:
+    print("\n8. db_drop_split: TODAY'S ROWS AND EARLIER LOADS, TOLD APART")
+    # today's changes.csv: pkg 1.1 (two version strings and a change),
+    # pkg 1.2 (its version string only), pkg 1.3 (its rows, __VERSION__
+    # among them, no __title__), pkg 1.4 (its version string only). Not
+    # in it: old 0.5, and 1.3's __title__ row.
+    changes = pd.DataFrame([
+        _chg("pkg", "1.0", "1.1", "pkg.__version__", CHANGED),
+        _chg("pkg", "1.0", "1.1", "pkg._version.version", CHANGED),
+        _chg("pkg", "1.0", "1.1", "pkg.core.run", REMOVED),
+        _chg("pkg", "1.1", "1.2", "pkg.__version__", CHANGED),
+        _chg("pkg", "1.2", "1.3", "pkg.__version__", REMOVED),
+        _chg("pkg", "1.2", "1.3", "pkg._version.version", CHANGED,
+             new="unset"),
+        _chg("pkg", "1.2", "1.3", "pkg.core.Config.VERSION", CHANGED,
+             title="Config.VERSION"),
+        _chg("pkg", "1.2", "1.3", "pkg.__VERSION__", CHANGED),
+        _chg("pkg", "1.3", "1.4", "pkg.__version__", CHANGED),
+    ])
+    # the table: the fixture of the other cases, plus pkg 1.4 with its
+    # version string and one row an earlier load left there, and a
+    # copyright row an earlier load left in pkg 1.1
+    rows = pd.concat([table(), pd.DataFrame([
+        (15, "pkg", "1.4", "pkg.__version__", CHANGED,
+         _msg("__version__", "'1.3'", "'1.4'"), 6, "analysed", 2),
+        (16, "pkg", "1.4", "pkg.old_thing", REMOVED,
+         "old_thing: Public object was removed", 6, "analysed", 2),
+        (17, "pkg", "1.1", "pkg.__about__.__copyright__", CHANGED,
+         _msg("__copyright__", "'2024'", "'2025'"), 1, "analysed", 3),
+    ], columns=drop.COLUMNS)], ignore_index=True)
+    s = split_.split(rows, changes)
+    check("marked rows split: 5 of today's files (1, 2, 4, 13, 15), 3 "
+          "from earlier loads",
+          (s["marked"], s["today"], s["earlier"]), (8, 5, 3))
+    check("of the earlier three, two sit in releases today's files still "
+          "name (1.1's copyright, 1.3's __title__), one aged out (old 0.5)",
+          (s["earlier_live"], s["earlier_aged"]), (2, 1))
+    check("the file's own count, as §33.2 made it: 5 rows, 5 keys",
+          (s["file_marked"], s["file_keys"]), (5, 5))
+    check("releases left with nothing: pkg 1.2 (today's) and old 0.5 "
+          "(earlier); pkg 1.4 keeps its earlier-load row",
+          (s["emptied"], s["emptied_today"], s["emptied_earlier"]),
+          (2, 1, 1))
+    check("the file's all-clear has 1.2 and 1.4; the table empties only "
+          "1.2, and the odd one is named",
+          (s["file_clear"], s["both"], s["file_only"], s["table_only"]),
+          (2, 1, [("pkg", "1.4")], []))
+    out = split_.describe(s)
+    check("the text carries the counts and the odd release",
+          ("rows of today's changes.csv:              5" in out,
+           "from earlier loads:                       3" in out,
+           "file only: pkg 1.4" in out,
+           "other rows" in out), (True, True, True, True))
+    nothing = split_.split(table().iloc[0:0], changes)
+    check("an empty table: nothing marked, nothing emptied, the file's "
+          "all-clear still counted",
+          (nothing["marked"], nothing["emptied"], nothing["file_clear"]),
+          (0, 0, 2))
+
+
 def main() -> None:
     rows = table()
     m = drop.marked(rows)
@@ -372,6 +448,7 @@ def main() -> None:
     case_expect()
     case_prune()
     case_extras()
+    case_split()
 
     print("\n" + "=" * 60)
     if failures:
