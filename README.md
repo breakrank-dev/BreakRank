@@ -70,11 +70,13 @@ Releases from 28 July 2026 on are held back, unseen, for the final evaluation.
 
 | Milestone | Target | Done |
 |---|---|---|
-| 5,000 real API-change rows | 13 Sep 2026 | ☐ |
-| 20,000 labelled rows + model beating baselines | 27 Sep 2026 | ☐ |
+| 5,000 real API-change rows | 13 Sep 2026 | ☑ |
+| 20,000 labelled rows + model beating baselines | 27 Sep 2026 | ☑ |
 | Public live URL | 11 Oct 2026 | ☑ |
 | `requirements.txt` → ranked risk list | 25 Oct 2026 | ☑ |
 | v1 demo ready | 30 Oct 2026 | ☐ |
+
+Both cleared 5 Sep 2026; the learned model was later beaten by the path-length rule, which ships (NOTES §36).
 
 ## Running the pipeline locally (Vaibhav)
 
