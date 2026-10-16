@@ -6067,6 +6067,104 @@ analysed_clean, neither relabelled. The repair's dry run then listed
 two releases whose count is not their rows are the two true holds,
 0.0.5 and 0.0.6, which is what the rule says. The Neon runs go in §33.8.
 
+### 33.8 The repair and the prune on Neon (15 Oct)
+
+Code: 08caefa (§33.7's rule as corrected on review, the repair step,
+db_prune's recount, the loader reading versions as text), pushed after
+test_db_repair.py (28 checks), test_db_drop.py (51) and
+test_db_loader.py (55) passed on the Mac. Before the apply Varad made a
+second restore point, the Neon branch `pre-repair-2026-10-15`, from
+production after §33.6's round, so that a bad repair would roll back
+only the repair. Everything below ran from the Mac against production,
+in §33.7's order, and every number Varad and these notes predicted came
+out as predicted.
+
+**The repair's dry run** (read only): 3,851 releases. Rule 1, 151
+counts to set from the table, all of them from 0 (aiofile 3.12.0 0 -> 1,
+argon2-cffi 21.2.0 0 -> 15, ast-serialize 0.10.0, 0.11.0 and 0.11.1
+0 -> 2, and so on). Rule 2, 165 `analysed` releases with no rows to
+`unknown` (absl-py 2.3.0, aiofile 3.11.1, aiosqlite 0.18.0, argcomplete
+3.6.1, and so on). No release left to the loader. Five counted releases
+with more rows than the loader's count, left for db_prune: anthropic
+1.0.0 (count 367, 387 rows), debugpy 1.8.22 (5, 6), jedi 0.20.0 (15, 19),
+scikit-learn 1.7.0 (67, 69), wrapt 2.2.0 (39, 70); their extra rows,
+20 + 1 + 4 + 2 + 31 = 58, are db_prune's 58 superseded rows to the row.
+Rule 3, three holds, listed with their rows: importlib-metadata 9.0.0
+(analysed_clean, one row, `exercises.normalize_perf`), typedload 2.36
+(analysed_clean, one row, `gensetup.CLASSIFIERS`), and pydantic-ai-slim
+2.37.0 (no_baseline, three rows, the `engine_spec` value of three
+durability classes). 316 releases to change, §33.7's 165 and the 156
+less the five. Varad read it, agreed, and agreed to leave the five and
+the three for later.
+
+**The apply**, `--expect 316`: 151 recounted and 165 set to `unknown` in
+one transaction; afterwards 0 still to change and the 3 holds. The
+read-only checks: 25,564 rows; path-length's 21,452 scores; 0
+version-string and 0 metadata rows; db_extras 0 sent and missing, 4,112
+not ours (14 / 58 / 4,040). Statuses: analysed 1,401 (n_changes summing
+to 25,501), analysed_clean 1,756, analysis_failed 61, no_baseline 178,
+no_source 24, unknown 394, yanked 37; 3,851. Two reconciliations, the
+second Varad's: 25,501 + 58 (the five) + 5 (the holds' rows) = 25,564;
+and against 9 Oct, analysed 2,915 - 1,120 - 229 - 165 = 1,401,
+analysed_clean 636 + 1,120 = 1,756, unknown 229 + 165 = 394, the other
+300 unchanged.
+
+**db_prune**, its dry run 14 un-importable (all ast-serialize), 58
+superseded (in the five releases above), 4,040 aged out, 0 in §33.5's
+category; would delete 72 (0.3%). With Varad's OK, `--yes`: 63
+prediction rows (all lambdarank-label_scoped's, 17,669 -> 17,606) and 72
+breakage rows deleted; n_changes set from the table on the 10 releases
+that lost rows (the five, and five of ast-serialize); five left with no
+row at all, ast-serialize 0.9.0, 0.10.0, 0.11.0, 0.11.1 and 0.11.2,
+`analysed`, named and not relabelled. Its output went to Varad from the
+terminal as `prune_done_first_run.txt`: the command was run a second
+time by mistake, found nothing to delete, changed nothing, and wrote
+over /tmp/prune_done.txt.
+
+**The repair once more**, as §33.7's order says: the dry run had rule 1
+at 0, rule 2 the five ast-serialize releases, the db_prune line at 0,
+the 3 holds; `--expect 5` set the five to `unknown`, 0 recounted, 0
+still to change. The five fit rule 2 more than formally: their only rows
+had an un-importable root, and §9.5 found ast-serialize's to be
+`crates.`, a build directory, so whatever an earlier ingest compared, it
+was not the library.
+
+**Final**, every number Varad listed in advance: 25,492 rows (25,564 -
+72); path-length 21,452 scores; 0 and 0; db_extras 4,040 not ours, all
+aged out, 0 sent and missing, nothing left to delete; 81,956 prediction
+rows. Statuses: analysed 1,396 (n_changes summing to 25,487),
+analysed_clean 1,756, analysis_failed 61, no_baseline 178, no_source 24,
+unknown 399, yanked 37; 3,851. Every release's n_changes is now its rows
+in the table, except the three holds, whose 5 rows are the difference
+between 25,487 and 25,492. That is the end of step 3 of §33.1.
+
+**Two answers for the record.** The three of the 232 that kept a status
+(Varad's question): boto3 1.43.87, botocore 1.43.87 and openai 3.6.0,
+analysed_clean (§33.6). And the wording of `unknown`: Varad changes the
+site's text from "we have not compared it with the one before it" to
+"we can't confirm it was compared with the one before it", and these
+notes follow. Rule 2 of §33.7 says "nobody compared", which is stronger
+than the evidence: a load from before releases.csv existed could have
+diffed one of the 165, found nothing and left no trace. What it means,
+and all it means, is that nothing establishes the release was compared.
+The releases given him to check the text with: idna 3.11, one of the 229
+the files cannot establish, and absl-py 2.3.0, one of the 165. His PR
+carries the text and cryptography 50.0.1 as the third preset, and he
+deletes both Neon branches after his site checks.
+
+**What is left of the database work, one small round with its rule
+first (§33.9): the three holds.** importlib-metadata 9.0.0 and typedload
+2.36 each carry one row from a file outside the library, an exercises
+module and a setup-generation script, of the kind §10.1's layout fix
+stopped the ingest from reading; today's run re-analysed both releases
+and found nothing. db_prune counts a release as re-analysed only when
+today's changes.csv has it as a version_to, so it keeps those rows as
+aged out. pydantic-ai-slim 2.37.0's three rows are true findings from a
+window that started before it; today's window starts at it, releases.csv
+calls it no_baseline, and the loader wrote that over a release an
+earlier load had compared. Both are rules about which verdict wins, and
+they are written before any code touches them.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
