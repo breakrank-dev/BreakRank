@@ -6165,6 +6165,130 @@ calls it no_baseline, and the loader wrote that over a release an
 earlier load had compared. Both are rules about which verdict wins, and
 they are written before any code touches them.
 
+### 33.9 The three holds. The rule, fixed before the code (18 Oct)
+
+§33.8 left three releases whose status and rows contradict each other,
+and both contradictions come from one gap. The loader and db_prune read
+"today's run compared this release" from changes.csv alone, and
+changes.csv records only the pairs that produced rows. The rest of a
+run's verdicts are in releases.csv (§14): the releases compared and
+found clean, and the ones the run did not compare, each with its reason.
+§33.5 made the loader trust releases.csv where it agrees with
+changes.csv; db_prune has not caught up with that, and the loader trusts
+it one step too far in the other direction. So two rules, one for each
+script, and nothing else; no schema changes, no migration.
+
+**Rule A, db_prune: a release is re-analysed today when today's files say
+the pair that produced its rows was run.** That is when changes.csv has
+it as a version_to, as before, OR when releases.csv, for a package the
+two files agree on (§33.5's agreement check, the loader's own
+`release_plan`), gives it `analysed_clean`. The ingest writes
+analysed_clean in exactly one place (run_ingest.py's stage 4), after
+`diff_series` ran the pair (previous -> V) and returned nothing, which is
+§13.2's definition of superseded word for word: the pair was re-run and
+did not produce the row. Nothing else counts: a release that is only a
+version_from, or that releases.csv calls no_baseline, analysis_failed,
+no_source or yanked, or whose package the two files disagree on, was not
+re-analysed, and its rows stay aged out, as §13.2 found and §8 decided
+(no_baseline is §13.2's version_from-only case by name, so this rule
+cannot bring that bug back). The set is computed once, in ml/db.py
+(`live_releases`), from the plan the loader writes from, so db_prune and
+the loader read the same files the same way. Varad's fixture is in no
+file and is untouched, as before.
+
+What follows on Neon: importlib-metadata 9.0.0's `exercises.normalize_perf`
+and typedload 2.36's `gensetup.CLASSIFIERS` are superseded, deleted and
+their releases recounted (0 -> 0) and named as left with no row, status
+unchanged, which for these two is now true. The dry run should read 0
+un-importable, 2 superseded, 4,038 aged out, 0 in §33.5's category,
+would delete 2 (0.0%); `--yes` deletes 2 breakage rows and whatever
+prediction rows sit on them (the dry run does not count those; the
+delete reports them), recounts 2 releases and names both; 25,490 rows
+after. Expected only if today's releases.csv names both releases
+analysed_clean in packages the files agree on, which is how they came to
+read analysed_clean on 15 Oct; the two read-only lines below confirm it
+before anything runs.
+
+**Rule B, the loader: a status that says today's run did not compare a
+release does not replace a verdict from a run that did.** The three such
+statuses are no_baseline (the window started at it), analysis_failed
+(its download or diff failed) and no_source (no sdist today); each
+describes today's run, not the release. For a release the table holds as
+analysed_clean, the status and count stay as they are, rows or no rows
+(with rows it is §33.7's rule 3 hold, which of the two is stale cannot be
+read from the table, and it stays listed; the review asked for this
+order to be stated, since the next sentence would otherwise claim it).
+For any other release the table holds rows for, whatever its status
+reads, the loader writes `analysed` with n_changes equal to those rows:
+rows under a release are the findings of a comparison and `analysed` is
+what they mean, and the status that reads there is whatever a load since
+has stamped over it, which is how pydantic-ai-slim 2.37.0 came to read
+no_baseline with three rows. Otherwise the status is written as before.
+This is §33.5's rule for `unknown` applied to the three: today's files
+merely do not establish the comparison, and an earlier load's did. The
+rows counted are every row of the release, so the rule assumes the
+deletion step of §33.5 has run, as it has (§33.6): on a table still
+holding version-string rows a release with nothing else would read
+`analysed` until that step emptied it. Two statuses are deliberately
+not under it. `yanked` is PyPI's statement about the release itself, not
+about our run, and the site should say it, so it is written as before; a
+yanked release with rows would be §33.7's rule 3 hold, and none has any.
+That is the one judgement in this rule and it is Varad's to overturn.
+And today's `analysed_clean` over a release with rows is written as
+before: today's run compared the pair and found nothing, the rows are an
+earlier run's, and rule A removes them. Today's verdict wins.
+
+What this has been doing since 25 Sep: when a package's window rolls
+forward, the release that becomes its oldest was the version_to of a
+pair in the load before, and each load since has written no_baseline
+over that verdict. The verdicts so overwritten are gone (nothing records
+them, and the Neon branches that held them are deleted), so the rule
+cannot restore them; from here on they are kept. On Neon today, with the
+same files as 15 Oct, exactly one release changes, pydantic-ai-slim
+2.37.0, no_baseline -> `analysed`, n_changes 3: every other release
+today's files call not compared already reads so, with no rows. The load
+prints the releases it kept this way, by name, and separately the
+analysed_clean releases of today's files that still hold rows (rule A's,
+db_prune's to remove; 0 if db_prune ran first, as the order below has
+it). The loader's dry run reads only the files, so it states rule B and
+leaves the names to the load; before the apply, the evidence is the
+repair step's dry run, which reads the table and now says, for each rule
+3 hold, which of these two rules resolves it, or that neither does and
+why (today's files do not name it, or name it only as the older side of
+a pair, or its package disagrees or is not loaded, or they call it
+yanked, or rule B keeps the table's analysed_clean over its rows), and it
+is decided by hand. Rule B
+is read off today's releases.csv through the loader's own code, not off
+the table's status, so the note says what the next load will do and
+nothing else (the review's finding: the first version read the table's
+status, which is right only while the table and the file agree, as they
+do on Neon today, and promised a load for releases the loader will never
+write). Rule A is asked first; read this way the two cannot both apply,
+since a re-analysed release is analysed or analysed_clean in the file.
+
+Expected after both, every number from §33.8's finals: 25,490 breakage
+rows (25,492 - 2); path-length's 21,452 scores; 0 version-string and 0
+metadata rows; db_extras 4,038 not ours, all aged out, 0 sent and
+missing, nothing left to delete. Statuses: analysed 1,397 (n_changes
+summing to 25,490, the table's count, with no exception left),
+analysed_clean 1,756, analysis_failed 61, no_baseline 177, no_source 24,
+unknown 399, yanked 37; 3,851. The repair step's dry run: nothing for
+rules 1 and 2 to change, 0 holds. Prediction rows 81,956 less the ones
+on the two deleted rows.
+
+The order on Neon: the two read-only lines (what releases.csv says about
+the three, and which pairs of their packages changes.csv holds); the
+three dry runs, db_prune's, the loader's and the repair step's (all read
+only), to Varad, who makes a fresh restore branch; `db_prune.py --yes`
+(rule A); `ml/db.py` without `--scores` (rule B; the scores stand); the
+read-only checks: the repair step's dry run, db_model_check, db_extras,
+the status count by SQL. Tested, before any of it, by additions to
+`scripts/test_db_loader.py`, `scripts/test_db_drop.py` and
+`scripts/test_db_repair.py` on both pandas versions, against a real
+Postgres built from 001-007 with the three forms seeded, with guards
+broken on purpose, and an independent review, as every round since §33;
+recorded below when done.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
