@@ -37,6 +37,17 @@ one changes.csv names only as the older side of a pair, is written
 of taking the column's default. scripts/db_drop_versions.py removes the
 rows of the first kind that earlier loads wrote.
 
+WHICH VERDICT WINS (NOTES §33.9, from 18 Oct). A status in releases.csv
+that says today's run did not compare a release (no_baseline,
+analysis_failed, no_source) does not replace a verdict a run before it
+made: a release the table holds as analysed_clean stays so, and one the
+table holds rows for is written `analysed` with those rows as its count
+(shield_verdicts). Until then each load wrote no_baseline over the verdict
+of the release a package's window had rolled its start onto. The same
+section gives db_prune the loader's reading of which releases today
+re-analysed (live_releases): changes.csv's version_to releases and the
+analysed_clean ones of a releases.csv that agrees.
+
 The database is the boundary between the two halves of this project. The
 pipeline writes, the API reads, neither calls the other's code — which
 makes the column meanings the interface. So this follows the frozen
@@ -105,6 +116,13 @@ DB_STATUSES = {"analysed", "analysed_clean", "analysis_failed", "no_source",
 # release's predecessor, which is what its bump_type is measured from.
 CHAIN_STATUSES = {"analysed", "analysed_clean", "no_baseline",
                   "analysis_failed"}
+# Which statuses are a VERDICT, the pair (previous -> V) having been run,
+# and which say only that today's run did not compare V: the window
+# started at it, its download or diff failed, no sdist today (NOTES
+# §33.9). `yanked` is in neither set on purpose: it is PyPI's statement
+# about the release, not about our run, and is written as it comes.
+COMPARED = {"analysed", "analysed_clean"}
+NOT_COMPARED = {"no_baseline", "analysis_failed", "no_source"}
 # Varad's hand-written rows, for the API to be built against before the
 # pipeline produced any (NOTES §8.1). No changes.csv names this package,
 # and nothing on this side deletes or counts its rows as its own.
@@ -296,6 +314,10 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
     breakage_rows sends them: a release whose rows were all its version
     string was diffed and found nothing, so it is analysed_clean with 0
     changes, not `analysed` with a count of rows the table will not hold.
+
+    This plan is the files' reading only. What the table already holds
+    has a say in write_all, through shield_verdicts (§33.9, rule B), and
+    db_prune reads its live set from this plan (live_releases, rule A).
     """
     base = {(r["package"], r["version"]): r for r in release_rows(changes)}
     counts = changes.groupby(["package", "version_to"]).size()
@@ -357,6 +379,121 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
                   skipped=skipped,
                   uncovered=sorted(set(in_changes) - set(releases["package"])))
     return list(known.values()), list(unknown.values()), report
+
+
+def planned_statuses(changes: pd.DataFrame, releases) -> dict:
+    """(package, version) -> the status today's files establish for it, as
+    the loader's plan reads them (release_plan's `known`: changes.csv's
+    version_to releases and, for the packages the two files agree on,
+    releases.csv's rows). A release not here is one today's files do not
+    name, or name only in a package the files disagree on, or name only as
+    the older side of a pair: the loader writes it no status of today's.
+    Varad's fixture package is left out whatever a file says (NOTES §8.1).
+    The reading db_prune's live set and the repair step's hold notes share
+    with the loader (§33.9)."""
+    known, _unknown, _report = release_plan(changes, releases)
+    return {(str(r["package"]), str(r["version"])): r["analysis_status"]
+            for r in known if r["package"] != FIXTURE_PACKAGE}
+
+
+def live_releases(changes: pd.DataFrame, releases) -> set:
+    """(package, version) for every release today's files say was
+    RE-ANALYSED: the pair (previous -> V) was run today, so a row of V in
+    the table that today did not produce is superseded (NOTES §33.9, rule
+    A; db_prune's live set).
+
+    That is every version_to of changes.csv, as it always was, and every
+    release releases.csv gives `analysed_clean` in a package the two files
+    agree on: the ingest writes analysed_clean only after diff_series ran
+    the pair and returned nothing (run_ingest.py, stage 4), which is
+    §13.2's definition of superseded. Nothing else: a version_from-only
+    release, one releases.csv calls no_baseline, analysis_failed,
+    no_source or yanked, or one in a package the files disagree on, was
+    not re-analysed today, and its rows are aged out (§8, §13.2). Read
+    from release_plan, so this is the same reading of the files the
+    loader writes from."""
+    return {key for key, status in planned_statuses(changes, releases).items()
+            if status in COMPARED}
+
+
+def table_state(conn) -> dict:
+    """What the release table holds now, before this load writes to it:
+    (package, version) -> (analysis_status, n_changes, rows in the
+    breakage table). One query, for rule B (NOTES §33.9)."""
+    from sqlalchemy import text
+
+    found = conn.execute(text("""
+        SELECT p.name, r.version, r.analysis_status, r.n_changes,
+               (SELECT count(*) FROM breakage b WHERE b.release_id = r.id)
+        FROM release r
+        JOIN package p ON p.id = r.package_id""")).fetchall()
+    return {(str(n), str(v)): (None if s is None else str(s),
+                               int(c or 0), int(k or 0))
+            for n, v, s, c, k in found}
+
+
+def shield_verdicts(known: list, state: dict) -> tuple[list, list, list]:
+    """RULE B (NOTES §33.9): a status that says today's run did not
+    compare a release (NOT_COMPARED) does not replace a verdict from a
+    run that did. Returns the release rows to write, the ones changed
+    here as (package, version, status in the file, status written,
+    n_changes written, rows in the table), and the analysed_clean
+    releases of today's files that still hold rows (rule A's, db_prune's
+    to remove), as (package, version, rows).
+
+    For a release the table holds as analysed_clean, the status and
+    count stay, rows or no rows (with rows it is §33.7's rule 3 hold, and
+    which of the two is stale cannot be read from the table, so it stays
+    listed). For any other release the table holds rows for, whatever its
+    status reads, `analysed` with n_changes equal to those rows: rows
+    under a release are the findings of a comparison and `analysed` is
+    what they mean; the status there is whatever a load since stamped
+    over it. Otherwise the file's status is written as before. `yanked`
+    and today's own verdicts (analysed, analysed_clean) are written as
+    they come: rows under today's analysed_clean are an earlier run's,
+    and rule A removes them. The rows counted are every row of the
+    release, so this assumes scripts/db_drop_versions.py has run (it
+    has, §33.6): on a table still holding version-string rows a release
+    with nothing else would read `analysed` until the deletion step
+    emptied it."""
+    out, shielded, clean_with_rows = [], [], []
+    for r in known:
+        key = (str(r["package"]), str(r["version"]))
+        status, count, rows = state.get(key, (None, 0, 0))
+        incoming = r["analysis_status"]
+        if incoming == "analysed_clean" and rows > 0:
+            clean_with_rows.append((key[0], key[1], rows))
+        if incoming in NOT_COMPARED and (status == "analysed_clean"
+                                         or rows > 0):
+            kept = (("analysed_clean", count) if status == "analysed_clean"
+                    else ("analysed", rows))
+            r = {**r, "analysis_status": kept[0], "n_changes": kept[1]}
+            shielded.append((key[0], key[1], incoming, kept[0], kept[1],
+                             rows))
+        out.append(r)
+    return out, shielded, clean_with_rows
+
+
+def describe_shield(shielded: list, clean_with_rows: list) -> str:
+    """The two rule B lines of the load, in words."""
+    lines = [f"  rule B (NOTES §33.9): releases today's releases.csv calls "
+             f"not compared that keep an\n  earlier run's verdict: "
+             f"{len(shielded):,}"]
+    for name, ver, incoming, kept, n, rows in shielded[:12]:
+        lines.append(f"    {name} {ver}: {incoming} in the file; written "
+                     f"{kept}, n_changes {n} ({rows} row(s) in the table)")
+    if len(shielded) > 12:
+        lines.append(f"    ... and {len(shielded) - 12:,} more")
+    lines.append(f"  analysed_clean today with rows still in the table: "
+                 f"{len(clean_with_rows):,}"
+                 + ("" if not clean_with_rows else
+                    "   (an earlier run's rows, db_prune's to remove; its "
+                    "dry run classes them, rule A)"))
+    for name, ver, rows in clean_with_rows[:12]:
+        lines.append(f"    {name} {ver}: {rows} row(s)")
+    if len(clean_with_rows) > 12:
+        lines.append(f"    ... and {len(clean_with_rows) - 12:,} more")
+    return "\n".join(lines)
 
 
 def describe_unknown(n: int, unknown_ok: bool | None) -> str:
@@ -724,6 +861,15 @@ def write_all(conn, changes, usage, packages, caps, score_map,
     known, unknown, plan = release_plan(changes, releases, caps["statuses"])
     known = [r for r in known if r["package"] in pkg_id]
     unknown = [r for r in unknown if r["package"] in pkg_id]
+    shielded, clean_with_rows = [], []
+    if caps["analysis_status"]:
+        # RULE B (NOTES §33.9): read what the table holds BEFORE writing
+        # to it, and let no not-compared status from releases.csv replace
+        # a verdict an earlier run made (analysed_clean, or rows in the
+        # table). Until 18 Oct every load wrote no_baseline over the
+        # verdict of the release the window's start had moved onto.
+        known, shielded, clean_with_rows = shield_verdicts(
+            known, table_state(conn))
     for r in known + unknown:
         r["package_id"] = pkg_id[r["package"]]
     upsert = """
@@ -778,6 +924,7 @@ def write_all(conn, changes, usage, packages, caps, score_map,
           "  release status: none written, this database has no "
           "analysis_status column\n  (migration 005).")
     if caps["analysis_status"]:
+        print(describe_shield(shielded, clean_with_rows))
         # What the old default left behind, after this load: a release
         # reading `analysed` with 0 changes was written without a status
         # before 007. With 007 every such row in today's files has just
@@ -1093,6 +1240,12 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     print(f"  package       {analysed:>7,}")
     print(f"  release       {len(rels):>7,}")
     print(describe_plan(known, unknown, plan))
+    absent = sum(1 for r in known if r["analysis_status"] in NOT_COMPARED)
+    print(f"  rule B (NOTES §33.9): of the {absent:,} release(s) above that "
+          "releases.csv calls not compared\n  (no_baseline, analysis_failed, "
+          "no_source), one the table holds a verdict for keeps it:\n  "
+          "analysed_clean stays, rows in the table make it `analysed` with "
+          "their count. That\n  needs the table; the load names them.")
     vs, meta = version_strings(changes), metadata_strings(changes)
     diffed = set(zip(changes["package"], changes["version_to"]))
     clean = sum(1 for r in known if r["analysis_status"] == "analysed_clean"

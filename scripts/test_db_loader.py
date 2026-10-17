@@ -758,6 +758,154 @@ def case_check_schema() -> None:
           (False, True))
 
 
+class StateConn(FakeConn):
+    """A FakeConn whose release table already holds something: answers
+    table_state's query with the (name, version, status, n_changes, rows)
+    it was given."""
+
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def execute(self, stmt, params=None):
+        if "SELECT p.name, r.version, r.analysis_status" in str(stmt):
+            self.sql.append(str(stmt))
+            return _Result(self.state)
+        return super().execute(stmt, params)
+
+
+def case_verdicts() -> None:
+    print("\n12. WHICH VERDICT WINS (§33.9, RULE B): A NOT-COMPARED STATUS "
+          "DOES NOT REPLACE A COMPARED ONE")
+    row = {"package": "p", "released_at": None, "bump_type": None}
+    known = [{**row, "version": v, "analysis_status": s, "n_changes": n}
+             for v, s, n in [("1.0", "no_baseline", 0),
+                             ("1.1", "no_baseline", 0),
+                             ("1.2", "analysis_failed", 0),
+                             ("1.3", "no_source", 0),
+                             ("1.4", "no_baseline", 0),
+                             ("1.5", "no_baseline", 0),
+                             ("1.6", "yanked", 0),
+                             ("1.7", "analysed_clean", 0),
+                             ("1.8", "analysed", 2),
+                             ("1.9", "no_source", 0),
+                             ("2.0", "no_baseline", 0),
+                             ("2.1", "analysed_clean", 0)]]
+    state = {("p", "1.0"): ("analysed_clean", 0, 0),
+             ("p", "1.1"): ("no_baseline", 0, 3),
+             ("p", "1.2"): ("analysed", 5, 5),
+             ("p", "1.3"): ("unknown", 0, 2),
+             ("p", "1.4"): ("analysed", 0, 0),
+             ("p", "1.6"): ("analysed_clean", 0, 0),
+             ("p", "1.7"): ("analysed", 4, 4),
+             ("p", "1.8"): ("no_baseline", 0, 0),
+             ("p", "1.9"): ("analysed_clean", 2, 0),
+             ("p", "2.0"): ("analysed_clean", 0, 2),
+             ("p", "2.1"): ("analysed_clean", 0, 1)}
+    out, shielded, clean_rows = db.shield_verdicts(known, state)
+    check("the table's analysed_clean stays; rows in the table, under "
+          "whatever status, make it `analysed` with their count",
+          [(r["version"], r["analysis_status"], r["n_changes"])
+           for r in out[:4]],
+          [("1.0", "analysed_clean", 0), ("1.1", "analysed", 3),
+           ("1.2", "analysed", 5), ("1.3", "analysed", 2)])
+    check("the old default (`analysed`, 0, no rows), a release not in the "
+          "table, yanked, and today's own verdicts are written as they come",
+          [(r["version"], r["analysis_status"], r["n_changes"])
+           for r in out[4:]],
+          [("1.4", "no_baseline", 0), ("1.5", "no_baseline", 0),
+           ("1.6", "yanked", 0), ("1.7", "analysed_clean", 0),
+           ("1.8", "analysed", 2), ("1.9", "analysed_clean", 2),
+           ("2.0", "analysed_clean", 0), ("2.1", "analysed_clean", 0)])
+    by_ver = {r["version"]: r for r in out}
+    check("a kept analysed_clean keeps its count as it stands, even a stale "
+          "one (the repair step's to fix, §33.7 rule 1), not the rows",
+          (by_ver["1.9"]["analysis_status"], by_ver["1.9"]["n_changes"]),
+          ("analysed_clean", 2))
+    check("the table's analysed_clean stands over its rows too: a §33.7 rule "
+          "3 hold stays one, not `analysed` with the rows' count (the "
+          "review's finding, pinned)",
+          (by_ver["2.0"]["analysis_status"], by_ver["2.0"]["n_changes"]),
+          ("analysed_clean", 0))
+    check("the ones kept are reported with what the file said, what was "
+          "written and the rows",
+          shielded, [("p", "1.0", "no_baseline", "analysed_clean", 0, 0),
+                     ("p", "1.1", "no_baseline", "analysed", 3, 3),
+                     ("p", "1.2", "analysis_failed", "analysed", 5, 5),
+                     ("p", "1.3", "no_source", "analysed", 2, 2),
+                     ("p", "1.9", "no_source", "analysed_clean", 2, 0),
+                     ("p", "2.0", "no_baseline", "analysed_clean", 0, 2)])
+    check("today's analysed_clean over rows is reported as db_prune's, "
+          "whatever the table's status reads (2.1 is Neon's two rule A "
+          "holds' shape); the table's analysed_clean over a not-compared "
+          "status is not (it is not today's)",
+          clean_rows, [("p", "1.7", 4), ("p", "2.1", 1)])
+    check("the plan's own rows are not changed in place",
+          [r["analysis_status"] for r in known[:2]],
+          ["no_baseline", "no_baseline"])
+    check("nothing known, nothing to shield",
+          db.shield_verdicts([], state), ([], [], []))
+    check("the two sets are what §33.9 says, and yanked is in neither",
+          (db.COMPARED, db.NOT_COMPARED,
+           "yanked" in db.COMPARED | db.NOT_COMPARED),
+          ({"analysed", "analysed_clean"},
+           {"no_baseline", "analysis_failed", "no_source"}, False))
+
+    chg, rel = changes(), releases()
+    # delta is in releases.csv only, so packages.csv has to list it for
+    # its releases to be written at all (case 7)
+    listed = pd.DataFrame({"package": ["alpha", "delta"],
+                           "download_rank": [1, 4],
+                           "github_repo": [None, None]})
+    conn = StateConn([("alpha", "1.0.0", "analysed", 2, 2),
+                      ("delta", "3.0.0", "analysed_clean", 0, 0),
+                      ("alpha", "1.3.5", "analysed_clean", 0, 0),
+                      ("alpha", "1.2.0", "analysed", 4, 4)])
+    out = _load(conn, chg, rel, CAPS_007, listed)
+    sent = {(r["package"], r["version"]): (r["analysis_status"],
+                                           r["n_changes"]) for r in conn.rel}
+    check("through the load: alpha 1.0.0 (no_baseline in the file, 2 rows) "
+          "goes in analysed with 2, delta 3.0.0 keeps analysed_clean, alpha "
+          "1.3.5 is yanked as the file says, alpha 1.2.0 is today's clean",
+          (sent[("alpha", "1.0.0")], sent[("delta", "3.0.0")],
+           sent[("alpha", "1.3.5")], sent[("alpha", "1.2.0")]),
+          (("analysed", 2), ("analysed_clean", 0), ("yanked", 0),
+           ("analysed_clean", 0)))
+    asked = [i for i, s in enumerate(conn.sql)
+             if "SELECT p.name, r.version, r.analysis_status" in s]
+    first = next(i for i, s in enumerate(conn.sql)
+                 if "INSERT INTO release" in s)
+    check("the table is read once, after the packages and before the "
+          "release upsert",
+          (len(asked), asked[0] + 1 == first), (1, True))
+    check("and the load says what it kept, by name, and what db_prune has "
+          "to remove",
+          ("earlier run's verdict: 2" in out,
+           "alpha 1.0.0: no_baseline in the file; written analysed, "
+           "n_changes 2 (2 row(s) in the table)" in out,
+           "delta 3.0.0: no_baseline in the file; written analysed_clean, "
+           "n_changes 0 (0 row(s) in the table)" in out,
+           "analysed_clean today with rows still in the table: 1   (an "
+           "earlier run's rows, db_prune's to remove; its dry run classes "
+           "them, rule A)" in out, "alpha 1.2.0: 4 row(s)" in out),
+          (True, True, True, True, True))
+    conn = StateConn([("alpha", "1.0.0", "analysed", 2, 2)])
+    out = _load(conn, chg, rel, {**CAPS_007, "analysis_status": False},
+                listed)
+    check("without the status column (before 005) the table is not asked "
+          "and nothing is said",
+          (any("r.analysis_status" in s for s in conn.sql), "rule B" in out),
+          (False, False))
+    out = io.StringIO()
+    usage = pd.DataFrame({"symbol": ["alpha.f1"], "user_count": [4]})
+    with contextlib.redirect_stdout(out):
+        db.dry_run(chg, usage, listed, rel)
+    check("the dry run states the rule over the not-compared releases of "
+          "the plan (alpha 1.0.0, delta 3.0.0) and leaves the names to the "
+          "load", "rule B (NOTES §33.9): of the 2 release(s) above that "
+          "releases.csv calls not compared" in out.getvalue(), True)
+
+
 def main() -> None:
     chg, rel = changes(), releases()
     check("load_releases collapses the duplicate delta 3.2.0 row",
@@ -775,6 +923,7 @@ def main() -> None:
     case_not_changes()
     case_unknown()
     case_check_schema()
+    case_verdicts()
 
     print("\n" + "=" * 60)
     if failures:

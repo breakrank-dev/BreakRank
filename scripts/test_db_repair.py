@@ -5,7 +5,7 @@ the count it was told?
     python scripts/test_db_repair.py
 
 No database, no network, a few seconds. It builds a release table of
-seventeen releases the way scripts/db_repair_counts.py reads it from
+twenty-three releases the way scripts/db_repair_counts.py reads it from
 Postgres, runs the real planning and applying code against a stand-in
 connection that records every statement, and checks each.
 
@@ -63,6 +63,7 @@ def check(name: str, got, want) -> None:
 
 def table() -> pd.DataFrame:
     """One row per release: id, package, version, status, n_changes, rows.
+    No (package, version) twice: the real table has them unique.
 
      1  pkg 1.1   analysed, 3, 3 rows     consistent, nothing to do
      2  old 1.2   analysed, 0, 4 rows     not named, stale count: rule 1,
@@ -73,10 +74,15 @@ def table() -> pd.DataFrame:
      5  old 0.2   analysed, 2, 0 rows     not named: rules 1 and 2 both
      6  pkg 1.0   analysed, 0, 0 rows     named (version_from): the
                                           loader's, left alone, listed
-     7  pkg 0.9   analysed_clean, 0, 2    rows under a clean verdict: hold
-     8  old 0.3   no_baseline, 0, 1       rows under no_baseline: hold
+     7  pkg 1.4   analysed_clean, 0, 2    rows under a clean verdict, and
+                                          today's agreeing releases.csv
+                                          calls it analysed_clean: hold,
+                                          re-analysed, rule A (db_prune's)
+     8  old 0.3   no_baseline, 0, 1       rows under no_baseline, in no
+                                          file of today's: hold, neither
+                                          rule (the loader never writes it)
      9  old 0.4   analysed_clean, 3, 0    stale count, no rows: rule 1 -> 0
-    10  pkg 1.4   analysed_clean, 0, 0    consistent
+    10  pkg 1.5   analysed_clean, 0, 0    consistent
     11  old 0.5   unknown, 0, 0           consistent
     12  old 0.6   analysed, 0, 0          named by releases.csv only: left
     13  old 0.7   analysed, 2, 3 rows     not named, has rows: rule 1 only,
@@ -93,6 +99,26 @@ def table() -> pd.DataFrame:
     17  old 0.8   analysed, 1, 3 rows     named by releases.csv only, MORE
                                           rows than its count: not the
                                           loader's count, so recounted
+    18  old 0.95  analysed_clean, 0, 1    rows under a clean verdict, in no
+                                          file of today's: hold, neither
+    19  old 0.97  yanked, 0, 1            rows under yanked, in no file of
+                                          today's: hold, neither
+    20  pkg 1.6   no_baseline, 0, 1       the table says not compared, but
+                                          today's agreeing releases.csv says
+                                          analysed_clean: re-analysed, rule
+                                          A (db_prune's), not rule B
+    21  pkg 0.8   unknown, 0, 1           rows under unknown, and today's
+                                          releases.csv calls it no_baseline:
+                                          hold, rule B (the next load writes
+                                          analysed, 1)
+    22  pkg 0.7   no_baseline, 0, 1       rows under no_baseline, and today's
+                                          releases.csv calls it yanked: hold,
+                                          neither (yanked is written as it
+                                          comes)
+    23  pkg 0.6   analysed_clean, 0, 1    rows under a clean verdict, and
+                                          today's releases.csv calls it
+                                          no_baseline: hold, neither (rule B
+                                          keeps the table's analysed_clean)
     """
     rows = [
         (1, "pkg", "1.1", "analysed", 3, 3),
@@ -101,10 +127,10 @@ def table() -> pd.DataFrame:
         (4, "old", "0.1", "analysed", 0, 0),
         (5, "old", "0.2", "analysed", 2, 0),
         (6, "pkg", "1.0", "analysed", 0, 0),
-        (7, "pkg", "0.9", "analysed_clean", 0, 2),
+        (7, "pkg", "1.4", "analysed_clean", 0, 2),
         (8, "old", "0.3", "no_baseline", 0, 1),
         (9, "old", "0.4", "analysed_clean", 3, 0),
-        (10, "pkg", "1.4", "analysed_clean", 0, 0),
+        (10, "pkg", "1.5", "analysed_clean", 0, 0),
         (11, "old", "0.5", "unknown", 0, 0),
         (12, "old", "0.6", "analysed", 0, 0),
         (13, "old", "0.7", "analysed", 2, 3),
@@ -112,21 +138,50 @@ def table() -> pd.DataFrame:
         (15, "pkg", "0.9", "analysed", 5, 2),
         (16, "pkg", "1.2", "analysed", 4, 3),
         (17, "old", "0.8", "analysed", 1, 3),
+        (18, "old", "0.95", "analysed_clean", 0, 1),
+        (19, "old", "0.97", "yanked", 0, 1),
+        (20, "pkg", "1.6", "no_baseline", 0, 1),
+        (21, "pkg", "0.8", "unknown", 0, 1),
+        (22, "pkg", "0.7", "no_baseline", 0, 1),
+        (23, "pkg", "0.6", "analysed_clean", 0, 1),
     ]
     return pd.DataFrame(rows, columns=rep.COLUMNS)
 
 
+PAIRS = [("0.9", "1.0"), ("1.0", "1.1"), ("1.1", "1.2"), ("1.2", "1.3"),
+         ("1.3", "1.3b")]
+
+
 def changes() -> pd.DataFrame:
-    return pd.DataFrame({"package": ["pkg"] * 5,
-                         "version_from": ["0.9", "1.0", "1.1", "1.2", "1.3"],
-                         "version_to": ["1.0", "1.1", "1.2", "1.3", "1.3b"]})
+    """pkg's five pairs, one real change each, with the columns the
+    loader's release_plan reads (live_releases goes through it)."""
+    return pd.DataFrame([
+        {"package": "pkg", "package_rank": 1, "version_from": vf,
+         "version_to": vt, "symbol": f"pkg.f_{vt}", "kind": "OBJECT_REMOVED",
+         "sub_target": "", "released_at": "2026-01-01",
+         "explanation": f"x.py:1: pkg.f_{vt}: Public object was removed"}
+        for vf, vt in PAIRS])
 
 
 def releases() -> pd.DataFrame:
-    return pd.DataFrame({"package": ["pkg", "old", "old"],
-                         "version": ["1.4", "0.6", "0.8"],
-                         "status": ["analysed_clean", "pre_release",
-                                    "analysed"]})
+    """pkg agrees with changes.csv (its five analysed releases, one change
+    each), so its analysed_clean rows count as re-analysed: 1.4, 1.5 and
+    1.6; its 0.8 is no_baseline today, its 0.7 yanked, its 0.6 no_baseline.
+    old is not in changes.csv, so releases.csv's old 0.8 `analysed` makes
+    the two files disagree on it, and nothing of old's is used but the
+    names."""
+    rows = [("pkg", "0.6", "no_baseline", None),
+            ("pkg", "0.7", "yanked", None),
+            ("pkg", "0.8", "no_baseline", None),
+            ("pkg", "1.4", "analysed_clean", 0),
+            ("pkg", "1.5", "analysed_clean", 0),
+            ("pkg", "1.6", "analysed_clean", 0),
+            ("old", "0.6", "pre_release", None),
+            ("old", "0.8", "analysed", 2)]
+    rows += [("pkg", vt, "analysed", 1) for _vf, vt in PAIRS]
+    return pd.DataFrame([{"package": p, "version": v, "released_at": "",
+                          "status": s, "n_changes": n}
+                         for p, v, s, n in rows])
 
 
 # -------------------------------------------------------------------- cases
@@ -160,12 +215,42 @@ def case_rule(p: dict) -> None:
           p["loaders"], [("pkg", "1.0"), ("old", "0.6")])
     check("rule 3: another status but rows in the table is a hold, with its "
           "count and rows",
-          p["holds"], [(7, "pkg", "0.9", "analysed_clean", 0, 2),
-                       (8, "old", "0.3", "no_baseline", 0, 1)])
+          [h[:6] for h in p["holds"]],
+          [(7, "pkg", "1.4", "analysed_clean", 0, 2),
+           (8, "old", "0.3", "no_baseline", 0, 1),
+           (18, "old", "0.95", "analysed_clean", 0, 1),
+           (19, "old", "0.97", "yanked", 0, 1),
+           (20, "pkg", "1.6", "no_baseline", 0, 1),
+           (21, "pkg", "0.8", "unknown", 0, 1),
+           (22, "pkg", "0.7", "no_baseline", 0, 1),
+           (23, "pkg", "0.6", "analysed_clean", 0, 1)])
+    check("and each hold says which rule of §33.9 settles it: re-analysed "
+          "today, rule A, whatever the table's status; else today's file "
+          "calls it not compared and the table has rows, rule B; else "
+          "neither",
+          [h[6].split(":")[0] for h in p["holds"]],
+          ["rule A", "neither rule", "neither rule", "neither rule",
+           "rule A", "rule B", "neither rule", "neither rule"])
+    check("rule B is read off today's file, not the table's status: old 0.3 "
+          "(no_baseline in the table, in no file) is nobody's, pkg 0.8 "
+          "(unknown in the table, no_baseline in the file) is rule B's, and "
+          "the note says why the rest are nobody's",
+          [h[6] for h in p["holds"] if h[0] in (8, 21, 22, 23)],
+          ["neither rule: today's files do not name it, or only as the older "
+           "side of a pair, or its package disagrees or is not loaded; "
+           "decided by hand",
+           "rule B: the next load writes `analysed` with these rows as its "
+           "count",
+           "neither rule: today's files call it yanked; decided by hand",
+           "neither rule: today's files call it no_baseline, and rule B "
+           "keeps the table's analysed_clean over its rows; decided by hand"])
     check("a consistent release of any status is not touched",
           {1, 10, 11} & (set(i for i, _o, _n in p["recount"])
                          | set(p["relabel"]) | set(h[0] for h in p["holds"])),
           set())
+    check("a hold is never recounted or relabelled, whatever settles it",
+          {7, 8, 18, 19, 20, 21, 22, 23}
+          & (set(i for i, _o, _n in p["recount"]) | set(p["relabel"])), set())
 
 
 def case_named() -> None:
@@ -175,7 +260,9 @@ def case_named() -> None:
           "its status",
           named, {("pkg", "0.9"), ("pkg", "1.0"), ("pkg", "1.1"),
                   ("pkg", "1.2"), ("pkg", "1.3"), ("pkg", "1.3b"),
-                  ("pkg", "1.4"), ("old", "0.6"), ("old", "0.8")})
+                  ("pkg", "1.4"), ("pkg", "1.5"), ("pkg", "1.6"),
+                  ("pkg", "0.6"), ("pkg", "0.7"), ("pkg", "0.8"),
+                  ("old", "0.6"), ("old", "0.8")})
     check("without releases.csv, changes.csv alone",
           rep.named_today(changes(), None),
           {("pkg", "0.9"), ("pkg", "1.0"), ("pkg", "1.1"), ("pkg", "1.2"),
@@ -188,6 +275,50 @@ def case_named() -> None:
                  rep.counted_today(changes()))
     check("then old 0.6 is nobody's and becomes unknown too",
           sorted(p["relabel"]), [4, 5, 12])
+    live = rep.live_releases(changes(), releases())
+    check("re-analysed today (ml.db.live_releases): the version_to releases "
+          "and the analysed_clean ones of an agreeing releases.csv; not old "
+          "0.8, whose package disagrees, and not a version_from alone",
+          live, {("pkg", "1.0"), ("pkg", "1.1"), ("pkg", "1.2"),
+                 ("pkg", "1.3"), ("pkg", "1.3b"), ("pkg", "1.4"),
+                 ("pkg", "1.5"), ("pkg", "1.6")})
+    check("the statuses today's files establish, as the loader plans them: "
+          "the version_to releases analysed, releases.csv's rows of the "
+          "agreeing package, nothing of old's",
+          rep.planned_statuses(changes(), releases()),
+          {("pkg", "1.0"): "analysed", ("pkg", "1.1"): "analysed",
+           ("pkg", "1.2"): "analysed", ("pkg", "1.3"): "analysed",
+           ("pkg", "1.3b"): "analysed", ("pkg", "1.4"): "analysed_clean",
+           ("pkg", "1.5"): "analysed_clean", ("pkg", "1.6"): "analysed_clean",
+           ("pkg", "0.6"): "no_baseline", ("pkg", "0.7"): "yanked",
+           ("pkg", "0.8"): "no_baseline"})
+    check("without releases.csv, the version_to releases alone",
+          rep.live_releases(changes(), None),
+          {("pkg", "1.0"), ("pkg", "1.1"), ("pkg", "1.2"), ("pkg", "1.3"),
+           ("pkg", "1.3b")})
+    p = rep.plan(table(), rep.named_today(changes(), releases()),
+                 rep.counted_today(changes()),
+                 rep.live_releases(changes(), None),
+                 rep.planned_statuses(changes(), None))
+    check("without releases.csv no hold is re-analysed or named by a file, "
+          "so every one is nobody's",
+          sorted(set(h[6].split(":")[0] for h in p["holds"])),
+          ["neither rule"])
+    k = ("a", "1")
+    check("the words of each, and rule A before rule B",
+          (rep.resolves(k, "no_baseline", 0, 2, {k}, {k: "analysed_clean"}),
+           rep.resolves(k, "yanked", 0, 2, set(), {k: "no_source"}),
+           rep.resolves(k, "analysed", 0, 2, set(), {k: "analysis_failed"}),
+           rep.resolves(k, "no_baseline", 0, 2, set(), {})),
+          ("rule A: today's files re-analysed it, so db_prune removes these "
+           "rows as superseded",
+           "rule B: the next load writes `analysed` with these rows as its "
+           "count",
+           "rule B: the next load writes `analysed` with these rows as its "
+           "count",
+           "neither rule: today's files do not name it, or only as the older "
+           "side of a pair, or its package disagrees or is not loaded; "
+           "decided by hand"))
 
 
 class Conn:
@@ -270,12 +401,13 @@ class Engine:
         yield self.conn
 
 
-def _main(argv: list, rows: pd.DataFrame, constraint=True):
+def _main(argv: list, rows: pd.DataFrame, constraint=True, packages=None,
+          rels=None):
     engine = Engine(rows, constraint)
     saved = (rep.connect, rep.load_frames, rep.load_releases, sys.argv)
     rep.connect = lambda: engine
-    rep.load_frames = lambda: (changes(), None, None)
-    rep.load_releases = lambda: releases()
+    rep.load_frames = lambda: (changes(), None, packages)
+    rep.load_releases = lambda: releases() if rels is None else rels
     sys.argv = ["db_repair_counts.py"] + argv
     out, code = io.StringIO(), None
     try:
@@ -315,8 +447,44 @@ def case_expect() -> None:
     check("a table with only a hold and a db_prune release: nothing for "
           "the rules, both listed",
           ("Nothing for rules 1 and 2 to change. The 1 rule 3 release(s) "
-           "above are decided by hand." in out,
+           "above are settled as each says, by\ndb_prune, by the next load, "
+           "or by hand (NOTES §33.9)." in out,
            "pkg 1.3b: count 2, rows 3" in out, began), (True, True, 0))
+    out, code, began, writes = _main([], table())
+    check("the dry run reads the live set from both files and says what "
+          "settles each hold",
+          ("pkg 1.4: analysed_clean, n_changes 0, 2 row(s) in the table\n"
+           "          rule A: today's files re-analysed it" in out,
+           "pkg 0.8: unknown, n_changes 0, 1 row(s) in the table\n"
+           "          rule B: the next load writes `analysed`" in out,
+           "old 0.3: no_baseline, n_changes 0, 1 row(s) in the table\n"
+           "          neither rule: today's files do not name it" in out,
+           "pkg 0.7: no_baseline, n_changes 0, 1 row(s) in the table\n"
+           "          neither rule: today's files call it yanked" in out),
+          (True, True, True, True))
+    # a package in releases.csv alone: the loader writes its releases only
+    # if packages.csv lists it (write_all's pkg_id), so the note follows
+    solo = pd.DataFrame([{"package": "solo", "version": "1.0",
+                          "released_at": "", "status": "no_baseline",
+                          "n_changes": None}])
+    rows = pd.concat([table(), pd.DataFrame(
+        [(24, "solo", "1.0", "unknown", 0, 1)], columns=rep.COLUMNS)],
+        ignore_index=True)
+    rels = pd.concat([releases(), solo], ignore_index=True)
+    listed = pd.DataFrame({"package": ["pkg", "solo"], "download_rank": [1, 2],
+                           "github_repo": [None, None]})
+    out_without, _c, _b, _w = _main([], rows, rels=rels)
+    out_with, _c, _b, _w = _main([], rows, packages=listed, rels=rels)
+    check("a hold in a package only releases.csv names is nobody's unless "
+          "packages.csv lists the package, as for the loader (the review's "
+          "finding)",
+          ("solo 1.0: unknown, n_changes 0, 1 row(s) in the table\n"
+           "          neither rule: today's files do not name it, or only as "
+           "the older side of a pair, or its package disagrees or is not "
+           "loaded" in out_without,
+           "solo 1.0: unknown, n_changes 0, 1 row(s) in the table\n"
+           "          rule B: the next load writes `analysed`" in out_with),
+          (True, True))
     out, code, began, writes = _main(["--expect", "9"], table(), False)
     check("a database without migration 007 is refused before anything",
           (code is not None and "migration 007" in code, began, writes),
@@ -334,14 +502,15 @@ def case_text(p: dict) -> None:
            "left to the loader (where the files agree): 2" in out,
            "than its count: 1" in out,
            "      pkg 1.3b: count 2, rows 3" in out,
-           "not touched here: 2" in out,
+           "not touched here: 8\n      (each with the rule of NOTES §33.9 "
+           "that settles it, or none)" in out,
            "releases this would change: 9" in out),
           (True, True, True, True, True, True, True))
     check("the recounts and relabels by name",
           ("old 1.2: 0 -> 4" in out, "old 0.2: 2 -> 0" in out,
            "      old 0.1\n" in out), (True, True, True))
     check("the holds with their rows",
-          ("pkg 0.9: analysed_clean, n_changes 0, 2 row(s) in the table"
+          ("pkg 1.4: analysed_clean, n_changes 0, 2 row(s) in the table"
            in out, "          pkg.a   OBJECT_REMOVED" in out,
            "old 0.3: no_baseline, n_changes 0, 1 row(s) in the table"
            in out), (True, True, True))
@@ -349,7 +518,9 @@ def case_text(p: dict) -> None:
 
 def main() -> None:
     p = rep.plan(table(), rep.named_today(changes(), releases()),
-                 rep.counted_today(changes()))
+                 rep.counted_today(changes()),
+                 rep.live_releases(changes(), releases()),
+                 rep.planned_statuses(changes(), releases()))
     case_rule(p)
     case_named()
     case_transaction(p)

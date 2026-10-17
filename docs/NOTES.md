@@ -6289,6 +6289,100 @@ Postgres built from 001-007 with the three forms seeded, with guards
 broken on purpose, and an independent review, as every round since §33;
 recorded below when done.
 
+**The code and what it was tested by (18 Oct, after the rule above; the
+review's two findings are folded into the rule's wording above and
+recorded here).** `ml/db.py`: `COMPARED` and `NOT_COMPARED` (yanked in
+neither); `planned_statuses()`, the status today's files establish per
+release as the loader plans it (release_plan's known, the fixture package
+left out whatever a file says), and `live_releases()`, rule A's set, the
+COMPARED ones of those; `table_state()`, one query before any write
+(status, count and rows per release); `shield_verdicts()`, rule B, pure,
+returning the rows to write, the ones kept and today's analysed_clean
+releases that still hold rows; `describe_shield()`. `write_all` reads the
+table and shields before the release upsert, where the database has the
+status column, and prints both lists by name; the dry run states the rule
+over the plan's not-compared releases and leaves the names to the load.
+`scripts/db_prune.py` takes its live set from `live_releases(changes,
+load_releases())`. `scripts/db_repair_counts.py` reads the same two
+functions and says, for each rule 3 hold, what settles it, rule B through
+`shield_verdicts` itself on that one release, and changes nothing else
+(§33.7's rule 4 holds: the live set and the statuses feed only the
+note, and the note reads the packages the loader loads, packages.csv's
+and changes.csv's, so a package only releases.csv names is nobody's
+until packages.csv lists it, as for the loader). Tests:
+`test_db_loader.py` case 12 (14 checks: twelve chosen pairings of table
+state and incoming status, among them the table's analysed_clean over
+rows kept under a not-compared status and today's analysed_clean over
+the table's analysed_clean with rows, Neon's two rule A holds' shape;
+the load's SQL order, the pre-005 path, the dry run's line),
+`test_db_drop.py` case 10 (8: the live set with, without and with a
+disagreeing releases.csv, the fixture package in a file, classify, and
+db_prune's dry run through a stand-in engine), `test_db_repair.py` (10
+more, on a fixture rebuilt so no release appears twice: holds of every
+kind the note distinguishes, among them a release the table calls
+no_baseline that today's file calls analysed_clean, rule A's; one the
+table calls unknown that the file calls no_baseline, rule B's; one in no
+file, one yanked today, one whose analysed_clean the rule keeps over its
+rows, one in a package only releases.csv names, with and without a
+packages.csv row). 69 / 59 / 38 checks, both pandas versions, the other
+eighteen test files unchanged and passing. Thirty-nine guards broken on purpose
+(A1-A4, B1-B20, P1-P2, R1-R13, the last six of the R's and the last two
+B's written from the review's findings): thirty-eight caught, each at
+the first run after the fixtures above; R1, rule B asked before rule A,
+survives and must, since read off the file the two rules cannot both
+apply. The 41
+of §33.5 and 27 of §33.7 re-run and still caught (two re-pointed at lines
+this round moved).
+
+The independent review found: (1) the repair step's note read rule B off
+the table's status where the rule speaks of today's file, right on Neon
+only because the 15 Oct load used the same files, and wrong in general
+(a release in no file of today's, with no_baseline in the table, was
+promised a load that will never come); fixed as above, with the fixture
+cases that showed it. (2) Rule B's two sentences both covered the
+table's analysed_clean with rows and the code chose the first without
+the rule saying so; the rule now says it, and a check pins it. On the
+second pass: the note's reading of "named" omitted the loader's package
+filter (fixed, with a check); the claim that one run had shown both
+orders end the same, when it had shown one order and an idempotent
+second load (both orders now run, below); an overclaim about case 12's
+coverage (reworded above). Also noted and taken: the fixture package
+could have become live through a releases.csv row (now excluded by
+name); rule B counts every row and so assumes the deletion step has run
+(stated above); one wording in the load's output. The numbers and the
+no-crash paths (pre-005, pre-007, no releases.csv) were checked and
+found right.
+
+Against a real Postgres: §33.7's whole sequence first (001-006, the old
+loader, the fixture and the earlier loads, the three forms, 007, the
+deletion step, the load, repair --expect 3, prune --yes, repair --expect
+1), then §33.9's forms seeded (pkg00 0.0.9 yanked with a row, pkg00
+0.0.10 analysed_clean with none, pkg03 0.0.1 analysed_clean with a row)
+and a releases.csv built to agree with the scratch changes.csv (every
+version_to analysed with the ingest's raw count, each package's oldest
+version_from no_baseline), naming pkg00 0.0.5 analysed_clean, 0.0.6 and
+0.0.10 no_baseline, 0.0.9 yanked and pkg03 0.0.1 analysed_clean with
+pkg03's first count off by one so the files disagree on it. The repair's
+dry run: nothing for rules 1 and 2, four holds, 0.0.5 rule A, 0.0.6 rule
+B, 0.0.9 "today's files call it yanked", pkg03 0.0.1 "today's files do
+not name it, or its package disagrees". db_prune's dry run 0 / 1 / 9 /
+0, would delete 1. The loader's dry run: 61 not-compared releases, the
+rule stated. The load was run FIRST here, on purpose, to see the other
+line: rule B kept 2 (0.0.6 no_baseline -> `analysed` 1; 0.0.10 kept
+analysed_clean), 1 analysed_clean of today's with a row still in the
+table (0.0.5); then db_prune --yes deleted that row, 0 predictions,
+recounted 0.0.5 and named it, analysed_clean, left with no row; a second
+load kept the same 2 and found 0 still with rows; the repair's dry run
+then showed the two true holds and nothing to change; at the end 7,821
+rows and n_changes equal to rows everywhere but those two. Then the same
+sequence once more from scratch in Neon's order, the prune first: it
+deleted the same row and named 0.0.5, the load then kept the same 2 and
+found 0 analysed_clean of today's with rows (the line §33.9 predicts for
+this order), db_prune's dry run had nothing to do, and the end state was
+the first run's line for line. Saved as run46/sequence_pg62.txt and
+sequence_pg63_prune_first.txt in the session's scratch space. The Neon
+run goes in §33.10.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on

@@ -36,7 +36,10 @@ three different things and only two of them should go:
       this row. tokenizers is the clear case: the same 12 changes were
       once recorded under two wrong roots, and a clean re-extraction
       produced one. Within a release we just re-analysed, our row set is
-      authoritative.
+      authoritative. "Re-analysed" is read from both files (NOTES §33.9,
+      rule A, from 18 Oct): a version_to of changes.csv, or a release an
+      agreeing releases.csv gives analysed_clean, since the ingest writes
+      that only after the pair was diffed and nothing came of it.
 
   80  AGED OUT — KEPT, and this is the interesting one. The release left
       the six-release window, so we no longer look that far back. But the
@@ -85,7 +88,8 @@ import pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.db import (FIXTURE_PACKAGE, breakage_rows, connect,  # noqa: E402
-                   load_frames, not_a_change, release_rows)
+                   live_releases, load_frames, load_releases, not_a_change,
+                   release_rows)
 
 BAD_ROOTS = ("python.", "bindings.", "py_src.", "crates.", "_cffi_src.")
 
@@ -195,7 +199,18 @@ def main() -> None:
     # Aged-out rows are KEPT (NOTES §8): someone upgrading litellm
     # 1.95 -> 1.97 still wants to know what 1.96 broke, and our window is
     # a property of OUR ingest, not of their upgrade.
-    live_rel = set(zip(changes["package"], changes["version_to"]))
+    #
+    # And from 18 Oct (NOTES §33.9, rule A) the pair counts as re-run
+    # when releases.csv says so too: a release it gives analysed_clean,
+    # in a package the two files agree on, was diffed against the one
+    # before it and nothing came of it, so changes.csv has no row to hold
+    # it by, and until today its earlier rows passed as aged out
+    # (importlib-metadata 9.0.0, typedload 2.36; §33.8). no_baseline,
+    # analysis_failed, no_source and yanked say the pair was NOT run, and
+    # stay out: no_baseline is the version_from-only case above by name.
+    # Read from the loader's own plan, in ml/db.py, so both read the files
+    # the same way.
+    live_rel = live_releases(changes, load_releases())
 
     engine = connect()
     with engine.connect() as conn:

@@ -37,7 +37,16 @@ it, because the loader writes only the releases they name. So:
      repaired by rule: a verdict of nothing found beside rows that say
      something was found, and which is stale cannot be read from the
      table. Each is listed in full, rows included, and decided by hand,
-     written up in NOTES before anything is done about it.
+     written up in NOTES before anything is done about it. Since 18 Oct
+     (NOTES §33.9) the listing says which of two other scripts' rules
+     resolves a hold, where one does: a release today's files say was
+     re-analysed (rule A, ml.db.live_releases) has rows db_prune removes
+     as superseded; a release today's releases.csv calls not compared
+     (rule B, ml.db.NOT_COMPARED, read off the file through the loader's
+     own shield_verdicts) is written `analysed` with its rows' count by
+     the next load. The rest stay decided by hand, and the note says why
+     (not in today's files, or yanked today, or the table's analysed_clean
+     kept over its rows). This step still changes none of them.
   4. Nothing else moves: no row is deleted, no status other than
      `analysed` is changed.
 
@@ -62,10 +71,49 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from ml.db import UNKNOWN, connect, load_frames, load_releases  # noqa: E402
+from ml.db import (UNKNOWN, connect, live_releases,  # noqa: E402
+                   load_frames, load_releases, package_rows,
+                   planned_statuses, shield_verdicts)
 
 COLUMNS = ["id", "package", "version", "status", "n_changes", "rows"]
 SHOW = 12
+
+
+def resolves(key: tuple, status: str, n_changes: int, rows: int,
+             live: set, incoming: dict) -> str:
+    """Which rule of NOTES §33.9 settles a rule 3 hold, in words, or that
+    none does. A release today's files say was re-analysed holds rows an
+    earlier run made, db_prune's superseded (rule A); one today's
+    releases.csv calls not compared is written `analysed` with its rows'
+    count by the next load (rule B). Rule A first: a re-analysed release's
+    rows go, whatever its status reads. Rule B is read off TODAY'S FILE,
+    not the table's status (the review's finding, 18 Oct), and through
+    the loader's own shield_verdicts, so this says what the next load
+    will do and nothing else; a release the loader will not write (not in
+    today's files, named only as the older side of a pair, in a package
+    the files disagree on, or in a package neither packages.csv nor
+    changes.csv has, which main() filters out as write_all does) is
+    nobody's."""
+    if key in live:
+        return ("rule A: today's files re-analysed it, so db_prune removes "
+                "these rows as superseded")
+    if key not in incoming:
+        return ("neither rule: today's files do not name it, or only as the "
+                "older side of a pair, or its package disagrees or is not "
+                "loaded; decided by hand")
+    row = {"package": key[0], "version": key[1],
+           "analysis_status": incoming[key], "n_changes": 0}
+    out, shielded, _clean = shield_verdicts(
+        [row], {key: (status, n_changes, rows)})
+    if shielded and out[0]["analysis_status"] == "analysed":
+        return ("rule B: the next load writes `analysed` with these rows "
+                "as its count")
+    if shielded:
+        return (f"neither rule: today's files call it {incoming[key]}, and "
+                "rule B keeps the table's analysed_clean over its rows; "
+                "decided by hand")
+    return (f"neither rule: today's files call it {incoming[key]}; decided "
+            "by hand")
 
 
 def named_today(changes: pd.DataFrame, releases) -> set:
@@ -87,14 +135,20 @@ def counted_today(changes: pd.DataFrame) -> set:
                    changes["version_to"].astype(str)))
 
 
-def plan(rows: pd.DataFrame, named: set, counted: set) -> dict:
+def plan(rows: pd.DataFrame, named: set, counted: set,
+         live: set = frozenset(), incoming: dict | None = None) -> dict:
     """What the repair would do, release by release. Pure, so the test can
     check it; main() prints it and, with --expect, carries it out.
 
     rows: one row per release, COLUMNS, `rows` the count in the breakage
-    table. Returns the recounts (id, old, new), the relabels (id), the
-    holds of rule 3 and the `analysed` releases with no rows that today's
-    files name (left alone, listed)."""
+    table. `live`: the releases today's files say were re-analysed
+    (ml.db.live_releases); `incoming`: the status today's files establish
+    for each release (ml.db.planned_statuses); both read only to say which
+    rule of §33.9 settles each hold. Returns the recounts (id, old, new),
+    the relabels (id), the holds of rule 3 with what settles each, and the
+    `analysed` releases with no rows that today's files name (left alone,
+    listed)."""
+    incoming = incoming or {}
     r = rows.copy()
     r["n_changes"] = r["n_changes"].fillna(0).astype(int)
     r["rows"] = r["rows"].fillna(0).astype(int)
@@ -119,7 +173,9 @@ def plan(rows: pd.DataFrame, named: set, counted: set) -> dict:
                     zip(recount["id"], recount["n_changes"], recount["rows"])],
         "recount_from_zero": int((recount["n_changes"] == 0).sum()),
         "relabel": [int(i) for i in relabel["id"]],
-        "holds": [(int(i), str(p), str(v), str(s), int(n), int(k))
+        "holds": [(int(i), str(p), str(v), str(s), int(n), int(k),
+                   resolves((str(p), str(v)), str(s), int(n), int(k), live,
+                            incoming))
                   for i, p, v, s, n, k in zip(
                       holds["id"], holds["package"], holds["version"],
                       holds["status"], holds["n_changes"], holds["rows"])],
@@ -166,11 +222,14 @@ def describe(p: dict, hold_rows: dict) -> str:
         lines.append(f"      {name} {ver}: count {old}, rows {new}")
     if len(p["pruners"]) > SHOW:
         lines.append(f"      ... and {len(p['pruners']) - SHOW:,} more")
-    lines.append(f"  rule 3, another status but rows in the table, decided "
-                 f"by hand, not touched here: {len(p['holds']):,}")
-    for i, name, ver, status, n, k in p["holds"]:
+    lines.append(f"  rule 3, another status but rows in the table, not "
+                 f"touched here: {len(p['holds']):,}"
+                 + ("" if not p["holds"] else
+                    "\n      (each with the rule of NOTES §33.9 that settles "
+                    "it, or none)"))
+    for i, name, ver, status, n, k, how in p["holds"]:
         lines.append(f"      {name} {ver}: {status}, n_changes {n}, "
-                     f"{k} row(s) in the table")
+                     f"{k} row(s) in the table\n          {how}")
         for sym, kind in hold_rows.get(i, [])[:SHOW]:
             lines.append(f"          {sym}   {kind}")
         if len(hold_rows.get(i, [])) > SHOW:
@@ -257,13 +316,21 @@ def main() -> None:
                          "Without it nothing is written.")
     args = ap.parse_args()
 
-    changes, _usage, _packages = load_frames()
-    named = named_today(changes, load_releases())
+    changes, _usage, packages = load_frames()
+    releases = load_releases()
+    named = named_today(changes, releases)
     counted = counted_today(changes)
+    live = live_releases(changes, releases)
+    # The loader writes releases only for the packages it writes (write_all,
+    # package_rows: packages.csv and changes.csv), so the note reads the
+    # same set, or it would promise a load for a package nobody loads.
+    loaded = {p["name"] for p in package_rows(changes, packages)}
+    incoming = {k: v for k, v in planned_statuses(changes, releases).items()
+                if k[0] in loaded}
     engine = connect()
     with engine.connect() as conn:
         check_statuses(conn)
-        p = plan(fetch(conn), named, counted)
+        p = plan(fetch(conn), named, counted, live, incoming)
         hold_rows = rows_of(conn, [h[0] for h in p["holds"]])
     print(describe(p, hold_rows))
 
@@ -272,14 +339,15 @@ def main() -> None:
         print("\nNothing for rules 1 and 2 to change." + (
                   "" if not p["holds"] else
                   f" The {len(p['holds'])} rule 3 release(s) above are "
-                  "decided by hand."))
+                  "settled as each says, by\ndb_prune, by the next load, or "
+                  "by hand (NOTES §33.9)."))
         return
     if args.expect is None:
         print(f"\nDry run. Nothing was changed. To apply rules 1 and 2 to "
               f"exactly these {n:,} releases:\n  python "
               f"scripts/db_repair_counts.py --expect {n}\nFirst: send this "
               "output to Varad, with the rule 3 decisions proposed (NOTES "
-              "§33.7).")
+              "§33.7, §33.9).")
         return
     if args.expect != n:
         sys.stdout.flush()
@@ -293,7 +361,7 @@ def main() -> None:
     print(f"\nrecounted n_changes on {done['recounted']:,} releases and set "
           f"{done['relabelled']:,} to unknown, in one transaction.")
     with engine.connect() as conn:
-        after = plan(fetch(conn), named, counted)
+        after = plan(fetch(conn), named, counted, live, incoming)
     print(f"releases the rules would still change: {after['changed']:,} "
           f"(should be 0); rule 3 holds: {len(after['holds']):,}.")
     print("Next: the read-only checks (scripts/db_model_check.py, "

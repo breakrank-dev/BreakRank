@@ -44,6 +44,7 @@ Nine cases (NOTES §33.5, §33.6, §33.7):
 import contextlib
 import io
 import pathlib
+import re
 import sys
 
 import pandas as pd
@@ -54,6 +55,7 @@ import scripts.db_drop_split as split_  # noqa: E402
 import scripts.db_drop_versions as drop  # noqa: E402
 import scripts.db_extras as extras  # noqa: E402
 import scripts.db_prune as prune  # noqa: E402
+from ml import db  # noqa: E402
 from ml.db import FIXTURE_PACKAGE  # noqa: E402
 
 PASS, FAIL = "  ok  ", "  FAIL"
@@ -538,9 +540,11 @@ def case_prune_recount() -> None:
         "inherited_by": 0, "was_deprecated_before": False,
         "explanation": "x.py:3: run: Public object was removed"}])
     def run_prune(engine):
-        saved = (prune.connect, prune.load_frames, sys.argv)
+        saved = (prune.connect, prune.load_frames, prune.load_releases,
+                 sys.argv)
         prune.connect = lambda: engine
         prune.load_frames = lambda: (changes, None, None)
+        prune.load_releases = lambda: None
         # two of three rows is over the 5% guard, which is not what this
         # case tests, so the guard is raised for it
         sys.argv = ["db_prune.py", "--yes", "--max-share", "1.0"]
@@ -551,7 +555,8 @@ def case_prune_recount() -> None:
         except SystemExit as e:
             code = str(e.code)
         finally:
-            prune.connect, prune.load_frames, sys.argv = saved
+            (prune.connect, prune.load_frames, prune.load_releases,
+             sys.argv) = saved
         return out, code
 
     out, code = run_prune(engine)
@@ -586,6 +591,138 @@ def case_prune_recount() -> None:
            in out.getvalue()), (None, ["DELETE", "DELETE"], True))
 
 
+def _change(pkg, vf, vt, sym):
+    return {"package": pkg, "package_rank": 1, "version_from": vf,
+            "version_to": vt, "symbol": sym, "kind": REMOVED,
+            "sub_target": "", "is_private": False, "in_dunder_all": False,
+            "module_depth": sym.count("."), "is_top_level": False,
+            "released_at": "2026-01-01", "inherited_by": 0,
+            "was_deprecated_before": False,
+            "explanation": f"x.py:3: {sym}: Public object was removed"}
+
+
+def case_live() -> None:
+    print("\n10. RULE A (§33.9): A RELEASE AN AGREEING releases.csv CALLS "
+          "CLEAN WAS RE-ANALYSED")
+    # pkg: 1.0 -> 1.1 one change; 1.1 -> 1.2 clean (releases.csv only);
+    # 1.0 is the window's start (no_baseline). other: changes.csv has
+    # nothing, releases.csv says analysed, so the two files disagree.
+    changes = pd.DataFrame([_change("pkg", "1.0", "1.1", "pkg.core.run")])
+    releases = pd.DataFrame([
+        {"package": "pkg", "version": "1.0", "released_at": "",
+         "status": "no_baseline", "n_changes": None},
+        {"package": "pkg", "version": "1.1", "released_at": "",
+         "status": "analysed", "n_changes": 1},
+        {"package": "pkg", "version": "1.2", "released_at": "",
+         "status": "analysed_clean", "n_changes": 0},
+        {"package": "pkg", "version": "1.3", "released_at": "",
+         "status": "yanked", "n_changes": None},
+        {"package": "other", "version": "2.0", "released_at": "",
+         "status": "analysed", "n_changes": 3},
+        {"package": "other", "version": "2.1", "released_at": "",
+         "status": "analysed_clean", "n_changes": 0},
+    ])
+    live = db.live_releases(changes, releases)
+    check("re-analysed today: the version_to release and the clean one of "
+          "the agreeing package; not the window's start, not the yanked "
+          "release, nothing of a package the files disagree on",
+          live, {("pkg", "1.1"), ("pkg", "1.2")})
+    check("without releases.csv, the version_to releases alone, as before",
+          db.live_releases(changes, None), {("pkg", "1.1")})
+    # releases.csv disagreeing on pkg too (a count off by one): nothing of
+    # its clean releases is live, which is the loader's reading as well
+    off = releases.copy()
+    off.loc[off["version"] == "1.1", "n_changes"] = 2
+    check("a package the files disagree on contributes nothing beyond "
+          "changes.csv", db.live_releases(changes, off), {("pkg", "1.1")})
+    with_fixture = pd.concat([releases, pd.DataFrame([
+        {"package": FIXTURE_PACKAGE, "version": "1.0.0", "released_at": "",
+         "status": "analysed_clean", "n_changes": 0}])], ignore_index=True)
+    check("Varad's fixture package is never re-analysed, whatever a file "
+          "says of it (the files agree on it vacuously)",
+          (FIXTURE_PACKAGE, "1.0.0") in db.live_releases(changes,
+                                                         with_fixture),
+          False)
+
+    found = [
+        (1, "pkg", "1.1", "pkg.core.run", REMOVED, "",
+         "run: Public object was removed", 11),
+        (2, "pkg", "1.1", "pkg.old_name", REMOVED, "", "removed", 11),
+        (3, "pkg", "1.2", "exercises.normalize_perf", REMOVED, "",
+         "removed", 12),
+        (4, "pkg", "1.0", "pkg.first", REMOVED, "", "removed", 10),
+        (5, "pkg", "1.3", "pkg.yanked_row", REMOVED, "", "removed", 13),
+        (6, "other", "2.1", "other.x", REMOVED, "", "removed", 21),
+        (7, FIXTURE_PACKAGE, "1.0.0", "fixture.y", REMOVED, "", "removed",
+         99),
+    ]
+    ours = {("pkg", "1.1", "pkg.core.run", REMOVED, "")}
+    groups = prune.classify(found, ours, live)
+    check("so an earlier load's row under today's clean release is "
+          "superseded, beside the version_to release's; the rows under "
+          "no_baseline, yanked, the disagreeing package and the fixture "
+          "are aged out",
+          (groups["superseded"], groups["aged"], groups["bad"],
+           groups["versions"]), ([2, 3], [4, 5, 6, 7], [], []))
+    groups = prune.classify(found, ours, db.live_releases(changes, None))
+    check("and without releases.csv the same row passes as aged out, as it "
+          "did until today", (groups["superseded"], groups["aged"]),
+          ([2], [3, 4, 5, 6, 7]))
+
+    # main() reads both files, through the loader's plan
+    class LiveConn(PruneConn):
+        def execute(self, stmt, params=None):
+            sql = " ".join(str(stmt).split())
+            if "information_schema.columns" in sql:
+                return _Result([(1,)])
+            if sql.startswith("SELECT b.id, p.name, r.version"):
+                return _Result(found)
+            self.sql.append((sql, params))
+            return _Result([])
+
+    class LiveEngine:
+        def __init__(self):
+            self.conn, self.began = LiveConn([]), 0
+
+        @contextlib.contextmanager
+        def connect(self):
+            yield self.conn
+
+        @contextlib.contextmanager
+        def begin(self):
+            self.began += 1
+            yield self.conn
+
+    def dry(releases_frame):
+        engine = LiveEngine()
+        saved = (prune.connect, prune.load_frames, prune.load_releases,
+                 sys.argv)
+        prune.connect = lambda: engine
+        prune.load_frames = lambda: (changes, None, None)
+        prune.load_releases = lambda: releases_frame
+        sys.argv = ["db_prune.py", "--max-share", "1.0"]
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                prune.main()
+        finally:
+            (prune.connect, prune.load_frames, prune.load_releases,
+             sys.argv) = saved
+        return out.getvalue(), engine
+
+    out, engine = dry(releases)
+    check("the dry run counts 2 superseded with releases.csv, and opens no "
+          "transaction",
+          (bool(re.search(r"superseded\s+2\s+delete", out)),
+           bool(re.search(r"aged out of window\s+4\s+KEEP", out)),
+           engine.began, engine.conn.sql), (True, True, 0, []))
+    out, _engine = dry(None)
+    check("and 1 without it",
+          (bool(re.search(r"superseded\s+1\s+delete", out)),
+           bool(re.search(r"aged out of window\s+5\s+KEEP", out))),
+          (True, True))
+
+
 def main() -> None:
     rows = table()
     m = drop.marked(rows)
@@ -599,6 +736,7 @@ def main() -> None:
     case_extras()
     case_split()
     case_prune_recount()
+    case_live()
 
     print("\n" + "=" * 60)
     if failures:
