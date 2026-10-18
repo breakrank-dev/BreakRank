@@ -6383,6 +6383,75 @@ the first run's line for line. Saved as run46/sequence_pg62.txt and
 sequence_pg63_prune_first.txt in the session's scratch space. The Neon
 run goes in §33.10.
 
+### 33.10 The holds round on Neon (18 Oct)
+
+Code: 4d382eb (§33.9's rule alone, pushed first) and e1f1fb1 (the code,
+the tests and the rest of §33.9), after all 21 test files passed on the
+Mac. Varad read the rule before the code ran anywhere, agreed with both
+rules and with leaving `yanked` out of rule B ("PyPI's statement about
+the release, not about our run, so a yanked release with rows should be
+a hold rather than an overwrite"), and checked the expected numbers his
+own way: 25,492 - 2 = 25,490 rows; analysed 1,396 + 1 = 1,397 with
+n_changes 25,487 + 3 = 25,490, "so the old 5-row gap was exactly the
+three holds"; 3,851 releases with only no_baseline down one; 4,038 + 2
+the 4,040 not-ours rows of §33.8.
+
+**The files, read only.** releases.csv: importlib-metadata 9.0.0
+analysed_clean, typedload 2.36 analysed_clean, pydantic-ai-slim 2.37.0
+no_baseline. changes.csv: importlib-metadata 9.0.0 only as the older
+side of 9.0.0 -> 9.0.1, pydantic-ai-slim 2.37.0 only as the older side
+of 2.37.0 -> 2.38.0 (17 rows), typedload 2.36 not at all. The shape both
+rules were written for.
+
+**The three dry runs**, sent to Varad before anything was applied. The
+repair step: 3,851 releases, nothing for rules 1 and 2, the three holds
+each with its rule: importlib-metadata 9.0.0 and typedload 2.36 "rule A:
+today's files re-analysed it, so db_prune removes these rows as
+superseded", pydantic-ai-slim 2.37.0 "rule B: the next load writes
+`analysed` with these rows as its count". db_prune: 0 un-importable, 2
+superseded, 4,038 aged out, 0 in §33.5's category, would delete 2
+(0.0%). The loader: the 15 Oct dry run plus the rule B line, 263
+not-compared releases in the plan (178 + 61 + 24). Varad: "All three
+match §33.9 on my side"; he made the Neon branch pre-holds-2026-10-18
+from production and gave the go-ahead in the agreed order.
+
+**db_prune --yes** (rule A): 2 prediction rows (lambdarank-label_scoped's,
+17,606 -> 17,604) and 2 breakage rows deleted; n_changes set from the
+table on the 2 releases that lost rows; both named as left with no row,
+importlib-metadata 9.0.0 and typedload 2.36, analysed_clean, status
+unchanged and now true.
+
+**The load** (rule B), `ml/db.py` without `--scores`: statuses written
+analysed 1,142 and no_baseline 177 against the dry run's 1,141 and 178,
+the one release the rule moves; the rule B line named it,
+"pydantic-ai-slim 2.37.0: no_baseline in the file; written analysed,
+n_changes 3 (3 row(s) in the table)", with "analysed_clean today with
+rows still in the table: 0" (db_prune had gone first) and 0 releases
+still reading `analysed` with 0 changes; 232 written as unknown as
+before; 21,452 sent, 25,490 in table.
+
+**The read-only checks.** The repair step's dry run: rule 1 0, rule 2 0,
+rule 3 holds 0, nothing to change, the first time since the table
+existed. db_model_check: 25,490 rows, path-length's 21,452 scores (12
+Oct), 0 version-string and 0 metadata rows in the whole table. db_extras:
+0 sent and missing, 4,038 not ours, all aged out, nothing to delete.
+Statuses: analysed 1,397 (n_changes summing to 25,490, the table's
+count), analysed_clean 1,756, analysis_failed 61, no_baseline 177,
+no_source 24, unknown 399, yanked 37; 3,851; 81,954 prediction rows
+(81,956 - 2); releases whose n_changes is not their rows: 0. Every number
+§33.9 and Varad wrote down in advance.
+
+**What this leaves.** Every release's n_changes is its rows in the table,
+every status beside rows is `analysed`, and no release holds a verdict a
+later load stamped over. The database work of §33.1 step 3, begun in
+§33.5, ends here; what remains for the table is Varad's look at the three
+releases on the site (pydantic-ai-slim 2.37.0 reads `analysed` with its
+three `_durability` rows hidden as private, which he noted in advance is
+the expected look, not a failed load) and the deletion of the branch
+after it. From here the loader keeps an earlier run's verdict on every
+load, so the no_baseline count stops growing by one per package each
+time a window rolls forward.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
