@@ -7700,7 +7700,10 @@ a review step is one nobody would run on their own code. The fixer's
 design goes into NOTES this week (§38), before any code; the count of
 how many of today's changes each kind of fix covers sizes it. Nothing of
 it exists yet beyond the design in the plan doc, and it is the item on
-the plan that cannot slip.
+the plan that cannot slip. (18 Oct: §38 is that design. Two things said
+here are corrected there: "a moved import" is not a kind griffe
+reports, so it is not rewritten, §38.1; and the tests run only when the
+user asks, §38.4.)
 
 **Ask 2. Why LambdaRank? What else was tried, and where are the other
 models' metrics?** *Where it stands:* answered more fully than she
@@ -7744,7 +7747,10 @@ for the design (§38): the tool runs offline for every release already
 analysed. The data it needs is small, every analysed change with its
 score and usage count, about 28,000 rows, and ships inside the tool, so
 rank, locate and fix work with no network at all for the 351 packages
-and 3,204 releases the database holds today (§36.4's load). Internet is needed only for a package or
+and 3,204 releases the database holds today (§36.4's load). (18 Oct:
+the figures §38.7 fixes are 21,452 changes, 3,204 releases, 351
+packages, today's dataset after §33.5's deletions; the table's union is
+larger and is not the bundle's source, for the reason given there.) Internet is needed only for a package or
 version the bundle does not have (the source distributions have to be
 downloaded to diff them), and the tool says so and stops rather than
 guessing. The web site stays as the online face. This also protects the
@@ -7759,3 +7765,402 @@ the result before the next review, as a finding, with the table. The
 question for her that is still open is the plan doc's: whether 20 Nov
 is the final evaluation, which decides whether the holdout is opened on
 16 Nov.
+
+## 38. The fixer. The design, fixed before the code (18 Oct)
+
+The guide's first ask (§37) is that the tool changes the code, not only
+ranks the changes; her third is that it runs where the code is, offline.
+This section is the whole design, written before any of it exists, sized
+by today's data, read once by an independent reviewer whose findings are
+folded in (the first draft overclaimed in six places and had two
+unsound cases in each rewrite rule; §38.12 lists them), and it is what
+the code of weeks 2 to 5 of the plan is checked against. The one
+sentence: **for one upgrade of one package, the fixer lists the lines of
+a project that each changed name touches, in the site's order, rewrites
+the lines whose fix is mechanical, and prints a diff to review; it never
+edits without showing the diff, never runs the project's code or the
+package's unless told to run the tests, and never guesses a
+replacement.** That is the shape every serious tool of this kind has
+(ruff's NumPy 2 rule, bump-pydantic, MLCatchUp), and the reason is the
+one §37 gives: a tool that edits a codebase without a review step is one
+nobody would run on their own code.
+
+### 38.1 What it does with each kind of change, sized by today's data
+
+Counted on 18 Oct over the 21,453 rows the loader writes (changes.csv
+less §33.5's version-string and metadata rows; the table holds 21,452,
+one duplicate key dropped before insert, §8), and over the dev set's
+16,580 rows for "used downstream" (`label_alias`, §24: a real downstream
+package imports the changed name). The unit of every count here is a
+ROW, which is a parameter for the parameter kinds: F12's convention,
+under which `redis.Redis.__init__` with 49 moved parameters is 49 rows
+and one function, and one call site.
+
+| kind, as griffe reports it | rows | share | used downstream (dev set) | the fixer's action |
+|---|---|---|---|---|
+| PARAMETER_MOVED, same name, new position | 6,906 | 32.2% | 86 of 5,619 (1.5%) | **rewrite R1**: pass the argument by name |
+| OBJECT_REMOVED | 5,556 | 25.9% | 74 of 4,036 (1.8%) | flag the lines; no replacement is guessed |
+| ATTRIBUTE_CHANGED_VALUE, a constant's value | 4,355 | 20.3% | 117 of 3,029 (3.9%) | list the lines that read it, with old and new value; nothing to rewrite |
+| PARAMETER_REMOVED | 1,613 | 7.5% | 81 of 1,125 (7.2%) | flag the lines that pass it |
+| PARAMETER_CHANGED_DEFAULT | 912 | 4.3% | 84 of 859 (9.8%) | **rewrite R2** where the old default is a plain literal (at most 621 of the 912, §38.4): pin it in calls that leave the parameter out; the 291 sentinels, module constants and lambdas are flagged |
+| PARAMETER_CHANGED_KIND | 596 | 2.8% | 17 of 575 (3.0%) | **rewrite R1** for the 457 that became keyword-only, where the old kind allows a keyword; flag the 139 that became positional-only |
+| PARAMETER_ADDED_REQUIRED | 562 | 2.6% | 15 of 462 (3.2%) | flag: the user must supply a value |
+| OBJECT_CHANGED_KIND | 375 | 1.7% | 39 of 332 (11.7%) | flag |
+| CLASS_REMOVED_BASE | 367 | 1.7% | 70 of 360 (19.4%) | flag the subclasses and isinstance checks |
+| RETURN_CHANGED_TYPE | 138 | 0.6% | 16 of 120 (13.3%) | flag the lines that use the result |
+| PARAMETER_CHANGED_REQUIRED | 73 | 0.3% | 6 of 63 (9.5%) | **rewrite R2** where the old default is a plain literal: the value must now be supplied, and the old default is the one the call relied on; else flag |
+
+Four things the counts say that the table does not. First, the ceiling
+for automatic rewrites is 6,906 + 457 + 621 = 7,984 rows, 37% of all
+rows, plus whatever part of the 73 has a literal old default; it is a
+ceiling because R1 fires only where a resolved call passes the
+parameter positionally and R2 only where a resolved call leaves it out,
+and because some of the 621 are cosmetic (§38.4). Second, of the 605
+rows the dev set says real code imports, 187 are of the three
+rewritable kinds (86 + 84 + 17), about 156 of them with a literal
+default or a keyword-only kind if the kinds' overall shares hold (an
+estimate; the direct count on the dev set is the first line of week 2
+and replaces this sentence); so roughly a quarter of the ROWS that
+downstream code imports is of a rewritable kind. That is a share of
+rows, not of call sites, and "imports" is what the label measures, not
+"breaks" (§36.5: whether the importer passes those arguments, the label
+cannot see). Third, the used-downstream rate runs the other way from the
+rewritable kinds: the two R1 kinds are among the least used (1.5% and
+3.0%) and the flag-only kinds the most (a removed base class 19.4%, a changed return
+type 13.3%, a changed object kind 11.7%). The fixer automates the kinds
+downstream code touches least, because those are the kinds whose fix
+is mechanical; mechanical is not the same as important, and the report
+says so before a panel does. Fourth, the moved parameters are
+concentrated: 594 functions in 167 releases, and sglang's six releases
+hold 4,467 of the 6,906 (0.5.10 alone 2,011), databricks-sdk 0.134.0
+794 and pandas 3.0.0 146; a generated signature that reorders fifty
+parameters is fifty rows and one call site, so counting rows overstates
+the work and understates the value, and the measure that matters is
+call sites in real code (§38.6). One row of the plan doc's table is
+dropped: "a name moved to another module and still exported, rewrite
+the import" has no kind behind it, since griffe's diff reports the old
+path as OBJECT_REMOVED and has no move detection (checked in griffe
+2.2.0's diff.py), so it is a flag like any removal until the ingest
+records the link (§38.11).
+
+### 38.2 Inputs
+
+A project directory (default: the current one), a package name, the
+version upgraded FROM and the version upgraded TO, and the bundle
+(§38.7). The tool is run with the project's own interpreter (`python -m
+fixer`, inside its environment), so the environment is that
+interpreter's site-packages, from `sysconfig`; `--env <path>` names
+another, and two environments are two runs. `--from` defaults to the
+version installed there, read from the package's `*.dist-info/METADATA`
+on disk (the directory name is the normalised distribution name,
+`databricks_sdk-0.134.0.dist-info`), never by importing; the
+distribution's import roots come from its `top_level.txt` or `RECORD`,
+since the two names differ (the `griffe` distribution is a shell whose
+code ships in `griffelib`; the ingest's `resolve_layout` does the same
+job for sdists). `--to` defaults to the newest release of the package
+the bundle holds. The changes in scope are every analysed change whose
+version_to lies in (from, to], as the site's /analyze walks a range (§8,
+`release_rows`), and the tool says for each release in the range what
+the bundle says of it: compared and changed, compared and clean, or not
+compared and why (§33.9's statuses), so an upgrade across a release
+nobody compared is reported as such, never shown as safe. A package or
+version the bundle does not have stops the tool with that sentence and
+the one way forward (run the ingest, which needs the network to fetch
+the source distributions); an empty range (the new version already
+installed, so `--from` reads it) says so and stops; a `--to` newer than
+the bundle's newest says the bundle was built on its manifest's date and
+stops. It does not guess.
+
+### 38.3 Locate: which lines use each changed name
+
+Static only. The fixer parses every `.py` under the project with libcst,
+one parser for locating and rewriting so positions agree, and imports
+nothing from the project or the package; §17's rule for the ingest
+(`scripts/test_no_execution.py`) is the fixer's too. libcst's qualified-
+name metadata resolves the project's imports (`import pkg`, `import
+pkg.mod as m`, `from pkg.mod import name as alias`) into the dotted path
+each name stands for; the project's own relative imports between its
+files are followed only if week 2 has time, and otherwise a name
+imported from the project's own module is reported as unverified. Every
+attribute chain, call, `isinstance` and base-class use is matched
+against the changed symbols' paths: the definition path
+(`redis.client.Redis`) and every export path the ingest recorded for it
+(`export_paths`, `redis.Redis`), since downstream code imports the
+short one. A call to a class is a call to its `__init__`, which is where
+redis 8.0.0's 49 moved or re-defaulted parameters live (§36.5). A method
+defined on a base or mixin and called on the subclass (redis's `set`
+lives on a commands mixin and is called on `Redis` instances; §10.2's
+fold records changes on the defining class) is matched through the
+class's bases, read with griffe from the installed old version, so a
+change on `CoreCommands.set` matches `Redis(...).set(...)`. A method
+called on an instance is resolved only when the instance was made in
+the same scope or module from a known class (`r = Redis(...)`, then
+`r.set(...)`); any other `.set(` is reported as "unverified: a method of
+this name on an object of unknown type", never dropped and never
+rewritten. A reference that is not a direct call (`functools.partial(f,
+1, 2)`, `map(f, ...)`, `super().__init__(host, port)` in a project
+subclass, a project class that subclasses the package's) is reported as
+"referenced, not called here"; project-side subclasses are not followed.
+`from pkg import *` is reported as a file the tool cannot see through;
+`getattr`, strings and `importlib` are invisible and the report says so
+once. Each hit carries the file, line and column, the source line, the
+change it matches, and its confidence: resolved, unverified or
+referenced.
+
+### 38.4 Rewrite: two rules, nothing else
+
+Rewrites are computed per CALL SITE from every row of that function in
+the range, never per row: a call to `Redis(...)` with 49 moved
+parameters is one transform, a parameter with a moved row and a changed-
+default row is handled once, and a call whose function also carries a
+flag (a removed parameter, a new required one, a parameter made
+positional-only) gets no rewrite, since R1 after a removal earlier in
+the signature mis-names every argument after it (old `f(a, b, c)`, new
+`f(a, c)`: `f(1, 2, c=3)` raises "multiple values for c"); the rewrite
+is printed under the flag as what it would be once the flag is dealt
+with. libcst makes the edits and keeps the file's formatting, comments
+and quotes, so a diff shows the change and only the change.
+
+**R1, pass by name.** For a resolved direct call passing positionally an
+argument whose parameter PARAMETER_MOVED or became keyword-only
+(PARAMETER_CHANGED_KIND), the positional arguments from that one to the
+last are rewritten as keywords, `make_zipfile(dst, root, True)` becoming
+`make_zipfile(dst, root, compress=True)`. The rule's premise, that
+passing by name is valid before the upgrade and after it, holds only
+under conditions the first draft left out, each read off the OLD
+signature, which the fixer reads statically with griffe
+(`allow_inspection=False`, as the ingest, §17; the same griffe version
+as the ingest, so kinds and messages agree) from the installed old
+version when it is installed, and otherwise flags: every parameter in
+the rewritten run was positional-or-keyword in the old version (griffe
+counts a positional-only parameter as positional too, so a MOVED row or
+a "became keyword-only" row can sit on one that never took a keyword);
+no parameter in the run became positional-only in the new version; the
+call passes no more positional arguments than the old signature has
+named ones (an overflow into `*args` has no name); the call has no `*`
+or `**` unpacking (positions unknown); and griffe's position counts
+`self`, so a method called on an instance or a class called as a
+constructor is offset by one and `Redis.set(r, k, v)` is not, which the
+fixture project tests both ways. A moved parameter that was also renamed
+is REMOVED plus ADDED_REQUIRED to griffe and is outside the rule; one
+already passed by name needs nothing and is listed as such. A function
+whose old signature griffe cannot read (a `functools.wraps` shell of
+`*args, **kwargs`, an `@overload` set, an attrs or pydantic class whose
+`__init__` is generated; griffe synthesises `dataclasses` only; an
+editable install griffe's finder does not see) is flagged with that as
+the reason, so the user sees why.
+
+**R2, pin the old default.** For a resolved direct call that does not
+pass a parameter whose default changed (PARAMETER_CHANGED_DEFAULT) or
+that is now required (PARAMETER_CHANGED_REQUIRED), and whose old
+default is a plain literal, the fixer adds `name=<old default>` to the
+call. "Plain literal" means: griffe's printed default parses with
+`ast.literal_eval`, is not a mutable empty container (`[]`, `{}`,
+`set()`, since a shared default and a fresh one are different programs
+and a changed mutable default is usually the bug being fixed), and
+differs in value from the new default (griffe compares source text, so
+`'a'` to `"a"` and `1e3` to `1000.0` are rows; those are skipped, and
+the 621 is therefore "at most"). The conditions R1 has on kind and
+unpacking apply: a positional-only parameter takes no `name=`, and a
+call with `**` unpacking may already carry the name. What R2 claims is
+exactly this: the call now states the value it relied on, so the
+upgrade cannot change that value under it. Whether the new release
+still treats that value as the old one did is the library's business
+and sometimes it does not (a `None` that meant "the legacy path" and
+now raises; a default that moved because its meaning moved), which the
+signature cannot show and §38.6's hand check judges; so the report
+prints each R2 line with its second option, "delete this argument to
+accept the new default", and the old and new values side by side.
+Nothing else is rewritten.
+
+The output is a unified diff on stdout, or to a file with `--diff
+<path>`; `--apply` writes the files and still prints the diff; a second
+run after `--apply` finds nothing to rewrite, which is the test of
+idempotence; the project's tests run only with `--test "<command>"`,
+since that executes the user's code and the choice is theirs. Exit
+codes: 0 nothing in the project touched, 1 lines flagged or rewritten
+(this is information, not failure), 2 the tool could not run.
+
+### 38.5 The report, and the site's order
+
+Rank first, then fix, as the guide put it. The report has two parts. The
+first is every change the locate step found in the project, ordered as
+the site orders them, by path length, the ranker that ships (§36), with
+the usage count beside each, then by name inside a tie, as the site
+does; under each change its lines, and for each line the action:
+rewritten (in the diff), flagged (with griffe's words, the reason where
+a rewrite was withheld, and the old and new value where there is one),
+unverified, or referenced. One call with several rows prints once, with
+every row under it. The second part is the rest of the upgrade's
+changes, ranked, one line each, so the user sees what the upgrade
+changed that their code does not touch; it is cut at two hundred lines
+with the count of the rest, since sglang 0.5.10 alone has 2,011.
+Private names (`is_private`, hidden on the site) are reported when the
+project uses them, marked private, since a project that imports a
+private name breaks all the same. griffe is credited in the footer, as
+everywhere.
+
+The GitHub Action is not built before 20 Nov (§38.10). Its design, so
+the panel can ask: a composite action on `pull_request` (never
+`pull_request_target`: it must not check out a fork's code with write
+rights), reading `==` pins of the project's direct dependencies from the
+PR's diff of requirements and lock files, running the CLI once per
+changed pin, and posting the report's first part and the diff as one
+comment, cut to GitHub's limit; it never fails the check on flags, and a
+fork's PR gets no comment since its token cannot write. Applying the
+diff to the branch is a separate opt-in. The CLI alone meets the
+guide's third ask; the action wraps it.
+
+### 38.6 Measured by
+
+Two numbers, as the plan doc fixed them. The first is above: the share
+of rows each kind covers on today's data, 37% of rows rewritable as a
+ceiling, about a quarter of the rows downstream code imports. The second
+is the one that counts, in week 5, on real downstream code, with the
+sample fixed here before any run. The downstream packages are the
+usage scan's (`data/usage_pairs.csv`, one row per scanning package and
+symbol it uses, `ml/ingest/run_usage.py`), restricted to those that use
+a symbol with an R1 or R2 row in an upgrade of the dataset; the TEN with
+the most such symbols are the sample, listed in NOTES before the run,
+and the list is a convenience sample biased to large consumers, said as
+such. The scan kept no version and deleted the trees, so each package's
+latest release at a date stated in NOTES is resolved from PyPI's release
+history and downloaded once (the network use, named), and the old
+version of the changed package is installed from a wheel into a venv per
+package, so R1 has a signature to read (installing a wheel runs no
+package code; an sdist build would, and is not done). For each, the
+fixer runs for the upgrade that produced the change, and the report
+counts: hits, by confidence; rewrites proposed; then every proposed
+rewrite is read by hand and classed correct, wrong, unsafe (parses but
+changes meaning) or no-op (the code already passes by name or pins the
+value), and thirty flagged lines in total across the ten are read the
+same way. The number reported is the precision of the rewrites as a
+count over a count, never a percentage alone, with the hits and the
+unverified share beside it; if fewer than twenty rewrites are proposed
+in all, the counts are reported and no rate is claimed. Recall is not
+claimed, since nothing independent counts the call sites the tool
+missed, and the report says so. No model is fitted anywhere in this, so
+there is no split to protect, but the ten are named before the run for
+the same reason every rule here is fixed before its number.
+
+### 38.7 The offline bundle
+
+The guide's third ask, and the demo's insurance against a sleeping
+backend and the hall's Wi-Fi. The bundle is one SQLite file inside the
+tool (the standard library reads it; no dependency), built by
+`scripts/build_bundle.py` from today's CSV files through the loader's
+own functions (`not_a_change`, `release_plan`), so it holds exactly the
+rows the loader writes and the statuses the loader establishes, by the
+same rules as the site: 21,452 changes, 3,204 releases, 351 packages
+(§36.4's load, §33.6), a few megabytes. Not from the database, for one
+reason the review found: the breakage table has no `export_paths`
+column (migrations 001-004; `breakage_rows` writes symbol_path, kind,
+sub_target and the feature columns), and §38.3's matching of the short
+import path depends on it; so the table's 4,038 aged-out rows, which
+have no changes.csv behind them, are outside the bundle, and the bundle
+is today's dataset where the site is the union (§8). Putting
+`export_paths` into `detail` through the loader would let a later bundle
+be built from the table; it is a dataset change and waits (§38.11).
+Three tables: `release` (package, version, released_at, analysis_status,
+n_changes), `change` (package, version_to, symbol, export_paths, kind,
+griffe's message, old and new value where the message has them,
+is_private, user_count, and the path-length score the site serves), and
+`manifest` (built when, from which files, how many rows, the griffe
+version). The tool never touches the network: rank, locate and rewrite
+work for every release the bundle holds, and for anything else it stops
+and says so (§38.2), including a bundle older than the release asked
+about.
+
+### 38.8 Hard parts, stated up front
+
+Methods on objects need the object's type, which static analysis only
+sometimes has; §38.3's "unverified" is the honest answer and its share
+is reported. A behaviour change that leaves the signature alone is
+invisible to griffe and so to any fixer built on it, and R2's pinned
+value can be one (§38.4). R1 and the base-class matching depend on the
+old version being readable from the environment; a CI runner, a PR that
+has already bumped the version, or a project without the old version
+installed gets flags, not rewrites, until §38.11. Generated or very
+wide signatures (sglang's) produce many rows and few call sites.
+Dynamic imports, `getattr`, star imports and string references are not
+seen, and the report names the files where that could matter. The
+automated kinds are the ones downstream code uses least (§38.1).
+Anything the fixer cannot do, it says in the report rather than doing
+less quietly.
+
+### 38.9 What it never does
+
+Edit a file without printing the diff. Rewrite a line it could not
+resolve. Guess a replacement for a removed name or a value for a new
+required parameter. Run the project's code or the package's, except the
+project's tests when asked with `--test`. Change anything outside the
+lines the located changes touch. Claim recall.
+
+### 38.10 Where the code goes, and the order of work
+
+A new top-level package `fixer/` (`bundle.py` reads the SQLite file;
+`locate.py`; `rewrite.py`, the two rules; `report.py`; `cli.py`, run as
+`python -m fixer <package> --from <version> --to <version> [project]`,
+with a console script `breakrank-fix` once the repository has a
+`pyproject.toml`, which is Varad's and mine to agree on),
+`scripts/build_bundle.py`, and `scripts/test_fixer_*.py` against a small
+fixture project checked into `tests/fixtures/`, with the same discipline
+as every round since §33: expected results written first, guards broken
+on purpose, both pandas versions where pandas is involved. New
+dependency: libcst, for parsing and the rewrites. griffe is already the
+extractor and reads the old signatures too. The review's finding on
+feasibility is taken: the first draft's weeks held more than one person
+part-time can build beside the 30 Oct checkpoint, so the order is by
+value and the cuts are named. Week 2 (19 to 25 Oct): the bundle and
+direct-import locate, with method calls on unknown receivers reported
+as unverified and relative imports only if time remains. Week 3 (26 Oct
+to 1 Nov): R1 against the fixture project and against redis 7.4.1 ->
+8.0.0, the demo's upgrade, with its 49 parameters and its mixin
+methods. Week 4 (2 to 8 Nov): R2, the report, the evaluation's venvs.
+Week 5, 9 to 12 Nov: the evaluation of §38.6; 13 Nov the freeze, so a
+bug the evaluation finds on 12 Nov is fixed and one found later is
+recorded in the report, not fixed; 19 Nov the rehearsal. Cut in this
+order if the weeks run short: the GitHub Action (already out), relative
+imports and instance tracking in locate, R2, the evaluation's sample
+from ten packages to five. R1 is 7,363 of the 7,984-row ceiling and
+stays. The ranking work and this overlap until the 30 Oct checkpoint,
+as the plan has it.
+
+### 38.11 The ingest change this points at, not before 20 Nov
+
+Three things the fixer would do better with data the ingest does not
+yet keep: the old and new parameter lists of a changed function, with
+their kinds, which would free R1 from needing the old version installed
+and let the bundle carry the mapping; the link from a removed name to
+the name it moved to, when a release re-exports it elsewhere, which
+would make the plan doc's "rewrite the import" row real; and
+`export_paths` in the table's `detail`, so a bundle could be built from
+the union the site serves. All three are a `detail` field and a
+re-ingest on a Linux machine, and all wait until after the review, as
+every dataset change does.
+
+### 38.12 What the review of the first draft found
+
+Recorded as the rounds since §33 record theirs. Arithmetic: every count
+and share held; one trio did not (the first draft gave the bundle
+25,490 changes and 3,851 releases "of 351 packages", mixing the table's
+union with today's load), and two units were wrong (the quarter is of
+rows, by F12, and the label measures imports, not breaks). R1 had cases
+its premise does not cover: a positional-only parameter that moved, a
+parameter that moved and became positional-only, an overflow into
+`*args`, a call with unpacking, a removal earlier in the signature, the
+`self` offset, indirect calls, unreadable generated signatures; each is
+now a condition or a flag in §38.4. R2 claimed behaviour unchanged where
+it pins a value whose meaning may have moved; now it claims the pin,
+excludes mutable empty defaults and cosmetic changes, and the hand check
+judges the rest; PARAMETER_CHANGED_REQUIRED is R2's case too. The bundle
+could not be built from the database for want of `export_paths`. The
+evaluation could not recover the scanned sdists or give R1 a signature;
+both are fixed in §38.6. The weeks held too much; the action is out and
+the cuts are ordered. "All of it is located" and "by definition
+installed" overclaimed and are gone. Left open for Varad: the new
+directory and the `pyproject.toml` at the repository's root; whether
+the site should mark R1 and R2 kinds as "fixable by the tool", one rule
+on the kind and the message; and the Action, when it comes, with its
+permissions (`pull-requests: write` for the comment, `contents: write`
+only for the opt-in apply).
