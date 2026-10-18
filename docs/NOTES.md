@@ -6443,14 +6443,18 @@ no_source 24, unknown 399, yanked 37; 3,851; 81,954 prediction rows
 
 **What this leaves.** Every release's n_changes is its rows in the table,
 every status beside rows is `analysed`, and no release holds a verdict a
-later load stamped over. The database work of §33.1 step 3, begun in
-§33.5, ends here; what remains for the table is Varad's look at the three
-releases on the site (pydantic-ai-slim 2.37.0 reads `analysed` with its
-three `_durability` rows hidden as private, which he noted in advance is
-the expected look, not a failed load) and the deletion of the branch
-after it. From here the loader keeps an earlier run's verdict on every
-load, so the no_baseline count stops growing by one per package each
-time a window rolls forward.
+later load stamped over. Varad checked the three on the site the same
+afternoon: importlib-metadata 9.0.0 and typedload 2.36 read
+analysed_clean with "We analysed this release and found no breaking
+changes", pydantic-ai-slim 2.37.0 reads `analysed` with its three
+`_durability` rows hidden as private (the look he said in advance to
+expect, not a failed load), /health still names path-length, and his
+own counts matched: 25,490 rows, analysed 1,397 summing to 25,490, every
+other status unchanged, 0 holds. He then deleted pre-holds-2026-10-18.
+That closes the round, and with it the database work of §33.1 step 3,
+begun in §33.5. From here the loader keeps an earlier run's verdict on
+every load, so the no_baseline count stops growing by one per package
+each time a window rolls forward.
 
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
