@@ -7817,11 +7817,15 @@ ceiling because R1 fires only where a resolved call passes the
 parameter positionally and R2 only where a resolved call leaves it out,
 and because some of the 621 are cosmetic (§38.4). Second, of the 605
 rows the dev set says real code imports, 187 are of the three
-rewritable kinds (86 + 84 + 17), about 156 of them with a literal
-default or a keyword-only kind if the kinds' overall shares hold (an
-estimate; the direct count on the dev set is the first line of week 2
-and replaces this sentence); so roughly a quarter of the ROWS that
-downstream code imports is of a rewritable kind. That is a share of
+rewritable kinds (86 + 84 + 17), and they are 92 functions; counted
+directly on those rows (18 Oct, the same evening), 146 are rewritable
+as the rules stand: the 86 moved, 3 of the 17 kind changes that became
+keyword-only (the overall share, 457 of 596, does not hold among the
+used ones), and 57 of the 84 changed defaults with a literal old
+default; plus whatever of the 6 now-required parameters has one, which
+griffe's message for that kind does not carry (§38.4). So roughly a
+quarter of the ROWS that downstream code imports is of a rewritable
+kind, 146 to 152 of 605. That is a share of
 rows, not of call sites, and "imports" is what the label measures, not
 "breaks" (§36.5: whether the importer passes those arguments, the label
 cannot see). Third, the used-downstream rate runs the other way from the
@@ -7954,7 +7958,10 @@ the reason, so the user sees why.
 pass a parameter whose default changed (PARAMETER_CHANGED_DEFAULT) or
 that is now required (PARAMETER_CHANGED_REQUIRED), and whose old
 default is a plain literal, the fixer adds `name=<old default>` to the
-call. "Plain literal" means: griffe's printed default parses with
+call. griffe's message carries both values for a changed default and
+neither for a now-required parameter ("Parameter is now required"), so
+for the latter the old default is read from the old signature as R1
+reads it, and without the old version installed those are flagged. "Plain literal" means: griffe's printed default parses with
 `ast.literal_eval`, is not a mutable empty container (`[]`, `{}`,
 `set()`, since a shared default and a fresh one are different programs
 and a changed mutable default is usually the bug being fixed), and
@@ -8063,7 +8070,8 @@ is today's dataset where the site is the union (§8). Putting
 be built from the table; it is a dataset change and waits (§38.11).
 Three tables: `release` (package, version, released_at, analysis_status,
 n_changes), `change` (package, version_to, symbol, export_paths, kind,
-griffe's message, old and new value where the message has them,
+griffe's message, old and new value where the message has them, which
+is the changed defaults and the changed values, not the now-required,
 is_private, user_count, and the path-length score the site serves), and
 `manifest` (built when, from which files, how many rows, the griffe
 version). The tool never touches the network: rank, locate and rewrite
