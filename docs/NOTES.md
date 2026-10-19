@@ -8172,3 +8172,35 @@ the site should mark R1 and R2 kinds as "fixable by the tool", one rule
 on the kind and the message; and the Action, when it comes, with its
 permissions (`pull-requests: write` for the comment, `contents: write`
 only for the opt-in apply).
+
+**Varad's answers (19 Oct), which fix the open points.** He read §38.1 and
+§38.4 first, checked the sizing table (every share and the 7,984
+ceiling) and found §38.7 answered the question he had, since the bundle
+goes through the loader's own functions and so counts what the site
+counts. (1) `fixer/` and a root `pyproject.toml`: yes, with four
+conditions, each now part of §38.10. It packages only `fixer`, with the
+SQLite bundle listed as package data: without an explicit package list
+setuptools also finds `api/`, `db/` and `ml/` and refuses the build, and
+without the package data the installed tool has no bundle. No pytest
+settings in it, since `pytest.ini` takes precedence and anything under
+`[tool.pytest]` would be silently ignored. The fixture project goes
+under `scripts/fixtures/`, beside `scripts/test_fixer_*.py`, not
+`tests/fixtures/`: CI's pytest collects everything under `tests/`, so a
+`test_*.py` or `conftest.py` inside the fixture project would run in CI
+against packages CI does not have. And since `--env` exists, the install
+instructions say pipx plus `--env` pointing at the project's venv, so the
+pinned griffe and libcst never land in the user's environment. He checks
+Render and CI once it lands. (2) "Fixable by the tool" on the site: not
+before 20 Nov. The bundle holds 3,204 of the site's 3,851 releases, so a
+mark on the other 647 would send people to a tool that stops on them;
+and R1 and R2 depend on the call, which the site cannot see, so the most
+it could say is "may be rewritable". Revisited once `export_paths` is in
+`detail` and the bundle comes from the table (§38.11). (3) The Action
+waits, and the permissions split stands; two notes for when it is
+built: a commit pushed with the default `GITHUB_TOKEN` starts none of
+the repository's other workflows, so an opt-in apply would land without
+CI running on it unless that is handled; and on a pull request the old
+version is usually not installed, so until §38.11 it would mostly flag
+(§38.8). The plan doc was brought in line with §38 the same evening:
+the fixer table's rows, the weeks' items, "measured by", the decisions.
+Week 2 begins with the bundle and locate.
