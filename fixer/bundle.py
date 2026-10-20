@@ -14,8 +14,11 @@ Three tables and a manifest:
             sub_target, message (griffe's words, the file location
             stripped as the loader strips it), old_value, new_value (where
             the message carries both), is_private, module_depth,
-            public_depth, inherited_by, user_count, score (path length,
-            the ranker that ships, §36)
+            public_depth, inherited_by, user_count (the exact symbol, as
+            the site's usage_index joins it), alias_user_count (the most
+            over the symbol and its export paths, the label's count, §24;
+            "used downstream" means this one), score (path length, the
+            ranker that ships, §36)
   manifest  key, value: built_at, the source files and their hashes, the
             row counts, the griffe version, the schema version
 
@@ -38,7 +41,7 @@ import sqlite3
 
 from packaging.version import InvalidVersion, Version
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 DEFAULT_PATH = (pathlib.Path(__file__).resolve().parent / "data"
                 / "breakrank.sqlite")
 ENV_VAR = "BREAKRANK_BUNDLE"
@@ -65,7 +68,8 @@ CREATE TABLE change (
     message TEXT NOT NULL, old_value TEXT, new_value TEXT,
     is_private INTEGER NOT NULL, module_depth INTEGER NOT NULL,
     public_depth INTEGER NOT NULL, inherited_by INTEGER NOT NULL,
-    user_count INTEGER NOT NULL, score REAL NOT NULL);
+    user_count INTEGER NOT NULL, alias_user_count INTEGER NOT NULL,
+    score REAL NOT NULL);
 CREATE INDEX change_release ON change (package, version_to);
 """
 
@@ -158,7 +162,14 @@ class Change:
     public_depth: int
     inherited_by: int
     user_count: int
+    alias_user_count: int
     score: float
+
+    @property
+    def used(self) -> bool:
+        """Used downstream in the label's sense (§24): some scanned package
+        names the symbol by any of its paths."""
+        return self.alias_user_count > 0
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -292,7 +303,8 @@ class Bundle:
             r["kind"], r["sub_target"] or "", r["message"],
             r["old_value"], r["new_value"], bool(r["is_private"]),
             int(r["module_depth"]), int(r["public_depth"]),
-            int(r["inherited_by"]), int(r["user_count"]), float(r["score"]))
+            int(r["inherited_by"]), int(r["user_count"]),
+            int(r["alias_user_count"]), float(r["score"]))
             for r in rows]
         return sorted(out, key=lambda c: (-c.score, c.symbol, c.kind,
                                           c.sub_target))

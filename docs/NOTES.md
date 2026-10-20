@@ -8262,3 +8262,43 @@ changes. Expected on the Mac, from the 18 Oct files: 21,452 changes,
 3,204 releases, 351 packages, 1,815 rows not changes, 1 duplicate key
 dropped, as §33.6 and §33.10 have them. Locate is the second half of the
 week.
+
+**20 Oct: the build on the Mac, Varad's checks, and the second schema.**
+The builder on the Mac wrote 351 packages, 3,204 releases (analysed_clean
+1,531, analysed 1,141, unknown 232, no_baseline 178, analysis_failed 61,
+yanked 37, no_source 24) and 21,452 changes, with 1,815 rows not changes
+and 1 duplicate key dropped: the loader's numbers to the row. `python -m
+fixer redis --from 7.4.1 --to 8.0.0` ranked the 134 changes §36.5's demo
+quotes, `Redis.__init__`'s six changed defaults first and its moved
+parameters after, and showed two things. The `retry` default is a
+`Retry(...)` expression, which is why R2 stops at plain literals. And
+every row read "used by 0", because the first bundle carried only the
+exact-symbol count the site's usage_index joins, under which nobody
+writes `redis.client.Redis.__init__`; the project's own notion of used
+is the label's (§24), the most over the symbol and its export paths, by
+which `redis.Redis.__init__` is reached. So the bundle moved to schema
+2 with `alias_user_count` computed as ml/features/labels.py computes
+it, beside the exact `user_count`; the report's "used by" is the label's
+count and says so; a schema-1 bundle is refused by the reader. Varad
+checked the branch against main the same afternoon: Render builds from
+the requirements file alone and copies pyproject.toml and `fixer/` as
+files, so no effect; CI runs nothing the branch touches and a trial merge
+is clean. He asked for one copy of the bundle to be committed, rebuilt
+only when the dataset changes, with the manifest's numbers in the commit
+message, and found that `data/` at the top of .gitignore already hid
+`fixer/data/`, so the line is now `!fixer/data/` (checked in a scratch
+repository: the bundle and `fixer/data/__init__.py` become committable,
+the top-level data/ and a stray .csv inside fixer/data stay ignored).
+His two setuptools notes are taken: `fixer.data` is a package of its own
+(an `__init__.py`, listed in `packages`, the bundle its package data), and
+the licence is `license = "MIT"` with `license-files`, on setuptools 77.
+Checked here by a non-editable install into a fresh venv from a tree
+holding a bundle: `breakrank-fix` ran from another directory with the
+bundle found inside the installed package. Three more guards broken on
+purpose for the second schema (the label's count without the export
+paths, as a sum, and the report showing the exact count); the last
+survived until the command-line check pinned the one symbol where the two
+counts differ. 50 checks now; 29 guards, 27 caught by a check and 2 by
+the builder's and the reader's own refusals. The fresh-clone test Varad
+named (`pipx install .`, one run with the network off) is the 30 Oct
+checkpoint's.

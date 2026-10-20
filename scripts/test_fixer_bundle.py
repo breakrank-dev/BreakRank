@@ -23,7 +23,10 @@ code ran:
                 gamma: 0.1 -> 0.2 one removal, no releases.csv row.
                 delta: releases.csv only, 3.0 no_baseline, 3.1 analysed_clean.
                 packages.csv lists alpha, beta, delta; usage.csv counts
-                alpha.core.Client.__init__ 12, alpha.util.helper 3, beta.b 1.
+                alpha.core.Client.__init__ 12, alpha.Client.__init__ 5 (an
+                export path of the same symbol), alpha.util.helper 3,
+                alpha.Client.send 4 (reached only by an export path),
+                beta.b 1.
   expected      packages 4 (gamma from changes.csv); releases 14: analysed
                 5, no_baseline 3, analysed_clean 4, yanked 1, unknown 1
                 (gamma 0.1, the older side of its only pair); changes 8,
@@ -34,7 +37,9 @@ code ran:
                 then the two Client.__init__ rows (default before moved, by
                 kind), then helper.
   the values    the default row (3, None); the constant (10, 20); the
-                removal none. user_count 12, 12, 3, 0.
+                removal none. user_count by the exact symbol 0, 12, 12, 3;
+                the label's count is the most over the symbol and its
+                export paths, so Client.send reads 0 exact and 4 used.
   the range     alpha 1.0.0 -> 1.2.0 crosses 1.1.0 and 1.2.0; beta 2.1 ->
                 2.10 crosses 2.9 and 2.10 (not text order); 1.2.0 -> 1.2.0
                 is refused as nothing to upgrade; a version or a package
@@ -142,7 +147,9 @@ delta,3.1,2026-02-01,analysed_clean,0
 
 USAGE_CSV = """symbol,user_count
 alpha.core.Client.__init__,12
+alpha.Client.__init__,5
 alpha.util.helper,3
+alpha.Client.send,4
 beta.b,1
 """
 
@@ -255,7 +262,7 @@ def case_build(tmp: pathlib.Path) -> fb.Bundle:
           (m["schema_version"], m["n_changes"], m["n_releases"],
            m["n_packages"], len(m["sha256_changes"]), "built_at" in m,
            m["ranker"]),
-          ("1", "8", "14", "4", 64, True, "path-length"))
+          ("2", "8", "14", "4", 64, True, "path-length"))
     return b
 
 
@@ -277,8 +284,11 @@ def case_changes(b: fb.Bundle) -> None:
     check("old and new values where griffe's words carry them",
           [(c.old_value, c.new_value) for c in got],
           [("10", "20"), ("3", "None"), (None, None), (None, None)])
-    check("user_count by the exact symbol, as the site joins it",
-          [c.user_count for c in got], [0, 12, 12, 3])
+    check("user_count by the exact symbol, as the site joins it; the label's "
+          "count is the most over the symbol and its export paths (12 over "
+          "5 for Client.__init__)",
+          [(c.user_count, c.alias_user_count) for c in got],
+          [(0, 0), (12, 12), (12, 12), (3, 3)])
     check("the message is griffe's words with the file location stripped",
           got[1].message,
           "Client.__init__(retries): Parameter default was changed: 3 -> None")
@@ -289,6 +299,10 @@ def case_changes(b: fb.Bundle) -> None:
           "then the export paths",
           send.paths, ("alpha.core.Client.send", "alpha.Client.send",
                        "alpha.client.Client.send"))
+    check("a symbol reached only by an export path is used in the label's "
+          "sense and not in the site's exact join",
+          (send.user_count, send.alias_user_count, send.used,
+           got[0].used), (0, 4, True, False))
     both = b.changes("alpha", ["1.1.0", "1.2.0"])
     check("two releases together keep the site's order across them",
           [c.symbol for c in both],
@@ -366,7 +380,7 @@ def case_guards(tmp: pathlib.Path) -> None:
     old = tmp / "old.sqlite"
     conn = sqlite3.connect(old)
     conn.executescript(fb.SCHEMA)
-    conn.execute("INSERT INTO manifest VALUES ('schema_version', '0')")
+    conn.execute("INSERT INTO manifest VALUES ('schema_version', '1')")
     conn.commit()
     conn.close()
     try:
@@ -374,8 +388,9 @@ def case_guards(tmp: pathlib.Path) -> None:
         got = None
     except fb.BundleError as e:
         got = str(e)
-    check("another schema version is refused, not misread",
-          "bundle schema '0'" in (got or ""), True)
+    check("another schema version (the first, without the label's count) is "
+          "refused, not misread",
+          "bundle schema '1'" in (got or ""), True)
     # the oracle: a builder whose rows differ from the loader's stops
     saved = bb.change_records
     bb.change_records = lambda kept, rels, usage: saved(kept, rels, usage)[:-1]
@@ -413,12 +428,16 @@ def case_cli(tmp: pathlib.Path) -> None:
            in text),
           (True, True))
     check("the changes ranked, the constant first with its values and the "
-          "default row with its parameter",
+          "default row with its parameter and the label's count",
           ("    1  alpha.z_limit   ATTRIBUTE_CHANGED_VALUE   10 -> 20   "
            "used by 0" in text,
            "    2  alpha.core.Client.__init__ (retries)   "
            "PARAMETER_CHANGED_DEFAULT   3 -> None   used by 12" in text),
           (True, True))
+    check("\"used by\" is the label's count, so the removed parameter reached "
+          "only by an export path reads 4, not the exact join's 0",
+          "alpha.core.Client.send (verify)   PARAMETER_REMOVED   used by 4"
+          in text, True)
     check("it says locate and the rewrites are not here, and credits griffe",
           ("locate and the rewrites are not in this version" in text,
            "changes found with griffe." in text), (True, True))

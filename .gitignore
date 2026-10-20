@@ -6,9 +6,11 @@ data/
 !tests/fixtures/*.csv
 !data/.gitkeep
 
-# The fixer's bundle is built on the machine that has data/ (python
-# scripts/build_bundle.py); whether a copy is committed is open (NOTES §38.13)
-fixer/data/*.sqlite
+# The fixer's bundle (fixer/data/breakrank.sqlite) IS committed, one copy,
+# rebuilt only when the dataset changes (python scripts/build_bundle.py;
+# NOTES §38.13). `data/` above matches any folder named data, so the
+# fixer's is let back in here.
+!fixer/data/
 
 # Models — only the current one
 artifacts/*

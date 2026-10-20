@@ -35,7 +35,7 @@ def describe_change(c: Change) -> str:
     values = (f"   {c.old_value} -> {c.new_value}"
               if c.old_value is not None and c.new_value is not None else "")
     private = "   private" if c.is_private else ""
-    return (f"{what}   {c.kind}{values}   used by {c.user_count}"
+    return (f"{what}   {c.kind}{values}   used by {c.alias_user_count}"
             f"{private}")
 
 
@@ -55,7 +55,9 @@ def rank_report(package: str, frm: str, to: str, rels: list[Release],
         lines.append("no changes recorded in these releases.")
     else:
         lines.append("changes, in the site's order (shortest public path "
-                     "first, then by name):")
+                     "first, then by name); \"used by\" counts the scanned "
+                     "packages that\n  name the symbol by any of its paths "
+                     "(NOTES §24):")
         for i, c in enumerate(changes[:SHOW], 1):
             lines.append(f"  {i:>3}  {describe_change(c)}")
         if len(changes) > SHOW:

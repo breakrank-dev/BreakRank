@@ -25,8 +25,10 @@ and breakage_rows as the oracle for which rows survive the database key:
 the records this script writes are checked against its rows and keys,
 and the build stops if they differ. The score is path length's
 (ml/model/ship.py, §36), computed within each release as the site's lists
-are; public_depth as ml/features/labels.py computes it; user_count as the
-site joins it, by the exact symbol.
+are; public_depth and alias_user_count as ml/features/labels.py computes
+them (the most over the symbol and its export paths: the label's count,
+and what the report calls "used by"); user_count as the site's
+usage_index joins it, by the exact symbol.
 """
 
 import argparse
@@ -80,6 +82,9 @@ def change_records(kept: pd.DataFrame, rels: dict, usage: pd.DataFrame
                   if str(r.kind) in ("PARAMETER_CHANGED_DEFAULT",
                                      "ATTRIBUTE_CHANGED_VALUE") else None)
         exports = _text(r, "export_paths")
+        exact = int(counts.get(r.symbol, 0))
+        alias = max([exact] + [int(counts.get(p, 0))
+                               for p in exports.split(";") if p])
         out.append({
             "package": r.package, "version_from": str(r.version_from),
             "version_to": str(r.version_to), "symbol": r.symbol,
@@ -91,7 +96,7 @@ def change_records(kept: pd.DataFrame, rels: dict, usage: pd.DataFrame
             "module_depth": int(r.module_depth),
             "public_depth": public_depth(r.module_depth, exports),
             "inherited_by": int(getattr(r, "inherited_by", 0) or 0),
-            "user_count": int(counts.get(r.symbol, 0)),
+            "user_count": exact, "alias_user_count": alias,
         })
     return out
 
@@ -153,7 +158,7 @@ def write(out: pathlib.Path, p: dict, sources: dict) -> None:
         cols = ["package", "version_from", "version_to", "symbol",
                 "export_paths", "kind", "sub_target", "message", "old_value",
                 "new_value", "is_private", "module_depth", "public_depth",
-                "inherited_by", "user_count", "score"]
+                "inherited_by", "user_count", "alias_user_count", "score"]
         conn.executemany(
             f"INSERT INTO change ({', '.join(cols)}) VALUES "
             f"({', '.join('?' * len(cols))})",
