@@ -6,6 +6,10 @@ data/
 !tests/fixtures/*.csv
 !data/.gitkeep
 
+# The fixer's bundle is built on the machine that has data/ (python
+# scripts/build_bundle.py); whether a copy is committed is open (NOTES §38.13)
+fixer/data/*.sqlite
+
 # Models — only the current one
 artifacts/*
 !artifacts/ranker.txt
@@ -19,6 +23,9 @@ artifacts/*
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 .venv/
 venv/
 .pytest_cache/

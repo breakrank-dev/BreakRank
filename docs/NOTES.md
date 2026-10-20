@@ -8204,3 +8204,61 @@ version is usually not installed, so until §38.11 it would mostly flag
 (§38.8). The plan doc was brought in line with §38 the same evening:
 the fixer table's rows, the weeks' items, "measured by", the decisions.
 Week 2 begins with the bundle and locate.
+
+### 38.13 Week 2, first half: the bundle and the rank step (19 Oct)
+
+Built the same evening Varad's answers came, with the test's expected
+numbers written before the code ran. `fixer/bundle.py` reads the bundle
+(§38.7's three tables and manifest; `Bundle.upgrade` is (from, to] in
+packaging's version order, with a release the bundle lacks, a package it
+lacks, a downgrade and the same version twice each refused with the
+newest it holds and when it was built; `Bundle.changes` is the site's
+order, score then name; `Release.describe` is the site's wording per
+status, §33.8's for unknown; `split_change` is the loader's rule for a
+value out of griffe's words, for defaults and attribute values both).
+`scripts/build_bundle.py` builds it from the CSV files through the
+loader's functions, `package_rows`, `release_plan` (`unknown` for what
+the files cannot establish), `not_a_change`, and `breakage_rows` as the
+oracle: the records it writes must equal the loader's rows and keys or
+it stops with REFUSING and writes nothing; public_depth as
+ml/features/labels.py computes it, user_count by the exact symbol as the
+site joins it, the score path length's within each release (ship.py).
+`fixer/cli.py`, `python -m fixer <package> --from X --to Y`, does the
+first of the three steps: the releases crossed with what the bundle says
+of each, a warning when any was not compared, the changes ranked, and a
+line saying locate and the rewrites are not in this version; exit 2 on
+any refusal; `--from` defaults to the one-step upgrade until the
+environment is read (§38.2). `pyproject.toml` under Varad's four
+conditions (`fixer` alone, the bundle as package data, no pytest
+settings, dependencies packaging, griffe <3 and libcst); a console
+script `breakrank-fix`; checked by an editable install into a fresh venv
+here, where `breakrank-fix --version` and `--list` ran. `.gitignore`
+gains `*.egg-info/`, `build/`, `dist/` and `fixer/data/*.sqlite`: the
+bundle is built where data/ is, and whether a copy is committed for
+`pipx install` from a clone is Varad's call (a few megabytes, rebuilt
+rarely).
+
+Tested by `scripts/test_fixer_bundle.py`, 48 checks on both pandas
+versions, over four small CSVs written to a temporary directory: a
+package whose releases.csv agrees, with a moved parameter, a changed
+default, a version string, a removed name twice under one key and a
+constant whose name sorts last and depth first; a package with 2.9 and
+2.10, so text order would be wrong; a package in changes.csv only, so one
+release is unknown; one in releases.csv and packages.csv only. The
+fixture is written by the test, since `*.csv` is ignored by git.
+Twenty-six guards broken on purpose (eleven in the builder, eleven in
+the reader, four in the command line): twenty-four turned a check to
+FAIL, and two were caught before any check ran, by the guards themselves
+(the builder that kept the duplicate key was refused by the oracle; the
+manifest with another schema version was refused by the reader); three
+survived at first (the site's order by name alone, since the fixture's
+name order matched; a split kept where two were valid; `compared`
+including no_baseline) and the fixture was strengthened until each was
+caught. Against the scratch dataset of §33.9 (60 packages, releases.csv
+with one disagreeing package): 7,812 changes, the number the loader sent
+in every scratch run, 490 releases, 62 rows not changes, 0 duplicates,
+and `python -m fixer pkg00 --from 1.3.1 --to 1.4.0` ranks its 40
+changes. Expected on the Mac, from the 18 Oct files: 21,452 changes,
+3,204 releases, 351 packages, 1,815 rows not changes, 1 duplicate key
+dropped, as §33.6 and §33.10 have them. Locate is the second half of the
+week.

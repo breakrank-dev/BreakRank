@@ -1,0 +1,39 @@
+# The fixer's packaging (NOTES §38.10, Varad's four conditions of 19 Oct):
+# this file packages ONLY `fixer`, with its SQLite bundle as package data,
+# so that setuptools does not find api/, db/ and ml/ and refuse the build,
+# and so the installed tool carries its bundle. It holds no pytest
+# settings: pytest.ini takes precedence and anything under [tool.pytest]
+# would be silently ignored. The ML pipeline's dependencies stay in
+# requirements.txt; this is the command-line tool's.
+#
+#     pipx install .            then   breakrank-fix redis --to 8.0.0 --env .venv
+#     pip install -e .          for development, inside this repository's venv
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "breakrank-fix"
+dynamic = ["version"]
+description = "For one upgrade of one package: the lines it touches, the mechanical fixes as a diff, offline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+dependencies = [
+    "packaging>=24.0",        # version order, as the loader's
+    "griffe>=2.2.0,<3",       # reads the old signature statically (R1); the ingest's extractor
+    "libcst>=1.4",            # locate and the rewrites, keeping the file's formatting
+]
+
+[project.scripts]
+breakrank-fix = "fixer.cli:main"
+
+[tool.setuptools]
+packages = ["fixer"]
+
+[tool.setuptools.dynamic]
+version = {attr = "fixer.__version__"}
+
+[tool.setuptools.package-data]
+fixer = ["data/*.sqlite"]
