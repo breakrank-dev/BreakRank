@@ -8302,3 +8302,260 @@ counts differ. 50 checks now; 29 guards, 27 caught by a check and 2 by
 the builder's and the reader's own refusals. The fresh-clone test Varad
 named (`pipx install .`, one run with the network off) is the 30 Oct
 checkpoint's.
+
+**20 Oct, late, into 21 Oct: the locate step, week 2's second half.**
+Built with the expected hits written before the first run: the test's
+docstring lists the 32 hits on 27 lines of the fixture project and, for
+each, the confidence, the use, the change ids and the path the code
+names. The first run found two defects against that table (an import
+line of a name whose PARAMETERS changed was listed as "referenced", where
+only a removed or re-kinded name's import is a hit; and the corner
+project's file count was miscounted by me, not the tool). Five modules.
+`fixer/env.py` reads the installed distribution from its `*.dist-info` on
+disk (§38.2): METADATA's Name and Version, the import roots from
+`top_level.txt` or else RECORD's first path components (not the
+dist-info itself, caches, scripts outside site-packages or compiled
+extension modules, which griffe cannot read), PEP 503 normalisation both
+ways (`Databricks-SDK` and `databricks_sdk-0.134.0.dist-info` are one
+name); `--env` is a venv root or any directory holding dist-info entries
+(a Debian `dist-packages` is not named site-packages); two dist-infos of
+one name, or none, stop the default with the sentence. `fixer/oldapi.py`
+reads the OLD version with griffe, `allow_inspection=False` as the ingest
+(§17; `scripts/test_no_execution.py` now greps `fixer/` for bare griffe
+calls too and spies the fixer's reading of a package carrying a compiled
+module: no import attempted, 7 checks): an export path to its defining
+path (`alphalib.Client` -> `alphalib.core.Client`), the MRO, which class
+defines a member (griffe resolves `Client.send` to `Base.send` itself), a
+function's parameters with kinds and defaults, a class's `__init__`'s
+with `self` kept, its own or the inherited one, and griffe's labels, so a
+classmethod is known as one; a path griffe cannot resolve (one passing
+through a module's import of another package, which `resolve_external=
+False` leaves unresolved) answers None, never an exception.
+`fixer/locate.py` is the step itself, `fixer/report.py` the two parts of
+§38.5, `fixer/cli.py` gains `--env`, `--from` read from the environment
+and `--rank-only` (the first week's output, the project unread; the
+bundle test's command-line case now asks for it), and an unexpected error
+is one line on stderr and exit 2, not a traceback and exit 1. The fixture
+project sits under `scripts/fixtures/alpha_app/` with the pretend
+installed package `alphalib` 1.0.0 and its dist-info under
+`scripts/fixtures/site/`, as Varad placed them in §38.12, not
+`tests/fixtures/` as §38.10 first wrote. The development venv needs
+`pip install -e .` once, which brings libcst in from `pyproject.toml`
+(`requirements.txt` is the pipeline's and stays so, §38.12); the 20 Oct
+tests passed without it only because `cli.py` did not import locate yet,
+and the first run on the Mac stopped on `ModuleNotFoundError` until it
+was done.
+
+Nine decisions §38.3 left open, each in the module's docstring and, where
+the user sees it, in the report:
+
+1. What a reference that is not a call settles. A removed or re-kinded
+   object, a removed base and a changed constant are settled by naming
+   the object (`partial(f)`, `isinstance(x, Client)`, `class Mine(Client)`,
+   a read of the constant): resolved. A change to parameters or to a
+   return type needs a call: the same reference is "referenced". One
+   line can be both, as `class MyClient(Client)` is for the base removed
+   (resolved) and for `__init__`'s moved parameters (referenced). An
+   import line is a hit only for a removed or re-kinded name or module,
+   since the import itself is what breaks; `from redis import Redis` is
+   not a hit for `Redis.__init__`'s 49 rows, the calls are. A removed
+   MODULE (griffe reports one row for it and does not descend) is a hit
+   in every path through it: `import pkg.gone`, `from pkg.gone import x`,
+   `pkg.gone.f()`, `x()`.
+2. Unverified hits are listed only in files that import the package.
+   §38.3's sentence was "any other `.set(` is reported as unverified,
+   never dropped"; taken literally over a Django project it lists every
+   `d.get(k)` in every file for redis's `get`. In a file that never names
+   the package, `d.get(k)` is a dict's, and the report's closing sentence
+   says "in the files that import the package". Inside such a file a
+   dict's `.get` on a parameter is still listed; the file is the
+   package's business.
+3. An object made by another package's call (`requests.Session()`,
+   `s = requests.get(...)`) or bound to a literal, a comprehension, a
+   string, a number, a lambda or a comparison is not the package's and is
+   not listed; a name bound to another name takes its binding. The
+   project's own modules, imported relatively (`from .other import x`)
+   or absolutely (`from myapp.factory import make_client`, `myapp` being
+   any directory under the project that holds a `.py` file, with or
+   without an `__init__.py`, under `src/` or `lib/` or anywhere, or a
+   module directly under the project), are not another package's: what
+   comes out of them is unknown, so `c = make_client(); c.send()` is
+   unverified, as §38.3 has it; a project directory named like a real
+   package errs towards unknown, never towards resolved. A project
+   module that RE-EXPORTS the package's names is not followed, the
+   week's named cut: a file that imports only project modules is not
+   read for the package's names, and the report counts those files (the
+   unparsed ones and the parsed ones that import none of the package)
+   and says so.
+4. Instances are tracked by binding, and a rebinding shadows what it
+   hid: `r = Redis(...)`, `with Redis(...) as r`, `pool: Pool = Pool()`,
+   in the function, an enclosing one or the module, and `self.x =
+   Redis(...)` anywhere in the class, `x = Redis()` in the class body
+   included; a pre-scan collects the module-level and `self.x` bindings
+   first, so a function may use an instance assigned below it and a
+   method one that `__init__` sets after it in the file. A parameter, a
+   loop or comprehension variable, `except ... as`, `with ... as`, a
+   lambda parameter, a local `def` or a name rebound to anything the
+   tool does not understand is unknown inside its scope, not the
+   module-level instance of the same name; a local `def Client` or
+   `class Pool` hides the imported name for the lines after it; a class
+   body's names are visible in the body alone, as in Python; a nested
+   class's `self` is its own; a walrus binds like an assignment. A
+   changed constant used as a receiver (`pkg.VERSION.split(".")`,
+   `LIMIT.bit_length()`) is a read of it, as §38.1 asks, through the
+   same prefix matching as a removed module's. `Client("h").send()` is
+   an instance call; `Base.send(c, ...)`
+   and `Client.__init__(self, ...)` are explicit-self calls, marked so for
+   R1, and `Client.from_url(...)` is not, since griffe labels it a
+   classmethod. The receiver recorded is the defining class
+   (`redis.commands.core.BasicKeyCommands` for `r.set`, `alphalib.core.
+   Client` for `Client(...)`) when the old version was read, the class as
+   written otherwise. `self.send()` in a project subclass is unverified,
+   and `super().send()` referenced, as §38.3 says: project classes are
+   not followed. The result of a factory, the package's own included
+   (`redis.from_url(...)`, `Redis.from_url(...)`), is unknown: return
+   types are not inferred.
+5. A file whose text never mentions one of the package's import roots
+   (the first component of the symbol AND of every export path, since
+   `_pytest.fixtures.fixture` is written `pytest.fixture`) is read but not
+   parsed: no hit is possible in it, since every hit needs an import of
+   the package in the file (decisions 2 and 3). libcst's scope and
+   position metadata cost about a second per 1,000 lines, and the
+   repository itself (101 files, 28,910 lines) took 29 s to scan for a
+   package it never names; it takes 0.3 s now, and a project that uses
+   redis in five of three hundred files parses five. Positions are
+   resolved only for files with a hit, the wrapper does not copy the
+   tree, and the report says "N file(s) read, M mention the import
+   root(s) ...".
+6. Columns are 1-based, as editors and flake8 print them.
+7. `--from` defaults to the installed version; when the package is not
+   installed in the environment the tool stops with the sentence (where
+   it looked, give `--from` or `--env`), except under `--rank-only`,
+   which keeps the first week's one-step default and says so in the
+   header. A version spelled otherwise than the bundle spells it (`2.0`
+   for `2.0.0`) is the bundle's by PEP 440. The old version is read only
+   when the installed version IS the one upgraded from; otherwise the
+   report says which version the environment has and that bases and
+   signatures were not read, and a method on an instance whose path the
+   bundle does not name is unverified instead of resolved (17 resolved
+   and 11 unverified on the fixture, against 25 and 3 with the old
+   version read); without the old version nothing is taken for a class
+   that the bundle does not show to be one, so `Base.send(c, ...)` is a
+   plain call then, with no self to offset. `--env` that is not a
+   directory, or holds no dist-info and is no venv, is exit 2.
+8. The report's first part is one entry per changed SYMBOL in the site's
+   order, every row of it under it, then the lines; so `Client(...)` with
+   three rows prints once with three rows and ten lines, as §38.5 asks
+   for the 49-row case. Counts are lines and hits both ("27 line(s) use
+   11 of the 12 change(s), 32 hit(s)"), since one line can carry two.
+   The second part is cut at 200, and a changed value longer than 72
+   characters is cut with an ellipsis in the one-line forms (redis's
+   `REDIS_ALLOWED_KEYS` is a 44-name tuple that ran to a thousand
+   characters on the first real run); the bundle holds the whole text,
+   and R2 reads it there.
+9. Environments and build output are not read: `.git`, `__pycache__`,
+   `.venv`, `venv`, `node_modules`, `.tox`, `site-packages` and the like
+   at any depth, `env`, `build` and `dist` only directly under the
+   project (a package may be called `build`), and any directory holding
+   a `pyvenv.cfg` whatever its name; the report names what it did not
+   enter, caches and `.git` apart. A file that does not parse, is not
+   UTF-8, or that libcst
+   cannot analyse (a 800-term expression overflows its recursion) is a
+   note, never the end of the run.
+
+The review of 20 Oct, by a reader who had not seen the code written,
+found nine things against the first version, and decisions 1, 3, 4, 5, 7
+and 9 carry the fixes: (1) a module-level instance leaked into every
+function that reused its name, so `def f(client): client.send()` was
+RESOLVED to the module's `client`, a parameter, a loop variable, a `with`
+or `except` name or a lambda parameter likewise, and a nested class saw
+the outer class's `self.c`; the home-made scope table forgot a name
+instead of shadowing it, and R1 would have rewritten those calls (fixed,
+and nine shadowing cases are in the test); (2) an export path under
+another root (`pytest.fixture` for `_pytest.fixtures.fixture`) was
+invisible, and the text pre-filter skipped the file before parsing it
+(fixed: every export path's root is the package's); (3) two uncaught
+exceptions killed the run with a traceback and exit 1, libcst's
+RecursionError on a long expression and griffe's AliasResolutionError on
+a path through another package's import (fixed: a note per file, None
+per lookup, exit 2 for anything unexpected); (4) the project's own
+modules imported absolutely were "another package's", so `c =
+make_client(); c.send()` was dropped where the relative spelling was
+unverified (fixed; the re-export cut is now stated where it bites); (5)
+a removed module was matched only by `from pkg import mod` (fixed, by
+prefix); (6) without the old version the capital-letter guess made
+`PIL.Image.open(...)` an explicit-self method call, which would have
+inverted R1's offset on a CI runner (fixed: the guess no longer shapes
+hits); (7) `Redis.from_url(...)` was an explicit-self call, griffe's
+classmethod label unread, and a class inheriting `__init__` had "no
+signature" (both fixed); `StrictRedis`, which redis defines as
+`StrictRedis = Redis` and griffe records as an attribute, is not
+recognised as the class, a limitation for the demo's project to remember;
+(8) the report counted hits as lines and named the distribution where
+it meant the import root (fixed), and a closing sentence promised "never
+dropped" where another package's objects are not listed (reworded to say
+exactly what is and is not); (9) `--from 2.0` was refused for a bundle
+spelling `2.0.0`, and a project package called `build` or `env` was
+skipped at any depth without a word (both fixed). The re-verification of
+the fixes found the project-module rule too narrow (a namespace package without
+`__init__.py`, or a package under `lib/`, was still "another package's"),
+a local `def Client` not hiding the import, and, pre-existing, a changed
+constant used as a receiver (`LIMIT.bit_length()`) giving no hit; all
+three fixed and pinned, with the walrus, the unexpected-error exit and
+the no-old-version shape of `Base().send()`. Checked on redis 7.4.1
+installed in a scratch venv here (a wheel, no code run): griffe reads it
+in 0.9 s; `Redis.__init__` has 50 parameters, `self` and the 49 of
+§36.5; `set` and `get` are defined on `redis.commands.core.
+BasicKeyCommands`, 22 classes in `Redis`'s MRO; on a small project,
+`Redis("localhost", 6379, 0, None, 5)` and `redis.ConnectionPool(host=
+..., port=..., db=0)` resolved through the old version's aliases without
+export paths, `self.plain.set(k, v, ex=60)` resolved to the mixin, `d =
+{}; d.get("a")` not listed, `redis.Redis.from_url(url)`'s result unknown
+so its `.set` unverified. Those rows were mine; the first run against the
+REAL bundle, on the Mac the same evening (21 Oct, redis 7.4.1 installed
+from a wheel into `/tmp/redis741`, the ten-line project of
+`redis_demo_cache.py` under `/tmp/redisdemo`): "2 line(s) use 49 of the
+134 change(s), 2 hit(s): 2 resolved", the two `Redis(...)` calls under
+`redis.client.Redis.__init__`, used by 2, with its six changed defaults
+and forty-three moved parameters printed once under the one function,
+§36.5's case to the row; the demo's `.set`, `.get`, `.delete`,
+`from_url` and `ConnectionPool(...)` got no hit because 8.0.0 has no row
+on them, so nothing was unverified either: the tool said neither more
+nor less than the data holds. The 85 untouched changes followed in
+PART 2.
+
+Tested by `scripts/test_fixer_locate.py`, 75 checks on both pandas
+venvs (it needs neither pandas), eight cases: the environment (a venv
+root, a site-packages directory, RECORD without top_level.txt, a
+dist-info whose directory name says one thing and METADATA another, two
+installs); the old API (aliases, MRO, defining class, parameters, the
+inherited `__init__`, labels, an unresolvable path); the fixture with and
+without the old version; a corner project (skipped directories, a file
+not in UTF-8, one that does not parse, a file mentioning the package
+only in a comment, a package alias, star-arguments, a constant as
+argument, a rebinding, another package's objects, `getattr`, annotations,
+a closure, `self.x` set after its use, `Class.__init__(self)`, an
+attribute base class, `super().send`, a literal's method, a name bound to
+a name, the package's own factory's result, `with` inside a function, a
+class attribute as `self.x`); the review's corners (the shadowing cases,
+the project's modules under both spellings and a file reaching the
+package only through them, under `myapp/`, `lib/myapp2/` without an
+`__init__.py` and a file naming the package in a comment alone, the
+other root, the removed module under seven spellings, the classmethod,
+the 800-term expression, `build/` at the top against `myapp/build/`, a
+`pyvenv.cfg` directory, a walrus, a constant as receiver, a local def
+hiding an import); the report; the command line (exit codes 0, 1 and 2
+as §38.4 has them, `--from 1.0 --to 2.0`, an unexpected error as one
+line and exit 2). Seventy-five guards broken on purpose in a second
+pass (forty-two in locate, five in env, eight in oldapi, eleven in
+report, eight in cli, one in the fixture): seventy-three caught by a
+check, two equivalent under the data (the usage count is per symbol, so
+the least and the most over a symbol's rows agree; hits are per callee, so a
+symbol's rows share them and any-of equals all-of). Three guards that
+survived the first pass had no fixture to catch them (a rebinding that
+pops instead of shadowing, an export path's root, a class body's names
+leaking into its methods) and the review's project now catches each;
+two others were found redundant by the first pass and removed rather
+than kept dead. Still not followed, and said in the report: project
+modules that re-export the package's names, return types, tuple
+unpacking, `StrictRedis`-style assignment aliases.

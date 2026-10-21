@@ -411,12 +411,12 @@ def case_guards(tmp: pathlib.Path) -> None:
 
 
 def case_cli(tmp: pathlib.Path) -> None:
-    print("\n7. THE COMMAND LINE: RANK, AND SAY WHAT IS NOT HERE YET")
+    print("\n7. THE COMMAND LINE: RANK ONLY, THE PROJECT UNREAD")
     bundle = str(tmp / "b.sqlite")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         code = cli.main(["alpha", "--from", "1.0.0", "--to", "1.2.0",
-                         "--bundle", bundle])
+                         "--bundle", bundle, "--rank-only"])
     text = out.getvalue()
     check("exit 0 and the header with both releases crossed",
           (code, "alpha 1.0.0 -> 1.2.0: 2 release(s) crossed, 5 change(s)"
@@ -438,26 +438,31 @@ def case_cli(tmp: pathlib.Path) -> None:
           "only by an export path reads 4, not the exact join's 0",
           "alpha.core.Client.send (verify)   PARAMETER_REMOVED   used by 4"
           in text, True)
-    check("it says locate and the rewrites are not here, and credits griffe",
-          ("locate and the rewrites are not in this version" in text,
+    check("it says the project was not read, and credits griffe",
+          ("rank only: the project was not read (--rank-only)." in text,
            "changes found with griffe." in text), (True, True))
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        code = cli.main(["beta", "--to", "2.10", "--bundle", bundle])
-    check("--from defaults to the one-step upgrade, the release before --to",
+        code = cli.main(["beta", "--to", "2.10", "--bundle", bundle,
+                         "--rank-only"])
+    check("--from defaults to the release before --to when beta is not "
+          "installed here, and the header says so",
           (code, "beta 2.9 -> 2.10: 1 release(s) crossed, 1 change(s)"
-           in out.getvalue()), (0, True))
+           in out.getvalue(),
+           "  --from defaulted to 2.9, the release before 2.10: beta is "
+           "not installed in" in out.getvalue()), (0, True, True))
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         code = cli.main(["alpha", "--from", "0.9.0", "--to", "1.3.5",
-                         "--bundle", bundle])
+                         "--bundle", bundle, "--rank-only"])
     check("a range with not-compared releases (no_baseline, yanked) says "
           "the list cannot be complete for them",
           (code, "** 2 release(s) in the range were not compared" in
            out.getvalue()), (0, True))
     err, quiet = io.StringIO(), io.StringIO()
     with contextlib.redirect_stderr(err), contextlib.redirect_stdout(quiet):
-        code = cli.main(["zeta", "--to", "1.0", "--bundle", bundle])
+        code = cli.main(["zeta", "--to", "1.0", "--bundle", bundle,
+                         "--rank-only"])
     check("an unknown package: exit 2 and the refusal on stderr",
           (code, "has no package named 'zeta'" in err.getvalue()), (2, True))
     err, quiet = io.StringIO(), io.StringIO()

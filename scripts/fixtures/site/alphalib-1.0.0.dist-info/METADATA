@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: alphalib
+Version: 1.0.0
+Summary: A pretend package for the fixer tests; never installed, never imported.
+
+See scripts/fixtures/site/alphalib/__init__.py.

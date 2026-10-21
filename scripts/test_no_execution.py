@@ -53,6 +53,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import griffe  # noqa: E402
 from griffe._internal.loader import GriffeLoader  # noqa: E402
 
+from fixer.oldapi import OldApi  # noqa: E402
 from ml.ingest.api_extract import load_all_modules  # noqa: E402
 
 PASS, FAIL = "  ok  ", "  FAIL"
@@ -96,10 +97,11 @@ def case_loader_flag() -> None:
 
 
 def case_no_bare_call_sites() -> None:
-    print("\n2. NO CALL SITE IN ml/ OMITS THE ARGUMENT")
+    print("\n2. NO CALL SITE IN ml/ OR fixer/ OMITS THE ARGUMENT")
     call = re.compile(r"griffe\.load\(|griffe\.GriffeLoader\(")
     bare = []
-    for path in sorted((ROOT / "ml").rglob("*.py")):
+    for path in sorted((ROOT / "ml").rglob("*.py")) + sorted(
+            (ROOT / "fixer").rglob("*.py")):
         text = path.read_text()
         for m in call.finditer(text):
             # Look at the whole call, which may wrap over several lines.
@@ -174,6 +176,12 @@ def case_no_import_attempted() -> None:
             load_all_modules(search, ["pkg"])
             ours = list(calls)
 
+            # The fixer reads the old version of a package the same way
+            # (NOTES §38.3: §17's rule is the fixer's too).
+            calls.clear()
+            OldApi(("pkg",), search)
+            fixer_calls = list(calls)
+
             # AND PROVE THIS TEST CAN FAIL. Run the same fixture through
             # griffe's own default and confirm it DOES try to import.
             # Without this line the check above passes just as well when
@@ -191,6 +199,8 @@ def case_no_import_attempted() -> None:
             GriffeLoader._inspect_module = original
 
         check("our loader never attempts an import", ours, [])
+        check("the fixer's reading of an old version never attempts one",
+              fixer_calls, [])
         check("griffe's default DOES (so this test is not vacuous)",
               len(theirs) > 0, True)
     finally:
