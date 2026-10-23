@@ -7,10 +7,14 @@ name), one entry per changed FUNCTION or object with every row of it
 under it, since a call to `Redis(...)` with 49 moved parameters is one
 call site and not 49; under the rows, the project's lines, each with its
 confidence (resolved, referenced, unverified; §38.3) and how the name is
-used. The second part is the rest of the upgrade's changes, ranked, one
-line each, cut at SHOW_REST lines with the count of the rest, since
-sglang 0.5.10 alone has 2,011. Private names are reported when the
-project uses them, marked private. The footer credits griffe.
+used, and under a call R1 decided on (§38.4), the decision: rewritten
+and the call as it will read, withheld with the reason (and what it
+would be, where the reason leaves that computable), or needs nothing and
+why. The second part is the rest of the
+upgrade's changes, ranked, one line each, cut at SHOW_REST lines with the
+count of the rest, since sglang 0.5.10 alone has 2,011. Private names
+are reported when the project uses them, marked private. The footer
+counts R1's decisions and credits griffe.
 
 `rank_report` is the first week's report, kept for `--rank-only`: the
 releases crossed and the ranked list, the project unread.
@@ -18,8 +22,11 @@ releases crossed and the ranked list, the project unread.
 
 from __future__ import annotations
 
+import libcst as cst
+
 from fixer.bundle import Change, Release
 from fixer.locate import REFERENCED, RESOLVED, UNVERIFIED, Hit, Located
+from fixer.rewrite import FLAG, NOTHING, REWRITE, Plan
 
 SHOW = 60        # the ranked list of --rank-only
 SHOW_REST = 200  # the untouched changes under part two
@@ -106,9 +113,53 @@ def groups(changes: list[Change]) -> list[tuple[str, list[Change]]]:
     return list(out.items())
 
 
+class _NoComments(cst.CSTTransformer):
+    def leave_TrailingWhitespace(self, original, updated):
+        return updated.with_changes(comment=None)
+
+    def leave_EmptyLine(self, original, updated):
+        return updated.with_changes(comment=None)
+
+
+def one_line(text: str) -> str:
+    """A call's text on one line: a call spanning lines folded into
+    single spaces, its comments left out (folded in, `# the port db=2)`
+    would read as one comment), a CRLF ending gone."""
+    try:
+        expr = cst.parse_expression(text)
+        text = cst.Module([]).code_for_node(expr.visit(_NoComments()))
+    except Exception:  # noqa: BLE001 - not an expression: fold as it is
+        pass
+    return " ".join(text.split())
+
+
+def describe_plan(p: Plan) -> str:
+    """R1's decision under a call's line."""
+    if p.action == REWRITE:
+        return f"-> rewritten: {one_line(p.would_be or '')}"
+    if p.action == FLAG:
+        text = f"-> withheld: {p.reason}"
+        if p.would_be:
+            text += f" | would be: {one_line(p.would_be)}"
+        return text
+    return f"-> needs nothing from R1: {p.reason}"
+
+
+def r1_summary(plans: list[Plan], diff_note: str) -> str:
+    n = {a: sum(1 for p in plans if p.action == a)
+         for a in (REWRITE, FLAG, NOTHING)}
+    text = (f"R1, pass by name: {n[REWRITE]} call(s) rewritten, {n[FLAG]} "
+            f"withheld, {n[NOTHING]} need nothing")
+    return text + (f"; {diff_note}." if n[REWRITE] else ".")
+
+
 def report(package: str, frm: str, to: str, rels: list[Release],
            changes: list[Change], located: Located, built_at: str,
-           project: str, env_lines: list[str]) -> str:
+           project: str, env_lines: list[str],
+           plans: list[Plan] | None = None,
+           diff_note: str = "the diff follows") -> str:
+    plans = plans or []
+    by_key = {p.key: p for p in plans}
     lines = header(package, frm, to, rels, len(changes), built_at)
     lines.append("")
     roots = ", ".join(located.roots) or package
@@ -153,6 +204,9 @@ def report(package: str, frm: str, to: str, rels: list[Release],
                 lines.append(f"         {describe_row(c)}")
             for key in sorted(hits):
                 lines.append(f"       {describe_hit(hits[key])}")
+                plan = by_key.get(key)
+                if plan is not None and sym in plan.symbols:
+                    lines.append(" " * 36 + describe_plan(plan))
     else:
         lines.append("PART 1  no line of the project names a changed "
                      "symbol (see the notes below for what the tool "
@@ -179,7 +233,7 @@ def report(package: str, frm: str, to: str, rels: list[Release],
                  "bound to a literal is not the package's and is not listed; "
                  "a project module that re-exports the package's names is "
                  "not followed.")
-    lines.append("rewrites are not in this version: every line above is "
-                 "listed, none is changed (NOTES §38.4 follows).")
+    lines.append(r1_summary(plans, diff_note) + " R2, pin the old default, "
+                 "is not in this version (NOTES §38.4).")
     lines.append("changes found with griffe.")
     return "\n".join(lines)

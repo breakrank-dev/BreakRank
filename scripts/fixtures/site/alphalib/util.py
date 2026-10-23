@@ -11,3 +11,7 @@ class Pool:
 
 def ping(target, count=1):
     return count
+
+
+def spread(first, *rest, flag=False):
+    return (first, rest, flag)

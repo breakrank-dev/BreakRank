@@ -114,13 +114,34 @@ def check(name: str, got, want) -> None:
 
 # ------------------------------------------------------------------ fixture
 
+WORDS = {  # griffe's words for each kind (BreakageKind.value)
+    "PARAMETER_MOVED": "Positional parameter was moved",
+    "PARAMETER_REMOVED": "Parameter was removed",
+    "PARAMETER_CHANGED_KIND": "Parameter kind was changed",
+    "PARAMETER_CHANGED_DEFAULT": "Parameter default was changed",
+    "PARAMETER_CHANGED_REQUIRED": "Parameter is now required",
+    "PARAMETER_ADDED_REQUIRED": "Parameter was added as required",
+    "RETURN_CHANGED_TYPE": "Return types are incompatible",
+    "OBJECT_REMOVED": "Public object was removed",
+    "OBJECT_CHANGED_KIND": "Public object points to a different kind of "
+                           "object",
+    "ATTRIBUTE_CHANGED_VALUE": "Attribute value was changed",
+    "CLASS_REMOVED_BASE": "Base class was removed",
+}
+
+
 def change(cid, symbol, kind, sub="", exports="", old=None, new=None,
-           private=False, score=1.0, used=0, depth=None):
-    """One bundle row for alphalib 1.0.0 -> 2.0.0."""
+           private=False, score=1.0, used=0, depth=None, kinds=None):
+    """One bundle row for alphalib 1.0.0 -> 2.0.0, its message in griffe's
+    words as the loader keeps them; `kinds` is the (old, new) parameter
+    kind of a PARAMETER_CHANGED_KIND row, which the message carries and
+    old_value/new_value do not (the kinds are not expressions)."""
     what = symbol.rsplit(".", 1)[-1] + (f"({sub})" if sub else "")
-    message = f"{what}: {kind.replace('_', ' ').lower()}"
+    message = f"{what}: {WORDS[kind]}"
     if old is not None:
-        message += f" was changed: {old} -> {new}"
+        message += f": {old} -> {new}"
+    elif kinds is not None:
+        message += f": {kinds[0]} -> {kinds[1]}"
     return fb.Change(cid, "alphalib", "1.0.0", "2.0.0", symbol,
                      tuple(p for p in exports.split(";") if p), kind, sub,
                      message, old, new, private, symbol.count("."),
@@ -138,7 +159,8 @@ def changes() -> list:
         change(3, init, "PARAMETER_CHANGED_DEFAULT", "retries",
                "alphalib.Client.__init__", "3", "5", score=0.5, used=7),
         change(4, "alphalib.core.Base.send", "PARAMETER_CHANGED_KIND",
-               "timeout", "alphalib.Base.send", score=0.5, used=5),
+               "timeout", "alphalib.Base.send", score=0.5, used=5,
+               kinds=("positional or keyword", "keyword-only")),
         change(5, "alphalib.core.connect", "PARAMETER_REMOVED", "timeout",
                "alphalib.connect", used=2),
         change(6, "alphalib.core.helper", "PARAMETER_CHANGED_DEFAULT", "d",
@@ -168,6 +190,33 @@ def extra_changes() -> list:
                "alphalib.compute"),
         change(15, "alphalib.core.Client.from_url", "PARAMETER_MOVED",
                "retries", "alphalib.Client.from_url", score=0.5),
+    ]
+
+
+def rewrite_changes() -> list:
+    """Seven more for R1's cases (scripts/test_fixer_rewrite.py): a moved
+    parameter that was positional-only, a moved first parameter of a
+    *args function, a staticmethod's parameter made keyword-only, a
+    parameter both moved and made positional-only, a parameter added as
+    required to the classmethod, and a change of kind R1 does not cover."""
+    return [
+        change(16, "alphalib.core.helper", "PARAMETER_MOVED", "b",
+               "alphalib.helper"),
+        change(17, "alphalib.util.spread", "PARAMETER_MOVED", "first",
+               "alphalib.spread"),
+        change(18, "alphalib.core.Client.parse", "PARAMETER_CHANGED_KIND",
+               "strict", "alphalib.Client.parse", score=0.5,
+               kinds=("positional or keyword", "keyword-only")),
+        change(19, "alphalib.core.connect", "PARAMETER_CHANGED_KIND",
+               "port", "alphalib.connect",
+               kinds=("positional or keyword", "positional-only")),
+        change(20, "alphalib.core.connect", "PARAMETER_MOVED", "port",
+               "alphalib.connect"),
+        change(21, "alphalib.core.Client.from_url", "PARAMETER_ADDED_REQUIRED",
+               "timeout", "alphalib.Client.from_url", score=0.5),
+        change(22, "alphalib.util.spread", "PARAMETER_CHANGED_KIND", "rest",
+               "alphalib.spread",
+               kinds=("variadic positional", "variadic keyword")),
     ]
 
 
@@ -1018,8 +1067,8 @@ def case_report(located: loc.Located) -> None:
           lines[j + 1],
           "       alphalib.util.RATE   ATTRIBUTE_CHANGED_VALUE   0.5 -> 0.25"
           "   used by 0")
-    check("the notes, the once-sentence on what is invisible, no rewrites "
-          "yet, and griffe credited",
+    check("the notes, the once-sentence on what is invisible, R1's count "
+          "when no plans are given, R2 not yet, and griffe credited",
           ("files the tool cannot see through, or did not read:" in text,
            "  services/legacy.py: line 2: `from alphalib.util import *`"
            in text,
@@ -1030,7 +1079,8 @@ def case_report(located: loc.Located) -> None:
            "to a literal is not the package's and is not listed; a project "
            "module that re-exports the package's names is not followed."
            in text,
-           "rewrites are not in this version" in text,
+           "R1, pass by name: 0 call(s) rewritten, 0 withheld, 0 need "
+           "nothing. R2, pin the old default, is not in this version" in text,
            lines[-1]),
           (True, True, True, True, "changes found with griffe."))
     nothing = loc.Located([], [], 2)
@@ -1070,7 +1120,7 @@ def case_report(located: loc.Located) -> None:
 
 # ---------------------------------------------------------------- 7. cli
 
-def write_bundle(path: pathlib.Path) -> None:
+def write_bundle(path: pathlib.Path, rows=None) -> None:
     con = sqlite3.connect(path)
     con.executescript(fb.SCHEMA)
     con.executemany("INSERT INTO manifest VALUES (?, ?)",
@@ -1080,8 +1130,9 @@ def write_bundle(path: pathlib.Path) -> None:
     con.executemany("INSERT INTO release VALUES (?, ?, ?, ?, ?)",
                     [("alphalib", "0.9.0", "2026-01-01", "no_baseline", 0),
                      ("alphalib", "1.0.0", "2026-02-01", "analysed_clean", 0),
-                     ("alphalib", "2.0.0", "2026-05-01", "analysed", 12)])
-    for c in changes():
+                     ("alphalib", "2.0.0", "2026-05-01", "analysed",
+                      len(changes() if rows is None else rows))])
+    for c in (changes() if rows is None else rows):
         con.execute(
             "INSERT INTO change VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (c.id, c.package, c.version_from, c.version_to, c.symbol,

@@ -27,9 +27,11 @@ What a hit is, and how sure:
                Class(...)` anywhere in the class (a class attribute
                `x = Class()` counts too), the defining class found through
                the old version's bases so a change recorded on a mixin
-               matches `Redis(...).set(...)`; a read of a constant; a
-               subclass or `isinstance` check for a class whose base was
-               removed; an import of a removed name or module.
+               matches `Redis(...).set(...)`, and a call to a class that
+               inherits its `__init__` meets the rows on the class that
+               defines it; a read of a constant; a subclass or
+               `isinstance` check for a class whose base was removed; an
+               import of a removed name or module.
   referenced   the changed object is named but not called here, so a
                change to its parameters cannot be judged: passed as an
                argument (`partial(f, 1, 2)`), used as a base class, or
@@ -149,6 +151,10 @@ class Hit:
     positional: int = 0             # arguments passed by position
     keywords: tuple[str, ...] = ()  # arguments passed by name
     star_args: bool = False         # any *args or **kwargs at the call
+    # where the node ends (libcst's end, exclusive): with the start, this
+    # tells a call from the call made on its result at the same column
+    end_line: int = 0
+    end_column: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -250,11 +256,18 @@ class Index:
         return found
 
     def constructor(self, class_path: str) -> set[int]:
+        """The `__init__` rows a call to the class meets: its own, or the
+        inherited `__init__`'s when the old version shows which base
+        defines it (`Child(...)` for rows on `Client.__init__`)."""
         found = set(self.ctor.get(class_path, ()))
         if not found and self.api is not None and self.ours(class_path):
             canon = self.api.canonical(class_path)
             if canon:
                 found = set(self.ctor.get(canon, ()))
+            if not found:
+                defining = self.api.defining_class(class_path, "__init__")
+                if defining:
+                    found = set(self.ctor.get(defining, ()))
         return found
 
     def canonical(self, path: str) -> str:
@@ -391,7 +404,11 @@ class _Names(cst.CSTVisitor):
     def _class_of_call(self, call: cst.Call) -> str:
         """The class a call makes an instance of: its path when the callee
         is a known class, FOREIGN when the callee is another package's,
-        UNKNOWN when the tool cannot tell (a factory, a local)."""
+        UNKNOWN when the tool cannot tell (a factory, a local, or a call
+        made on a call's result: `Client("h")("x")` is whatever calling
+        the instance returns, though libcst names it after `Client`)."""
+        if isinstance(call.func, cst.Call):
+            return UNKNOWN
         names = self._names(call.func)
         for q in names:
             if self.index.is_class(q):
@@ -577,10 +594,13 @@ class _Finder(_Names):
         return None
 
     def _mark_chain(self, node) -> None:
-        """The parts of a dotted name are not references of their own."""
-        while isinstance(node, cst.Attribute):
+        """The parts of a dotted name are not references of their own;
+        a subscript's value (`Widget[int](...)`) or a call's callee
+        (`f(1)(2)`) on the way are parts of it too."""
+        while isinstance(node, (cst.Attribute, cst.Subscript, cst.Call)):
             self.skip.add(id(node))
-            node = node.value
+            node = (node.value if not isinstance(node, cst.Call)
+                    else node.func)
         self.skip.add(id(node))
 
     def _shadow(self, names: list[str]) -> None:
@@ -780,8 +800,13 @@ class _Finder(_Names):
                           receiver=owner, **shape)
             return
 
-        if any([self._call_by_name(node, q, shape)
-                for q in self._names(func)]):
+        # A call made on a call's result (`f(1, 2)(3, 4)`) is a call on an
+        # object the tool does not know; libcst names it after the inner
+        # callee, which is the inner call's own hit, so it is not resolved
+        # by name here.
+        if not isinstance(func, cst.Call) and any(
+                [self._call_by_name(node, q, shape)
+                 for q in self._names(func)]):
             return
         if not isinstance(func, cst.Attribute):
             return
@@ -822,6 +847,10 @@ class _Finder(_Names):
                       receiver=self.index.canonical(q), **shape)
             return True
         cls, _, member = q.rpartition(".")
+        if (isinstance(func, cst.Attribute)
+                and isinstance(func.value, cst.Call)
+                and isinstance(func.value.func, cst.Call)):
+            return False     # a method on the result of calling an instance
         if cls and self.index.is_class(cls):
             # Class.method(obj, ...) with self explicit, or Class().method()
             instance = (isinstance(func, cst.Attribute)
@@ -934,18 +963,23 @@ def locate_source(text: str, file: str, index: Index
 
     hits: dict[tuple, Hit] = {}
     for node, path, ids, confidence, use, extra in pending:
-        start = positions[node].start
+        span = positions[node]
+        start, end = span.start, span.end
         column = start.column + 1          # 1-based, as editors show it
         key = (start.line, column, use, confidence)
         old = hits.get(key)
-        if old is not None:
+        if old is not None:                # merged: the first one's extent
             ids = set(old.change_ids) | ids
             extra = {k: getattr(old, k) for k in
                      ("receiver", "explicit_self", "positional", "keywords",
                       "star_args")}
             path = old.path
+            end_line, end_column = old.end_line, old.end_column
+        else:
+            end_line, end_column = end.line, end.column
         hits[key] = Hit(file, start.line, column, source(start.line), path,
-                        tuple(sorted(ids)), confidence, use, **extra)
+                        tuple(sorted(ids)), confidence, use,
+                        end_line=end_line, end_column=end_column, **extra)
     notes = [Note(file, f"line {positions[node].start.line}: `from {mod} "
                   "import *`: the tool cannot see which names this file "
                   "uses through it") for node, mod in finder.star_imports]

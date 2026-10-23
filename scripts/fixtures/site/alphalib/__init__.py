@@ -10,7 +10,7 @@ writes (`alphalib.Client`) differs from the defining one
 
 from . import compat
 from .core import Base, Child, Client, connect, helper
-from .util import LIMIT, RATE, Pool, ping
+from .util import LIMIT, RATE, Pool, ping, spread
 
 __all__ = ["Base", "Child", "Client", "compat", "connect", "helper", "LIMIT",
-           "RATE", "Pool", "ping"]
+           "RATE", "Pool", "ping", "spread"]

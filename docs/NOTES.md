@@ -7952,7 +7952,19 @@ whose old signature griffe cannot read (a `functools.wraps` shell of
 `*args, **kwargs`, an `@overload` set, an attrs or pydantic class whose
 `__init__` is generated; griffe synthesises `dataclasses` only; an
 editable install griffe's finder does not see) is flagged with that as
-the reason, so the user sees why.
+the reason, so the user sees why. [Added 22 Oct, from the review of R1:
+one premise the data cannot check. R1 assumes that no parameter BEFORE
+the first moved one vanished without a row. griffe 2.2.0 reports no row
+for a parameter removed when the new signature gains `*args` and
+`**kwargs` together (diff.py counts it as swallowed) and reports the
+parameters after it as moved, so `swallow(a, b, c)` -> `swallow(a, c,
+*args, **kwargs)` is one MOVED row on `c`, and R1's `swallow(1, 2, 3)`
+-> `swallow(1, 2, c=3)` raises "multiple values for c" on the new
+version. The bundle's one-line message carries no positions, so the
+fixer cannot see it; §38.6's hand check classes such a rewrite as unsafe,
+and §38.11's ingest change would carry griffe's `details` ("position:
+from 2 to 1"), which lets R1 withhold where the first moved parameter
+moved DOWN, the mark of an unreported removal before it.]
 
 **R2, pin the old default.** For a resolved direct call that does not
 pass a parameter whose default changed (PARAMETER_CHANGED_DEFAULT) or
@@ -8145,7 +8157,11 @@ would make the plan doc's "rewrite the import" row real; and
 `export_paths` in the table's `detail`, so a bundle could be built from
 the union the site serves. All three are a `detail` field and a
 re-ingest on a Linux machine, and all wait until after the review, as
-every dataset change does.
+every dataset change does. [22 Oct: a fourth, from the review of R1:
+griffe's `details` for a moved parameter ("position: from 2 to 1 (-1)"),
+which the one-line message the ingest keeps leaves out; with it R1 can
+withhold where the first moved parameter moved down, §38.4's unreported
+removal.]
 
 ### 38.12 What the review of the first draft found
 
@@ -8559,3 +8575,164 @@ two others were found redundant by the first pass and removed rather
 than kept dead. Still not followed, and said in the report: project
 modules that re-export the package's names, return types, tuple
 unpacking, `StrictRedis`-style assignment aliases.
+
+### 38.14 Week 3: R1, pass by name (22 Oct)
+
+Built the day after locate, the expected rewrite of every case written
+before the first run: `scripts/fixtures/rewrite_app/cases.py` has one
+call per line, twenty-seven of them after the review, and
+`scripts/test_fixer_rewrite.py`'s docstring says for each whether it is
+rewritten (and into what), withheld (and why) or needs nothing. The
+first run got every decision of the first twenty right and two report
+checks wrong (where the decision prints when one call meets two entries,
+below). `fixer/rewrite.py` holds R1 as §38.4
+has it, decided per CALL SITE from every row of the called function in
+the range; `fixer/report.py` prints the decision under the call's line
+("-> rewritten: ...", "-> withheld: <reason> | would be: ...", "-> needs
+nothing from R1: <reason>") and counts them in the footer; `fixer/cli.py`
+prints the unified diff after the report, writes it with `--diff <path>`,
+writes the files with `--apply` and still prints the diff; `fixer/
+locate.py` gains one thing R1 needed, a call to a class that inherits
+its `__init__` meeting the rows on the class that defines it (`Child("h",
+1, 2)` for rows on `Client.__init__`, through griffe's MRO).
+
+What §38.4 fixed and the code does: the run is the positional arguments
+from the first one whose parameter MOVED or became keyword-only to the
+last, each named from the OLD signature (`Client("localhost", 6380, 2)`
+-> `Client("localhost", port=6380, db=2)`), a parameter of another kind
+of row included when it sits in the run (`retries`, R2's, in `Client("h",
+1, 2, 3)` -> `Client("h", port=1, db=2, retries=3)`); withheld with the
+reason when the old signature could not be read, when the call unpacks
+`*` or `**`, when it passes more positional arguments than the signature
+has named ones (the rest went to `*args`, or the call was already wrong),
+when a parameter in the run was positional-only in the old version
+(`helper(1, 2, 3)` with `b` moved: `b` has no name to pass), when the
+function also carries a flag (a removed parameter, one added as required,
+one made positional-only: `connect("h", 2, timeout=9)` is withheld with
+both reasons and "would be `connect("h", port=2, timeout=9)`"), and when
+the run would name a parameter the call also passes by keyword
+(`Client("h", 1, port=2)`: already wrong, nothing guessed). The self
+offset is griffe's: one for a constructor, an instance call and a
+classmethod called on the class (`Client.from_url("u", 5)` ->
+`Client.from_url("u", retries=5)`, the label read from the old version),
+none for a function, an explicit-self call (`Base.send(a, b"x", 5)` ->
+`Base.send(a, b"x", timeout=5)`) or a staticmethod (`Client.parse("u",
+True)` -> `Client.parse("u", strict=True)`). Decisions beyond §38.4,
+each in the module's docstring:
+
+1. The kinds of a PARAMETER_CHANGED_KIND row are read from griffe's
+   message ("Parameter kind was changed: positional or keyword ->
+   keyword-only"), since the bundle's value columns hold only values
+   that parse as expressions (§38.13) and kinds do not. "-> keyword-only"
+   is R1's; "-> positional-only" is a flag; any other change of kind is
+   a flag too, named as not a case R1 covers.
+2. Two decisions need no signature and are made without the old version:
+   every moved parameter already passed by name, and no positional
+   argument at all. Everything else without the old version is withheld
+   as "the old signature could not be read", with the environment's
+   sentence.
+3. A withheld rewrite is still computed where it can be, and printed as
+   what it would be, so the user sees the fix once the flag is dealt
+   with; a flag that stops the computation (unpacking, overflow, the
+   signature unread, a positional-only name) prints the reason alone.
+4. libcst makes the edit: the keyword goes in as `name=value` with no
+   spaces, as PEP 8 writes keyword arguments, and everything else in the
+   file, the comment inside a multi-line call, the line endings and a
+   byte-order mark included, stays as it was. A call and the call made
+   on its result at the same column (`Client("h", 1).send(b"t", 5)`) are
+   told apart by the node's end, which the hit now carries; both are
+   named, and the outer one's text shows the inner one already named. A
+   call made on a call's result (`Client("h", 1)("x")`, `deco(3, 2)(g)`)
+   is a call on an object the tool does not know: the inner call is the
+   hit and is rewritten, the outer is not resolved by name, although
+   libcst would name it after the inner callee; what calling an instance
+   returns is unknown too, so `Client("h", 1)("x").send(...)` and `r =
+   Client("h", 1)("x"); r.send(...)` are unverified, not the class's.
+5. A reason that would list the 43 moved parameters of `Redis.__init__`
+   lists six and says how many more; a call spanning lines prints on one
+   line under its hit.
+6. One call, one decision, from the parameter rows of EVERY function the
+   call meets: an export path can name two defining paths inside the
+   range (a class that moved modules), and a parameter removed under one
+   withholds the rewrite found under the other; the signature is read
+   from the first of them the old version has. The decision prints under
+   each of those functions' entries in PART 1, and not under the class's
+   own entry (`CLASS_REMOVED_BASE`) that the same call also meets: a
+   rewrite of the arguments is not an answer to a removed base.
+7. The diff is one `patch -p1` and `git apply` accept: every line
+   terminated, and the "No newline at end of file" marker where a file's
+   last line has none (difflib leaves that line open, and the next
+   file's header glued to it). `--diff <path>` writes the file even when
+   there is nothing to rewrite, empty, and says so, so a script that
+   applies it finds it.
+8. `--test "<command>"` of §38.4 is not built this week: it runs the
+   user's code, and whether the fixer should offer that at all is for
+   the evaluation's week to decide; nothing runs that the user did not
+   start. Not followed, and said: a call on an instance (`w(1, 2)`) for
+   a change on `__call__`; and §38.4's unreported removal, the premise
+   the data cannot check.
+
+The redis demo, corrected: the morning's claim that `Redis("localhost",
+6379, 0, None, 5)` would get its arguments named was wrong, and the
+expected results written before the run caught it. The 43 parameters
+8.0.0 moved are `connection_pool`, `decode_responses`, `encoding` and
+the rest of the keyword tail; `host`, `port`, `db`, `password` and
+`socket_timeout`, the five that call passes by position, did not move,
+so R1 says "needs nothing: the moved parameter(s) are not passed here".
+What that call needs is R2: `socket_timeout=None` is one of the six
+defaults 8.0.0 changed. With a mock row that moves `port` and `db`, the
+same call is rewritten to `Redis("localhost", port=6379, db=0,
+password=None, socket_timeout=5)`, the two last names griffe's reading of
+the installed 7.4.1 and not the mock's, which is what the week was for.
+
+The review of 22 Oct, by a reader who had not seen the code written,
+found one soundness defect and four lesser ones against the first
+version, and decisions 4 to 7 above carry the fixes: a call made on a
+call's result (`f2(1, 2)(3, 4)`) was renamed at the OUTER call with the
+outer call's shape, since libcst names a call after its callee through
+an inner call, so `Widget("w", 2)(5, 6)` became `Widget("w", 2)(5,
+size=6)`, a TypeError on the new version, and the moved argument stayed
+positional (fixed: the outer call is not resolved by name, and after the
+re-verification found the same root one level deeper, neither is a
+method on what calling an instance returned, nor a name bound to it);
+the diff was
+malformed where a rewritten line was a file's last and had no newline,
+and `patch` rejected it (fixed, and the test now applies the diff with
+`patch`); one call meeting two defining paths got two decisions, a
+rewrite in the diff and a withheld one in the report (fixed: one
+decision from both); a byte-order mark was dropped by the rewrite, a
+change outside the located lines (fixed); and a multi-line call broke
+the report's line (fixed). It also named the premise now in §38.4, the
+unreported removal, which no code can fix from this data; `__call__` as
+a call site locate misses; and six guards the test could not catch (a
+new-required row never meeting a plan, a kind change R1 does not cover,
+a diff joined wrongly, a duplicate of a non-moved name in the run, the
+long list's cut, keyword-only parameters counted as named), each now a
+case. Nothing it tried in the offsets, the syntactic forms, idempotence
+or the redis snippets came out wrong: `redis.Redis("h", 6380, 2, "pw")`
+-> `password="pw"`, `r.set("k", "v", 10, 5, True)` -> `ex=10, px=5,
+nx=True` under a mock row, with 7.4.1's names.
+
+Tested by `scripts/test_fixer_rewrite.py`, 36 checks on both pandas
+venvs: griffe's words and the offset; the twenty-seven cases with the
+old version read (29 hits on 27 lines, 15 rewrites on 15 source lines, 9
+withheld, 3 need nothing, two calls on what an instance returned
+unverified, the diff's exact lines, the files unwritten by a plain run);
+the same without the old version (the two calls on the instance `a` and
+the `.send` of line 30 unverified and so not R1's, `Child(...)` no hit,
+22 withheld, the all-by-name case decided without the signature, an
+empty diff); apply to a copy and run again (idempotence: the same 29
+hits, no rewrite, the fifteen "already passed by name", the nine
+withheld as before, the original untouched); the
+edges (a file without a final newline followed by another, `patch -p1`
+accepting the diff, the byte-order mark through `--apply`, one call
+meeting two defining paths, the long list, the one-line call); the
+command line (the decisions under the lines, under the function's entry;
+`--diff` and `patch` accepting what it wrote; `--apply`; the run after
+it; `--diff` with nothing to rewrite; the run without the old version).
+Forty guards broken on purpose (twenty-six in rewrite, six in report,
+three in cli, four in locate, one in the fixture): thirty-nine caught,
+one equivalent (keyword arguments counted in the run's index,
+which cannot matter since Python puts every keyword after every
+positional). The redundant second guard on unresolved hits in
+`r1_plans`, found by the pass, was removed rather than kept dead.

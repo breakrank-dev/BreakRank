@@ -1,10 +1,11 @@
 """
-The command line (NOTES §38.2, §38.3, §38.5). Two of the three steps are
-here: rank, the upgrade's changes in the site's order with what the bundle
-says of each release crossed, and locate, the project's lines that use
-each changed name, with how sure the tool is of each. The rewrites (§38.4)
-follow in the weeks after; until then every line is listed and none is
-changed.
+The command line (NOTES §38.2 to §38.5): rank, the upgrade's changes in
+the site's order with what the bundle says of each release crossed;
+locate, the project's lines that use each changed name, with how sure
+the tool is of each; and R1 of the rewrites, pass by name (§38.4), as a
+unified diff on stdout, or to a file with `--diff <path>`; `--apply`
+writes the files and still prints the diff, and a second run after it
+rewrites nothing. R2, pin the old default, follows.
 
     python -m fixer <package> [project] --from <version> --to <version>
     python -m fixer <package> [project] --to <version>
@@ -26,7 +27,8 @@ they were not, and methods called on instances are listed as unverified
 where the bundle does not name the path.
 
 Exit codes (§38.4): 0 nothing in the project names a changed symbol,
-1 lines listed (later: flagged or rewritten), 2 the tool could not run,
+1 lines listed, flagged or rewritten (information, not failure), 2 the
+tool could not run,
 including an error it did not expect (one line on stderr; the traceback
 with BREAKRANK_DEBUG=1).
 """
@@ -44,6 +46,7 @@ from fixer.env import EnvError, Installed, find_installed, site_packages
 from fixer.locate import locate
 from fixer.oldapi import OldApi
 from fixer.report import rank_report, report
+from fixer.rewrite import apply, r1_plans, render
 
 
 def read_environment(package: str, env: str | None
@@ -125,6 +128,11 @@ def run(argv: list[str] | None = None) -> int:
                                   "site-packages directory (default: this "
                                   "interpreter's)")
     ap.add_argument("--bundle", help="a bundle file other than the tool's")
+    ap.add_argument("--diff", help="write the rewrites' unified diff to this "
+                                   "file instead of printing it")
+    ap.add_argument("--apply", action="store_true",
+                    help="write the rewritten files (the diff is still "
+                         "printed, or written with --diff)")
     ap.add_argument("--rank-only", action="store_true",
                     help="list the upgrade's changes ranked and exit "
                          "without reading the project")
@@ -201,6 +209,27 @@ def run(argv: list[str] | None = None) -> int:
 
         api, env_lines = old_api(installed, frm, why)
         located = locate(project, changes, api)
+        plans = r1_plans(located, changes, api,
+                         "the old version was not read (see the environment "
+                         "line above)")
+        diffs = render(project, plans)
+        if args.apply:
+            diff_note = "the diff follows, applied"
+        elif args.diff:
+            diff_note = f"the diff is in {args.diff}"
+        else:
+            diff_note = "the diff follows"
         print(report(args.package, frm, to, crossed, changes, located,
-                     bundle.built_at(), str(project.resolve()), env_lines))
+                     bundle.built_at(), str(project.resolve()), env_lines,
+                     plans, diff_note))
+        text = "".join(d.text for d in diffs)
+        if args.diff:
+            pathlib.Path(args.diff).write_text(text, encoding="utf-8")
+            print(f"\ndiff written to {args.diff} ({len(diffs)} file(s))"
+                  + ("" if diffs else "; nothing to rewrite, so it is empty"))
+        elif diffs:
+            print("\n" + text, end="")
+        if args.apply and diffs:
+            written = apply(project, diffs)
+            print(f"\n{len(written)} file(s) rewritten: " + ", ".join(written))
     return 1 if located.hits else 0

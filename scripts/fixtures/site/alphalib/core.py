@@ -25,6 +25,10 @@ class Client(Base):
     def from_url(cls, url, retries=3):
         return cls(url, retries=retries)
 
+    @staticmethod
+    def parse(url, strict=False):
+        return (url, strict)
+
 
 class Child(Client):
     """Inherits `__init__`: its parameters are Client's."""
