@@ -9070,3 +9070,84 @@ and messages R1 and R2 read are the same across 2.2 to 2.4.
 Tests: 53 checks in `scripts/test_fixer_rewrite.py` (36 in week 3),
 locate's 75 (its footer check reads the new footer) and the bundle's 50
 unchanged, on Python 3.13 here with libcst 1.9.0 and griffe 2.4.1.
+
+### 38.16 Week 5's sample: the ten downstream packages. The rule, fixed before the count (26 Oct)
+
+Week 4's commit is 78e837a (26 Oct, R2). R1 and R2 are in, so §38.6's
+second number is next: the fixer's precision on real downstream code,
+read by hand, on a sample named here before any run. The sample is
+chosen by `scripts/eval_sample.py` from two files, with the rule below
+written and pushed before the script ran on the real data. The script
+downloads nothing; the run itself is week 5's.
+
+**The sources.** `data/usage_pairs.csv`, the usage scan's record of
+(scanning package, symbol it uses) for the 1,500 most-downloaded
+packages, latest releases as of the September scan, self-use excluded
+(`ml/ingest/run_usage.py`; the file is on the Mac, as every CSV under
+data/ is); and `fixer/data/breakrank.sqlite`, the committed bundle,
+for the rows and their paths.
+
+**A rewritable function** is one the bundle holds a row on of a kind
+the two rules act on: R1's, a parameter moved (PARAMETER_MOVED) or made
+keyword-only (PARAMETER_CHANGED_KIND whose message ends "-> keyword-
+only"); R2's, a default changed from a plain literal (PARAMETER_CHANGED_
+DEFAULT whose old value is plain and not spelling-only, by
+fixer/rewrite.py's `plain` and `cosmetic`) or a parameter made required
+(PARAMETER_CHANGED_REQUIRED). A function counts once however many rows
+or upgrades carry it. A function the fixer would withhold on (a removal
+beside the moved parameter, `connect` in the fixture) still counts: the
+evaluation reads withheld lines as well as rewrites (§38.6). On the
+bundle: 8,487 rows of the four kinds on 1,331 functions, before the
+plain-literal and spelling tests, which the script applies.
+
+**A scanning package uses a function** when one of its pairs names the
+function's defining path or an export path (the label's matching, §24),
+or, for a constructor, the class's path by either spelling: the scan
+records `from redis import Redis` as `redis.Redis`, and locate takes a
+`Redis(...)` call to `Redis.__init__`'s rows (§38.13). What the scan
+cannot record, a method called on an instance (`r.set(...)`), is not
+counted, so the sample leans to constructors, module-level functions
+and class attributes written in full; it is the convenience sample
+§38.6 calls it, biased to large consumers, and the report says so. A
+pair whose scanner is the changed package itself, by PEP 503 name, is
+dropped (the scan excludes self-use already; the script checks again).
+
+**The ranking** is by the number of distinct rewritable functions a
+package uses, ties by name. The first TEN are the sample. The next
+FIVE are reserves, taken in order only when a sample package's latest
+release cannot be downloaded as source, or the old version of the
+changed package it uses cannot be installed from a wheel; each
+substitution is recorded here with its reason. The script prints the
+top 25 with each package's count of functions, of changed packages and
+of upgrades; the ten's detail (each changed package with its upgrades
+and up to eight function names, marked R1, R2 or both); and the pairs
+file's row count and sha256. That output goes into this section, as
+printed, before the fixer touches any of the ten; the evaluation's
+venvs and the fixer's runs follow in week 5.
+
+**Not decided here, on purpose:** which upgrade the fixer runs for when
+a sample package uses rewritable functions from several changed
+packages or several of one package's releases. §38.6 says "the upgrade
+that produced the change"; where a package meets more than one, every
+such upgrade is run and counted, since the unit the evaluation counts
+is a proposed rewrite read by hand, and the counts are reported per
+upgrade with the totals. Said before the list exists, so the list does
+not decide it.
+
+Tested by `scripts/test_eval_sample.py`, 15 checks on the fixture's
+forty-five rows and twenty-one hand-written pairs, the expected ranking
+written first: fourteen rewritable functions in the fixture (a
+parameter added as required alone, a removed parameter, the constants,
+the removed objects and the class rows are not); the class path reaches
+the constructor; self-use dropped; a package that uses nothing
+rewritable absent; ties by name, with a short name listed first in the
+file and ranked by name (`aa` among `appa`, `appd`, `appe`); the sample
+and the reserves marked; the detail's lines; the csv; a missing pairs
+file refused with where it comes from. Ten guards broken on purpose
+(self-use kept, the class path dropped, a spelling-only or non-plain
+default counted, a kind change to positional-only counted, ties not by
+name, the reserves unmarked, export paths ignored, a now-required row
+not counted, functions counted per row): all ten caught, the last by
+the run failing before a check could print; the tie guard survived the
+first fixture (every tied name had the same length) until the short
+name was added.
