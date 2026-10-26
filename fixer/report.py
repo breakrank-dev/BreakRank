@@ -7,14 +7,16 @@ name), one entry per changed FUNCTION or object with every row of it
 under it, since a call to `Redis(...)` with 49 moved parameters is one
 call site and not 49; under the rows, the project's lines, each with its
 confidence (resolved, referenced, unverified; §38.3) and how the name is
-used, and under a call R1 decided on (§38.4), the decision: rewritten
-and the call as it will read, withheld with the reason (and what it
-would be, where the reason leaves that computable), or needs nothing and
-why. The second part is the rest of the
-upgrade's changes, ranked, one line each, cut at SHOW_REST lines with the
-count of the rest, since sglang 0.5.10 alone has 2,011. Private names
-are reported when the project uses them, marked private. The footer
-counts R1's decisions and credits griffe.
+used, and under a call the rules decided on (§38.4, §38.15), the
+decision in three lines at most: rewritten and the call as the diff will
+have it, withheld, or needs nothing; then one line per rule that has a
+row on the function, with what it did (R1 the names, R2 the pins with
+their new values and what it did not pin and why), or why it is withheld
+and what it would be, or why nothing is needed. The second part is the
+rest of the upgrade's changes, ranked, one line each, cut at SHOW_REST
+lines with the count of the rest, since sglang 0.5.10 alone has 2,011.
+Private names are reported when the project uses them, marked private.
+The footer counts each rule's decisions and credits griffe.
 
 `rank_report` is the first week's report, kept for `--rank-only`: the
 releases crossed and the ranked list, the project unread.
@@ -26,13 +28,14 @@ import libcst as cst
 
 from fixer.bundle import Change, Release
 from fixer.locate import REFERENCED, RESOLVED, UNVERIFIED, Hit, Located
-from fixer.rewrite import FLAG, NOTHING, REWRITE, Plan
+from fixer.rewrite import FLAG, LEFT, NONE, NOTHING, REWRITE, Plan, Rule
 
 SHOW = 60        # the ranked list of --rank-only
 SHOW_REST = 200  # the untouched changes under part two
 # A changed value longer than this is cut in the one-line forms (redis's
 # REDIS_ALLOWED_KEYS is a 44-name tuple); the bundle holds the whole text,
-# and R2 reads it there, not here.
+# and R2 pins the whole text in the diff (fixer/rewrite.py cuts its
+# reasons the same way).
 VALUE_CUT = 72
 
 
@@ -114,6 +117,32 @@ def groups(changes: list[Change]) -> list[tuple[str, list[Change]]]:
 
 
 class _NoComments(cst.CSTTransformer):
+    """Comments out, and the line breaks inside a call's parentheses
+    folded, so a call spanning lines prints as one."""
+
+    def _flat(self, ws, after):
+        if isinstance(ws, cst.ParenthesizedWhitespace):
+            return cst.SimpleWhitespace(after)
+        return ws
+
+    def leave_Arg(self, original, updated):
+        return updated.with_changes(
+            whitespace_after_arg=self._flat(updated.whitespace_after_arg,
+                                            ""))
+
+    def leave_Comma(self, original, updated):
+        return updated.with_changes(
+            whitespace_after=self._flat(updated.whitespace_after, " "))
+
+    def leave_Call(self, original, updated):
+        args = list(updated.args)
+        if args and isinstance(args[-1].comma, cst.Comma):
+            args[-1] = args[-1].with_changes(comma=cst.MaybeSentinel.DEFAULT)
+        return updated.with_changes(
+            args=args,
+            whitespace_before_args=self._flat(updated.whitespace_before_args,
+                                              ""))
+
     def leave_TrailingWhitespace(self, original, updated):
         return updated.with_changes(comment=None)
 
@@ -133,24 +162,62 @@ def one_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def describe_plan(p: Plan) -> str:
-    """R1's decision under a call's line."""
-    if p.action == REWRITE:
-        return f"-> rewritten: {one_line(p.would_be or '')}"
-    if p.action == FLAG:
-        text = f"-> withheld: {p.reason}"
-        if p.would_be:
-            text += f" | would be: {one_line(p.would_be)}"
+RULES = (("R1", "pass by name"), ("R2", "pin the old default"))
+
+
+def describe_rule(tag: str, name: str, rule: Rule) -> str | None:
+    """One rule's line under a call, or None when the rule has no row on
+    the function."""
+    if rule.action == NONE:
+        return None
+    if rule.action == REWRITE:
+        text = f"{tag}, {name}: {rule.reason}"
+        if tag == "R2":
+            text += "; delete an argument to accept its new default"
         return text
-    return f"-> needs nothing from R1: {p.reason}"
+    if rule.action == FLAG:
+        text = f"{tag} withheld: {rule.reason}"
+        if rule.would_be:
+            text += f" | would be: {one_line(rule.would_be)}"
+        return text
+    if rule.action == LEFT:
+        return f"{tag} left to you: {rule.reason}"
+    return f"{tag}: {rule.reason}"
 
 
-def r1_summary(plans: list[Plan], diff_note: str) -> str:
-    n = {a: sum(1 for p in plans if p.action == a)
-         for a in (REWRITE, FLAG, NOTHING)}
-    text = (f"R1, pass by name: {n[REWRITE]} call(s) rewritten, {n[FLAG]} "
-            f"withheld, {n[NOTHING]} need nothing")
-    return text + (f"; {diff_note}." if n[REWRITE] else ".")
+def describe_plan(p: Plan) -> list[str]:
+    """The decision under a call's line: the call as the diff will have
+    it, withheld, or needs nothing; then each rule's line."""
+    if p.action == REWRITE:
+        lines = [f"-> rewritten: {one_line(p.would_be or '')}"]
+    elif p.action == FLAG:
+        lines = ["-> withheld"]
+    elif p.action == LEFT:
+        lines = ["-> left to you"]
+    else:
+        lines = ["-> needs nothing"]
+    for (tag, name), rule in zip(RULES, (p.r1, p.r2)):
+        text = describe_rule(tag, name, rule)
+        if text is not None:
+            lines.append(text)
+    return lines
+
+
+def summary(plans: list[Plan], diff_note: str) -> str:
+    """The footer: each rule's counts over the calls it has a row on."""
+    parts = []
+    for (tag, name), attr, verb in zip(RULES, ("r1", "r2"),
+                                       ("rewritten", "pinned")):
+        n = {a: sum(1 for p in plans if getattr(p, attr).action == a)
+             for a in (REWRITE, FLAG, LEFT, NOTHING)}
+        parts.append(f"{tag}, {name}: {n[REWRITE]} call(s) {verb}, "
+                     f"{n[FLAG]} withheld, "
+                     + (f"{n[LEFT]} left to you, " if attr == "r2" else "")
+                     + f"{n[NOTHING]} need nothing")
+    text = ". ".join(parts)
+    if any(p.action == REWRITE for p in plans):
+        return text + f"; {diff_note}."
+    return text + "."
 
 
 def report(package: str, frm: str, to: str, rels: list[Release],
@@ -206,7 +273,9 @@ def report(package: str, frm: str, to: str, rels: list[Release],
                 lines.append(f"       {describe_hit(hits[key])}")
                 plan = by_key.get(key)
                 if plan is not None and sym in plan.symbols:
-                    lines.append(" " * 36 + describe_plan(plan))
+                    first, *rest = describe_plan(plan)
+                    lines.append(" " * 36 + first)
+                    lines.extend(" " * 39 + text for text in rest)
     else:
         lines.append("PART 1  no line of the project names a changed "
                      "symbol (see the notes below for what the tool "
@@ -233,7 +302,6 @@ def report(package: str, frm: str, to: str, rels: list[Release],
                  "bound to a literal is not the package's and is not listed; "
                  "a project module that re-exports the package's names is "
                  "not followed.")
-    lines.append(r1_summary(plans, diff_note) + " R2, pin the old default, "
-                 "is not in this version (NOTES §38.4).")
+    lines.append(summary(plans, diff_note))
     lines.append("changes found with griffe.")
     return "\n".join(lines)

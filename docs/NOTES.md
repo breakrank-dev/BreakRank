@@ -7979,7 +7979,14 @@ reads it, and without the old version installed those are flagged. "Plain litera
 and a changed mutable default is usually the bug being fixed), and
 differs in value from the new default (griffe compares source text, so
 `'a'` to `"a"` and `1e3` to `1000.0` are rows; those are skipped, and
-the 621 is therefore "at most"). The conditions R1 has on kind and
+the 621 is therefore "at most"). [26 Oct, from the review of R2: the
+parenthesis is wrong. griffe renders a constant default with `repr`, so
+`'a'` and `"a"`, `1e3` and `1000.0`, `0x10` and `16` print the same and
+produce no row (checked with griffe 2.4.1 on a two-version module, and
+on the bundle: 0 of the 601 CHANGED_DEFAULT rows with a plain old value
+are such a pair). The check stays in the code as a guard against a
+reader that compares text, and the 621 is "at most" for the other
+reasons only.] The conditions R1 has on kind and
 unpacking apply: a positional-only parameter takes no `name=`, and a
 call with `**` unpacking may already carry the name. What R2 claims is
 exactly this: the call now states the value it relied on, so the
@@ -8736,3 +8743,330 @@ one equivalent (keyword arguments counted in the run's index,
 which cannot matter since Python puts every keyword after every
 positional). The redundant second guard on unresolved hits in
 `r1_plans`, found by the pass, was removed rather than kept dead.
+
+### 38.15 Week 4: R2, pin the old default. The rule, fixed before the code (26 Oct)
+
+For the record, since §38.13 and §38.14 were written before their pushes:
+the bundle is 964eb85, locate 3e0c566 (22 Oct) and R1 d0d6a14 (24 Oct),
+all on ml/db-writer. R1 landed a week ahead of §38.10's plan, so R2
+starts 26 Oct. What follows was written and pushed before any of it ran.
+
+**What R2 does**, as §38.4 fixed it, decided per CALL SITE from every
+row of every function the call meets, in the same pass as R1, so a call
+to `Redis(...)` gets ONE decision from its 43 moved parameters and its
+six changed defaults, and one edit. For each PARAMETER_CHANGED_DEFAULT
+row (its old and new value are the bundle's, griffe's "Parameter default
+was changed: OLD -> NEW" split as the loader splits it) and each
+PARAMETER_CHANGED_REQUIRED row (griffe says only "Parameter is now
+required"; the old default is read from the old signature, as R1 reads
+the names), a call that does not pass the parameter gets
+`name=<old default>` appended, when the old default is a plain literal:
+it parses with `ast.literal_eval`; it is not a mutable container (`[]`,
+`{}`, `[1]`: a shared default and a fresh one are different programs,
+§38.4's reason, which holds for a full container as for an empty one;
+`set()` does not parse and is caught by the first test); and
+where the new default is a literal too, the two differ in value or in
+type (`'fast' -> "fast"` and `1e3 -> 1000.0` are rows because griffe
+compares text; they are listed as "changed only in spelling" and nothing
+is pinned). What R2 claims is §38.4's: the call now states the value it
+relied on. Whether the new release treats that value as the old one did
+is printed beside every pin as the user's second option, "delete this
+argument to accept the new default", with the old and new value.
+
+**Decisions**, each in the module's docstring:
+
+1. Passed or not. A parameter is passed when the call names it, or when
+   it sits among the positional arguments by the OLD signature, with
+   R1's offset (one for a constructor, an instance call and a classmethod
+   called on the class; none for a function, an explicit-self call and a
+   staticmethod). Without the old signature, a parameter the call names
+   is passed and needs nothing; every other pin is withheld as "the old
+   signature could not be read", since whether a positional argument
+   already fills the parameter, and whether it takes a keyword at all,
+   is unknown. R1 decides "no positional argument" without the signature
+   because that outcome is nothing; R2's outcome is an edit, and an edit
+   is never made on a guess.
+2. `*` or `**` unpacking withholds every pin: the call may already pass
+   the name.
+3. A positional-only parameter is never pinned: it has no name to pass.
+   Its row is listed with the old and new value, for the user.
+4. A call that is already wrong is withheld, as R1 withholds it: more
+   positional arguments than the old signature has named ones with no
+   `*args` to take them, or a parameter passed by position and by
+   keyword. The tool does not edit a call the old version would have
+   rejected.
+5. The function's flags withhold R2 as they withhold R1 (§38.4: a
+   parameter removed, one added as required, one made positional-only),
+   and the pins are printed as what they would be. [26 Oct, from the
+   review: two more flags, found by R2 and honoured by R1 as well. A
+   parameter now required whose old default cannot be pinned (positional-
+   only, or not a plain literal): the call will not run on the new
+   version whatever else is done, so it is a flag like a parameter added
+   as required, not a row listed beside the pins. And one name resolving
+   to two functions the old version has with different signatures (a
+   compatibility shim, `try: from alphalib import Client / except
+   ImportError: from alphalib.opts import Session as Client`): the edit
+   computed on one may be wrong for the other, so both rules are
+   withheld with that as the reason.]
+6. The pins go after the last argument, in the order of the old
+   signature, as `name=value` with no spaces. When the call ends with a
+   trailing comma on its own line, each pin takes a line of its own with
+   the arguments' indentation and the trailing comma stays last;
+   otherwise the pins join the line. After `--apply` every pinned
+   parameter is passed by name and R2 pins nothing: the idempotence test
+   covers both rules. [26 Oct, from the review and the probes: a call
+   spanning lines without a trailing comma keeps `)` where it was; a
+   same-line trailing comma (`f(a,)`) takes one space after each comma;
+   a comment on an earlier argument's line is not copied to each pin
+   line, and a comment on the last argument's own comma stays on that
+   argument; a bare generator argument (`f(x for x in y)`) takes its
+   parentheses once it is named or another argument follows, by either
+   rule, since it is legal only alone; and the diff splits the file on
+   `\n` alone, since `str.splitlines` also breaks at a form feed and a
+   few other characters Python keeps inside a line, which put the
+   no-newline marker in the middle of a hunk.]
+7. What is not pinned is said, with the old and new value, so the user
+   can set it: a default whose old value is not a plain literal (redis's
+   `retry=Retry(...)`, the fixture's `limit=DEFAULT_LIMIT`), a mutable
+   container, a positional-only parameter. A call with pins and
+   such rows is rewritten with the rows listed beside the pins; a call
+   with such rows and nothing to pin is withheld, with them as the
+   reason; a cosmetic row alone is "changed only in spelling", nothing.
+   [26 Oct, from the review: "withheld" was carrying two meanings, the
+   tool refusing an edit and the tool having nothing it can do, and
+   after `--apply` every pinned call fell into the second, so the footer
+   read "0 pinned, 18 withheld" for a project the tool had just
+   rewritten. The second is now a third outcome, "left to you": the
+   call's headline reads `-> left to you`, the R2 line `R2 left to you:
+   limit (...), hooks (...)`, and the footer counts it apart: `R2, pin
+   the old default: N pinned, M withheld, K left to you, J need nothing`.
+   Also: a mutable container inside a tuple (`([1],)`) is a mutable
+   container; a row on a name the old signature read does not have is
+   never pinned on the row's word alone; and a row whose message carries
+   no values is "left to you" with that said.]
+8. One decision per call in the report, three lines at most:
+   `-> rewritten: <the call as it will read>`, `-> withheld` or
+   `-> needs nothing`; then one line per rule that has rows on the
+   function: `R1, pass by name: port, db`; `R2, pin the old default:
+   retries=3 (now 5 in 2.0.0); delete an argument to accept its new
+   default`; `R1 withheld: <reason> | would be: <the call>`; `R2:
+   already passed: retries`. A withheld rule's "would be" is the call
+   with that rule's edit alone: a rule keeps an edit it withholds only
+   under the function's flags (decision 5), which withhold both rules,
+   so there is never another rule's edit to add. The footer counts each
+   rule: `R1, pass by name:
+   N call(s) rewritten, M withheld, K need nothing. R2, pin the old
+   default: N call(s) pinned, M withheld, K need nothing; the diff
+   follows.`
+9. Not built, as §38.14's item 8: `--test`. [26 Oct: and the review's
+   outside-the-rule idea, pinning a positional-only now-required
+   parameter by position when every positional-only one before it is
+   passed, stays outside: the rule names parameters, and a positional
+   pin would have to be read against the whole run.]
+
+**Expected, written before the first run.** Three parts.
+
+(a) `cases.py`, R1's 27 lines against the same rows: R1's own decisions
+do not move (15 rewritten, 9 withheld, 3 need nothing). R2 has rows on
+two of their functions, `retries` 3 -> 5 on Client.__init__ and `d` 1 ->
+2 on helper, so every Client call that does not pass `retries` and is
+not withheld gains `retries=3`, and `helper(1, 2, 3)`, whose R1 is
+withheld (b positional-only), gains `d=1`: of the 19 calls R2 meets [20
+once the pass that broke the guards gave `spread`'s `flag` a row, the
+twentieth withheld by spread's flag], 13 pinned (lines 9, 10, 11, 12,
+15, 20, 22, 24, 25, the constructor of 30, 33, 34, 35), 4 withheld (14
+unpacking; 16 and 29 already wrong; 32
+already wrong, and like R1 the tool prints no would-be for a call that
+was wrong before the upgrade), 2 need nothing (13 and 31, `retries`
+passed). The file's decisions become 18 rewritten, 8
+withheld (31 counts as withheld, since R1 is), 1 needs nothing, 27 as
+before; line 9 reads `Client("localhost",
+port=6380, db=2, retries=3)`, line 11 `Client("localhost", port=6380,
+db=2, retries=3)` under a nothing from R1, line 12 `Client("localhost",
+retries=3)`, line 20 `helper(1, 2, 3, d=1)` with R1's reason beside it,
+line 25 keeps its comment, `Client("h", port=1,  # the port` / `db=2,
+retries=3)`, and line 30 reads `Client("h", port=1,
+retries=3).send(b"t", timeout=5)`.
+
+(b) `defaults.py`, R2's own cases against `alphalib.opts` (1.0.0:
+`fetch(url, timeout=None, retries=3, verify=True, mode='fast',
+limit=DEFAULT_LIMIT, hooks=[], pool=None, tags=())`; `shape(a, b=1, /,
+c=2, *, d=1e3)`; `ship(path, compress=False)`; `Session.__init__(self,
+host, port=6379, *, protocol=2, keepalive=None)`; `Session.get(self,
+key, default=None)`) and sixteen rows for 2.0.0: fetch's timeout `None
+-> DEFAULT_TIMEOUT`, retries `3 -> 5`, verify `True -> False`, mode
+`'fast' -> "fast"`, limit `DEFAULT_LIMIT -> 20`, hooks `[] -> None`,
+pool `None -> Pool()`, tags `() -> None`; shape's b `1 -> 2`, d `1e3 ->
+1000.0`, c now required; Session's protocol `2 -> None`, keepalive
+`None -> True`; get's default `None -> SENTINEL`; ship's compress
+`False -> True` and `dest` added as required.
+
+|   | call | R2 |
+|---|---|---|
+| 7 | `fetch("u")` | pinned: `fetch("u", timeout=None, retries=3, verify=True, pool=None, tags=())`; not pinned: limit (old default not a plain value), hooks (mutable container); mode changed only in spelling |
+| 8 | `fetch("u", 5, 9)` | pinned `verify=True, pool=None, tags=()`: timeout and retries are passed by position |
+| 9 | `fetch("u", retries=1, verify=False, pool=None, timeout=1, tags=(1,))` | withheld: every pinnable parameter is passed; limit and hooks are the reason, listed with their values |
+| 10 | `fetch("u", **kw)` | withheld: unpacking |
+| 11 | `fetch(*args)` | withheld: unpacking |
+| 12 | `shape(1)` | pinned `shape(1, c=2)`: c now required, its old default from the signature; b not pinned, positional-only; d changed only in spelling |
+| 13 | `shape(1, 2, 3)` | needs nothing: b and c passed by position; d changed only in spelling |
+| 14 | `Session("h")` | pinned `Session("h", protocol=2, keepalive=None)`, keyword-only parameters, in the signature's order |
+| 15 | `Session("h", 1, protocol=3)` | pinned `keepalive=None` |
+| 16 | `h.get("k")` | pinned `h.get("k", default=None)`: self offset |
+| 17 | `Session.get(h, "k")` | pinned `Session.get(h, "k", default=None)`: no offset |
+| 18 | `ship("p")` | withheld: dest added as required; would be `ship("p", compress=False)` |
+| 19 | `alphalib.opts.fetch("u", timeout=2)` | pinned `retries=3, verify=True, pool=None, tags=()` |
+| 20 | `fetch("u", 1, 2, 3, 4, 5, 6, 7, 8, 9)` | withheld: 10 positional, 9 named, already wrong |
+| 21–24 | `fetch(` / `"u",` / `retries=1,` / `)` | pinned, one pin per line: `"u",` / `retries=1,` / `timeout=None,` / `verify=True,` / `pool=None,` / `tags=(),` / `)` |
+
+Nine pinned, five withheld, one needs nothing, fifteen calls; no R1 row
+on these functions, so no R1 line under them. The project's footer then
+reads: R1 15 rewritten, 9 withheld, 3 need nothing, as before; R2 22
+pinned, 9 withheld, 3 need nothing; and after `--apply`, R1 0, 9, 18 and
+R2 0, 9, 25. [What the file holds after the two rounds below: twenty-two
+calls, with 25 (a comment on the first argument), 29 (a comment on the
+last argument's comma), 33 (`wrap(1)`, y positional-only and now
+required), 34 (`emit(x for x in y)`, R1 alone on a generator), 35
+(`fetch()`), 36 (a blank line between the arguments) and a `ghost` row
+on `Session.get`; the project's footer reads R1 16 rewritten, 9
+withheld, 4 need nothing; R2 26 pinned, 10 withheld, 2 left to you, 3
+need nothing; after `--apply` R1 0, 9, 20 and R2 0 pinned, 10 withheld,
+13 left to you, 18 need nothing; without the old version R1 0, 24, 1 and
+R2 0, 37, 2, 1. The test's docstring is the table of record.] Without the old version:
+the two unpacking cases and the three calls that name every pinnable
+parameter are decided (10, 11 withheld; 9 withheld for its flags; 13
+withheld, since whether b and c are passed by position is unknown
+without the signature, and so is 8), and every other call is withheld
+with "the old signature could not be read"; the instance call on line
+16 is unverified without the version, as §38.14 has it. Over both files
+that is R2 0 pinned, 31 withheld, 1 need nothing (line 31 of cases.py,
+`retries=9` by name).
+
+(c) The demo, against the REAL bundle with redis 7.4.1 installed from a
+wheel: 8.0.0 changed six defaults of `redis.client.Redis.__init__`:
+socket_timeout `None -> DEFAULT_SOCKET_TIMEOUT`, socket_connect_timeout
+`None -> DEFAULT_SOCKET_CONNECT_TIMEOUT`, socket_keepalive `None ->
+True`, socket_keepalive_options `None -> SENTINEL`, retry
+`Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3)
+-> Retry(...DEFAULT_RETRY_BASE...)`, protocol `2 -> None`. 7.4.1's
+signature has them at positions 5, 6, 7, 8, 15 and 44 of 50. So
+`Redis("localhost", 6379, 0, None, 5)` passes socket_timeout by
+position (the fifth), and R2 pins the other four plain ones in signature
+order: `Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None,
+socket_keepalive=None, socket_keepalive_options=None, protocol=2)`, with
+retry listed as not pinned (old default not a plain value) and R1's
+"needs nothing" beside it. `Redis(connection_pool=pool)` passes none of
+the six, so it gets all five plain ones, `socket_timeout=None` first.
+Said before the evaluation says it: with a connection pool the socket
+settings are the pool's, so those pins are needless in the sense of
+§38.6, correct and harmless; the tool cannot know, and the report's
+"delete this argument" line is the answer. The `.set`, `.get`, `.delete`
+and `ConnectionPool(...)` calls have no row and get nothing.
+
+**Measured by** the same three things as the weeks before: the test's
+checks, every guard broken on purpose afterwards, and an independent
+review of the code with its fixes re-verified.
+
+**The first run (26 Oct), and what it corrected.** `fixer/rewrite.py`
+decides both rules in one pass (`decide`, one `Plan` per call with a
+`Rule` for R1 and one for R2); `fixer/report.py` prints the three lines
+and the two-rule footer; `fixer/cli.py` calls `decide`. The first run
+got every decision of the forty-three calls right against the table
+above, and two of the expectations written before it wrong, both kept
+on record here: `h.get("k")` resolves WITHOUT the old version, since
+`Session` is imported by its defining path and `get` is defined on
+`Session` itself (it is `a.send(...)`, defined on a base class, that
+needs the MRO the old version gives), so the count without the version
+was off by one; and after `--apply` the calls whose unpinnable rows
+remain were counted as "need nothing" where decision 7 said withheld,
+the contradiction the review then named and decision 7's bracket
+resolves. Three cases were added during the first pass that broke the
+guards, each with its expected result first: a changed default on
+`spread`'s `flag`, behind a call that overflows into `*rest`, which R2
+must not read as "already wrong"; a row on a name (`ghost`) that
+`Session.get` does not have in the old version the tool reads, never
+pinned on the row's word alone; and a multi-line call with a comment on
+an earlier argument, whose comment must not be copied onto each new
+line.
+
+**The review (26 Oct)**, by a reader who had not seen the code written,
+with the fixes checked again afterwards. No pin was found that changes
+a program's meaning: the pins are literals, so they capture no name,
+and position, keyword, unpacking, `**kwargs`, positional-only, the
+inherited `__init__`, the three offsets, a call on a call's result, two
+calls at one column, a dataclass's synthesised `__init__`, a byte-order
+mark, CRLF endings and a file without a final newline all held under
+its probes. It found, most serious first: (1) a malformed diff when the
+file holds a form feed or another character `str.splitlines` breaks at
+and Python does not (`\x0b`, `\x0c`, `\x1c`-`\x1e`, `\x85`), present
+since week 3: the marker landed inside the hunk and `patch` refused it;
+fixed by splitting on `\n` alone, pinned by a test with a form feed and
+a file separator. (2) R1 alone on a bare generator argument wrote
+`spread(first=x for x in y)`, a SyntaxError, since the parentheses were
+added only on R2's path; fixed in the one place both rules go through,
+pinned by `emit(x for x in y)`. (3) A comment on the last argument's own
+comma was moved onto the last pin; fixed, pinned by line 29. (4) A name
+resolving to two functions the old version has, with different
+signatures, took the first signature silently; now a flag for both
+rules, pinned by the shim case. (5) A parameter now required whose old
+default cannot be pinned left the call "rewritten" though it will not
+run on the new version; now a flag, as a parameter added as required
+is, and the flag reaches R1's line too. (6) A list inside a tuple
+default passed the mutable-container check; closed, one level at any
+depth. (7) The claim that griffe reports spelling-only rows is false
+(§38.4's bracket); the cosmetic check stays as a guard and the claim is
+withdrawn. (8) §38.15's counts had gone stale against the fixture as the
+rounds grew it; the brackets above say what the file holds, and the
+test's docstring is the table of record. (9) "Withheld" meant two
+things; decision 7's bracket, "left to you". Two wording slips in the
+module docstring, and a stray space in a folded one-line call, fixed.
+Test gaps it named, each a case now: an empty call, a blank line
+between arguments, the now-required row without the signature, a row
+whose message carries no values. Nothing the review tried in the pins'
+values (`"it's"`, `b'x'`, `...`, `-1`, `'a\nb'`, `'é'`, `(1, 2)`) came
+out wrong, and `10 ** 6`, `frozenset()`, `1 if X else 2` and a bare
+name were "not a plain value" each.
+
+**Guards broken on purpose**, 56 over the two rounds (45 in rewrite, 7
+in report, 1 in cli, 3 in the fixture rows): 51 caught by a check; 2
+stopped the run before any check printed (libcst refusing pins placed
+before the positional arguments, "Cannot have positional argument after
+keyword argument"; an IndexError on the empty call `fetch()` once its
+guard was gone, which is the fixture reaching the guard); 3 equivalent
+(griffe never reports a row whose old and new text are identical, so a
+text comparison for non-literal values changes nothing; it reports "now
+required" only for a parameter that had a default, so the guard for one
+that had none has no input; a now-required row without the signature is
+withheld by the same guard that withholds every other pin). Three
+guards survived the first pass for want of a case (the `*args`
+overflow, the ghost row, the comment on a pin line) and one the second
+(R2's flag reaching R1, until `wrap`'s `z` moved), and the fixture now
+holds each. One dead branch found by the pass was removed rather than
+kept: a withheld rule's would-be rendered "with the other rule's edit",
+which never applies, since a rule keeps an edit it withholds only under
+the function's flags, which withhold both.
+
+**The real run**, the redis demo against the committed bundle with
+7.4.1 installed from a wheel into a scratch venv here, on a project
+with the two calls of §38.14's demo: "2 line(s) use 49 of the 134
+change(s), 2 hit(s): 2 resolved"; `Redis("localhost", 6379, 0, None,
+5)` -> rewritten `Redis("localhost", 6379, 0, None, 5,
+socket_connect_timeout=None, socket_keepalive=None,
+socket_keepalive_options=None, protocol=2)`, R1 "the moved parameter(s)
+are not passed here" and R2's line naming the four pins with their new
+values and `retry` as not pinned (old default `Retry(...)` is not a
+plain value); `Redis(connection_pool=pool)` -> all five, `socket_timeout
+=None` first; the footer "R1, pass by name: 0 call(s) rewritten, 0
+withheld, 2 need nothing. R2, pin the old default: 2 call(s) pinned, 0
+withheld, 0 left to you, 0 need nothing; the diff follows." Applied to
+a copy, the file parses, and run again: 0 pinned, both calls "left to
+you" for the unpinnable `retry`, and no diff. Exactly (c) above, to the
+argument. Read on the way: the bundle's manifest records griffe 2.3.0,
+the version installed on the Mac when the bundle was built on 20 Oct
+(`build_bundle.py` writes `importlib.metadata.version("griffe")`), which
+says nothing about the ingest's version behind the CSV files; the kinds
+and messages R1 and R2 read are the same across 2.2 to 2.4.
+
+Tests: 53 checks in `scripts/test_fixer_rewrite.py` (36 in week 3),
+locate's 75 (its footer check reads the new footer) and the bundle's 50
+unchanged, on Python 3.13 here with libcst 1.9.0 and griffe 2.4.1.

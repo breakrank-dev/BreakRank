@@ -2,10 +2,11 @@
 The command line (NOTES §38.2 to §38.5): rank, the upgrade's changes in
 the site's order with what the bundle says of each release crossed;
 locate, the project's lines that use each changed name, with how sure
-the tool is of each; and R1 of the rewrites, pass by name (§38.4), as a
-unified diff on stdout, or to a file with `--diff <path>`; `--apply`
-writes the files and still prints the diff, and a second run after it
-rewrites nothing. R2, pin the old default, follows.
+the tool is of each; and the two rewrites, R1 pass by name and R2 pin
+the old default (§38.4, §38.15), decided together per call, as a unified
+diff on stdout, or to a file with `--diff <path>`; `--apply` writes the
+files and still prints the diff, and a second run after it rewrites
+nothing.
 
     python -m fixer <package> [project] --from <version> --to <version>
     python -m fixer <package> [project] --to <version>
@@ -46,7 +47,7 @@ from fixer.env import EnvError, Installed, find_installed, site_packages
 from fixer.locate import locate
 from fixer.oldapi import OldApi
 from fixer.report import rank_report, report
-from fixer.rewrite import apply, r1_plans, render
+from fixer.rewrite import apply, decide, render
 
 
 def read_environment(package: str, env: str | None
@@ -209,9 +210,9 @@ def run(argv: list[str] | None = None) -> int:
 
         api, env_lines = old_api(installed, frm, why)
         located = locate(project, changes, api)
-        plans = r1_plans(located, changes, api,
-                         "the old version was not read (see the environment "
-                         "line above)")
+        plans = decide(located, changes, api,
+                       "the old version was not read (see the environment "
+                       "line above)")
         diffs = render(project, plans)
         if args.apply:
             diff_note = "the diff follows, applied"

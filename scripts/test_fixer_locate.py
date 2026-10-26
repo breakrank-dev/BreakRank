@@ -220,6 +220,72 @@ def rewrite_changes() -> list:
     ]
 
 
+def r2_changes() -> list:
+    """Twenty-three rows for R2's cases (scripts/test_fixer_rewrite.py, NOTES
+    §38.15): on alphalib.opts, changed defaults of every shape the data
+    has, a parameter made required, and a function that also gains a
+    required parameter; and spread's flag, behind a *args overflow."""
+    fetch, shape = "alphalib.opts.fetch", "alphalib.opts.shape"
+    init, get = "alphalib.opts.Session.__init__", "alphalib.opts.Session.get"
+    return [
+        change(23, fetch, "PARAMETER_CHANGED_DEFAULT", "timeout", "",
+               "None", "DEFAULT_TIMEOUT", score=0.5, used=3),
+        change(24, fetch, "PARAMETER_CHANGED_DEFAULT", "retries", "",
+               "3", "5", score=0.5, used=3),
+        change(25, fetch, "PARAMETER_CHANGED_DEFAULT", "verify", "",
+               "True", "False", score=0.5, used=3),
+        change(26, fetch, "PARAMETER_CHANGED_DEFAULT", "mode", "",
+               "'fast'", '"fast"', score=0.5, used=3),
+        change(27, fetch, "PARAMETER_CHANGED_DEFAULT", "limit", "",
+               "DEFAULT_LIMIT", "20", score=0.5, used=3),
+        change(28, fetch, "PARAMETER_CHANGED_DEFAULT", "hooks", "",
+               "[]", "None", score=0.5, used=3),
+        change(29, fetch, "PARAMETER_CHANGED_DEFAULT", "pool", "",
+               "None", "Pool()", score=0.5, used=3),
+        change(30, fetch, "PARAMETER_CHANGED_DEFAULT", "tags", "",
+               "()", "None", score=0.5, used=3),
+        change(31, shape, "PARAMETER_CHANGED_DEFAULT", "b", "",
+               "1", "2", score=0.5),
+        change(32, shape, "PARAMETER_CHANGED_DEFAULT", "d", "",
+               "1e3", "1000.0", score=0.5),
+        change(33, shape, "PARAMETER_CHANGED_REQUIRED", "c", "", score=0.5),
+        change(34, init, "PARAMETER_CHANGED_DEFAULT", "protocol", "",
+               "2", "None", score=0.5, used=2),
+        change(35, init, "PARAMETER_CHANGED_DEFAULT", "keepalive", "",
+               "None", "True", score=0.5, used=2),
+        change(36, get, "PARAMETER_CHANGED_DEFAULT", "default", "",
+               "None", "SENTINEL", score=0.5, used=2),
+        change(37, "alphalib.opts.ship", "PARAMETER_CHANGED_DEFAULT",
+               "compress", "", "False", "True", score=0.5),
+        change(38, "alphalib.opts.ship", "PARAMETER_ADDED_REQUIRED", "dest",
+               "", score=0.5),
+        # and one on spread, whose call overflows into *rest: R2 must not
+        # read that as the call being already wrong
+        change(39, "alphalib.util.spread", "PARAMETER_CHANGED_DEFAULT", "flag",
+               "alphalib.spread", "False", "True", score=0.5),
+        # and one on a name Session.get does not have in the old version
+        # the tool reads: never pinned on the row's word alone
+        change(40, get, "PARAMETER_CHANGED_DEFAULT", "ghost", "",
+               "0", "1", score=0.5, used=2),
+        # emit's first parameter moved (R1 alone on a generator argument)
+        # and a row whose message carries no values
+        change(41, "alphalib.opts.emit", "PARAMETER_MOVED", "items", "",
+               score=0.5),
+        change(42, "alphalib.opts.emit", "PARAMETER_CHANGED_DEFAULT", "sep",
+               "", score=0.5),
+        # wrap's positional-only y made required: no pin can answer it, so
+        # it is a flag; z's default changed beside it
+        change(43, "alphalib.opts.wrap", "PARAMETER_CHANGED_REQUIRED", "y",
+               "", score=0.5),
+        change(44, "alphalib.opts.wrap", "PARAMETER_CHANGED_DEFAULT", "z",
+               "", "3", "4", score=0.5),
+        # and z moved, so R1 meets the function R2 flags: the flag must
+        # reach R1's line too
+        change(45, "alphalib.opts.wrap", "PARAMETER_MOVED", "z", "",
+               score=0.5),
+    ]
+
+
 def row(file, line, col, confidence, use, ids, path, receiver=None,
         positional=0, keywords=(), star=False, explicit=False):
     return (file, line, col, confidence, use, tuple(ids), path, receiver,
@@ -1067,8 +1133,8 @@ def case_report(located: loc.Located) -> None:
           lines[j + 1],
           "       alphalib.util.RATE   ATTRIBUTE_CHANGED_VALUE   0.5 -> 0.25"
           "   used by 0")
-    check("the notes, the once-sentence on what is invisible, R1's count "
-          "when no plans are given, R2 not yet, and griffe credited",
+    check("the notes, the once-sentence on what is invisible, both rules' "
+          "counts when no plans are given, and griffe credited",
           ("files the tool cannot see through, or did not read:" in text,
            "  services/legacy.py: line 2: `from alphalib.util import *`"
            in text,
@@ -1080,7 +1146,8 @@ def case_report(located: loc.Located) -> None:
            "module that re-exports the package's names is not followed."
            in text,
            "R1, pass by name: 0 call(s) rewritten, 0 withheld, 0 need "
-           "nothing. R2, pin the old default, is not in this version" in text,
+           "nothing. R2, pin the old default: 0 call(s) pinned, 0 withheld, "
+           "0 left to you, 0 need nothing." in text,
            lines[-1]),
           (True, True, True, True, "changes found with griffe."))
     nothing = loc.Located([], [], 2)
