@@ -9077,8 +9077,11 @@ Week 4's commit is 78e837a (26 Oct, R2). R1 and R2 are in, so §38.6's
 second number is next: the fixer's precision on real downstream code,
 read by hand, on a sample named here before any run. The sample is
 chosen by `scripts/eval_sample.py` from two files, with the rule below
-written and pushed before the script ran on the real data. The script
-downloads nothing; the run itself is week 5's.
+written before the script ran on the real data [26 Oct, corrected: the
+rule and the script were written and delivered together; the run came
+first, its output sent at 10:48, and the push, a02c2df "wip", at 10:53,
+with this section as it then stood]. The script downloads nothing;
+the run itself is week 5's.
 
 **The sources.** `data/usage_pairs.csv`, the usage scan's record of
 (scanning package, symbol it uses) for the 1,500 most-downloaded
@@ -9108,12 +9111,17 @@ records `from redis import Redis` as `redis.Redis`, and locate takes a
 cannot record, a method called on an instance (`r.set(...)`), is not
 counted, so the sample leans to constructors, module-level functions
 and class attributes written in full; it is the convenience sample
-§38.6 calls it, biased to large consumers, and the report says so. A
-pair whose scanner is the changed package itself, by PEP 503 name, is
-dropped (the scan excludes self-use already; the script checks again).
+§38.6 calls it, biased to large consumers, and the report says so. [26
+Oct, from the review: a pair names a path, not a call. The scan records
+a path for any mention, so a class imported as a base or an annotation
+counts here as its constructor; the count is an upper bound on the call
+sites the fixer will meet.] A pair whose scanner is the changed package
+itself, by PEP 503 name, is dropped (the scan excludes self-use
+already; the script checks again).
 
 **The ranking** is by the number of distinct rewritable functions a
-package uses, ties by name. The first TEN are the sample. The next
+package uses, ties by name. The first TEN are the sample [amended 26
+Oct, below: one entry per source repository]. The next
 FIVE are reserves, taken in order only when a sample package's latest
 release cannot be downloaded as source, or the old version of the
 changed package it uses cannot be installed from a wheel; each
@@ -9135,8 +9143,9 @@ upgrade with the totals. Said before the list exists, so the list does
 not decide it.
 
 Tested by `scripts/test_eval_sample.py`, 15 checks on the fixture's
-forty-five rows and twenty-one hand-written pairs, the expected ranking
-written first: fourteen rewritable functions in the fixture (a
+forty-five rows and twenty-one hand-written pairs [26 Oct, later: 30
+checks and twenty-six pairs after the amendment and the review, below],
+the expected ranking written first: fourteen rewritable functions in the fixture (a
 parameter added as required alone, a removed parameter, the constants,
 the removed objects and the class rows are not); the class path reaches
 the constructor; self-use dropped; a package that uses nothing
@@ -9151,3 +9160,636 @@ not counted, functions counted per row): all ten caught, the last by
 the run failing before a check could print; the tie guard survived the
 first fixture (every tied name had the same length) until the short
 name was added.
+
+**26 Oct, the count: the first run, as printed from the Mac.** The
+test first, 15 ok. Then the script on the real files; the whole output,
+unedited:
+
+```
+data/usage_pairs.csv: 85,561 pairs, sha256 1f1535089b8a; fixer/data/breakrank.sqlite: 1,071 rewritable function(s) in 120 package(s)
+339 scanning package(s) use at least one; 880 (package, function) uses in all
+
+rank  functions  packages  upgrades  scanning package
+   1         16         3         6  imbalanced-learn  <- sample
+   2         14         6        13  litellm  <- sample
+   3         14         7        12  mlflow  <- sample
+   4         14         7        12  mlflow-skinny  <- sample
+   5         13         8        13  prefect  <- sample
+   6         13         3         5  statsmodels  <- sample
+   7         13         5         6  wandb  <- sample
+   8         12         2         2  dask  <- sample
+   9         12         9        15  langchain-community  <- sample
+  10         12         6        12  sentry-sdk  <- sample
+  11         12         2         2  snowflake-snowpark-python  <- reserve
+  12         10         1         5  apache-airflow-providers-cncf-kubernetes  <- reserve
+  13         10         5        10  ddtrace  <- reserve
+  14         10         7        15  google-adk  <- reserve
+  15         10         1         2  grpclib  <- reserve
+  16         10         5         6  scikit-learn
+  17         10         3         6  shap
+  18          9         5         8  fastmcp
+  19          9         2         2  geopandas
+  20          9         8        11  logfire
+  21          9         8        15  sglang
+  22          9         2         5  skops
+  23          8         4         7  fastmcp-slim
+  24          8         7         8  google-cloud-aiplatform
+  25          8         1         2  gunicorn
+
+the sample, the 10 with the most rewritable functions (ties by name):
+
+   1. imbalanced-learn: 16 function(s)
+      joblib: 1 function(s) in 1 upgrade(s): 1.4.2 -> 1.5.0
+          joblib.memory.Memory.__init__   [R1]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 14 function(s) in 4 upgrade(s): 1.5.2 -> 1.6.0, 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.compose._column_transformer.ColumnTransformer.__init__   [R2]
+          sklearn.compose._column_transformer.make_column_transformer   [R2]
+          sklearn.ensemble._bagging.BaggingClassifier.__init__   [R2]
+          sklearn.ensemble._gb.GradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._weight_boosting.AdaBoostClassifier.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+          sklearn.metrics._classification.brier_score_loss   [R2]
+          ... and 6 more
+
+   2. litellm: 14 function(s)
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      mcp: 3 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.client.sse.sse_client   [R2]
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 6 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.asyncio.connection.Connection.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+          redis.connection.Connection.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+
+   3. mlflow: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   4. mlflow-skinny: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   5. prefect: 13 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      pydantic-settings: 3 function(s) in 3 upgrade(s): 2.12.0 -> 2.13.0, 2.13.1 -> 2.14.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+          pydantic_settings.sources.providers.dotenv.DotEnvSettingsSource.__init__   [R1]
+          pydantic_settings.sources.providers.env.EnvSettingsSource.__init__   [R1]
+      redis: 2 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+      websockets: 1 function(s) in 1 upgrade(s): 17.0 -> 17.0.1
+          websockets.asyncio.server.Server.__init__   [R1]
+
+   6. statsmodels: 13 function(s)
+      pandas: 5 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parsers.readers.read_table   [R2]
+      scikit-learn: 1 function(s) in 1 upgrade(s): 1.7.2 -> 1.8.0
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      scipy: 7 function(s) in 3 upgrade(s): 1.15.3 -> 1.16.0, 1.16.3 -> 1.17.0, 1.17.1 -> 1.18.0
+          scipy.io.matlab._mio.loadmat   [R2]
+          scipy.linalg._decomp_qr.qr   [R2]
+          scipy.linalg.lapack.get_lapack_funcs   [R2]
+          scipy.optimize._minpack_py.fsolve   [R2]
+          scipy.sparse._construct.diags   [R2]
+          scipy.sparse._construct.diags_array   [R2]
+          scipy.stats._stats_py.linregress   [R2]
+
+   7. wandb: 13 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 2 function(s) in 2 upgrade(s): 1.5.2 -> 1.6.0, 1.7.2 -> 1.8.0
+          sklearn.calibration.CalibratedClassifierCV.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      watchdog: 7 function(s) in 1 upgrade(s): 4.0.2 -> 5.0.0
+          watchdog.observers.fsevents.FSEventsObserver.__init__   [R1]
+          watchdog.observers.inotify.InotifyObserver.__init__   [R1]
+          watchdog.observers.kqueue.KqueueObserver.__init__   [R1]
+          watchdog.observers.polling.PollingObserver.__init__   [R1]
+          watchdog.observers.read_directory_changes.WindowsApiObserver.__init__   [R1]
+          watchdog.tricks.AutoRestartTrick.__init__   [R1]
+          watchdog.tricks.ShellCommandTrick.__init__   [R1+R2]
+
+   8. dask: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.arrays.period.PeriodArray.__init__   [R1]
+          pandas.core.groupby.groupby.GroupBy.__init__   [R1]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          ... and 3 more
+      pyarrow: 1 function(s) in 1 upgrade(s): 24.0.0 -> 25.0.0
+          pyarrow.parquet.core.ParquetFile.__init__   [R2]
+
+   9. langchain-community: 12 function(s)
+      datasets: 1 function(s) in 1 upgrade(s): 4.8.4 -> 4.8.5
+          datasets.download.download_manager.DownloadManager.__init__   [R2]
+      httpx-sse: 2 function(s) in 1 upgrade(s): 0.1.0 -> 0.2.0
+          httpx_sse._api.aconnect_sse   [R1]
+          httpx_sse._api.connect_sse   [R1]
+      networkx: 1 function(s) in 2 upgrade(s): 3.3 -> 3.4, 3.5 -> 3.6
+          networkx.readwrite.json_graph.node_link.node_link_data   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.json_format.MessageToJson   [R1]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 3 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      tqdm: 1 function(s) in 2 upgrade(s): 4.67.3 -> 4.68.0, 4.68.1 -> 4.68.2
+          tqdm.std.tqdm.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+  10. sentry-sdk: 12 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      mcp: 2 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      redis: 4 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.ClusterPipeline.__init__   [R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+data/eval_sample.csv: 339 row(s) written
+```
+
+**The correction, 26 Oct, after the ranking and before any fixer run:
+one entry per source repository.** Rank 4, mlflow-skinny, lists the
+same fourteen functions as rank 3, mlflow, changed package for changed
+package. PyPI's project_urls name one repository for both,
+github.com/mlflow/mlflow, both at 3.17.2 on 26 Oct, and skinny's own
+description calls it "a lightweight MLflow package without SQL storage,
+server, UI, or data science dependencies": one source tree under two
+names. The same pair sits at ranks 18 and 23: fastmcp and fastmcp-slim,
+github.com/PrefectHQ/fastmcp, both 4.1.3, "The dependency-slim FastMCP
+package." The rule above did not foresee a repository shipping twice;
+taken as written it would put the same call sites in the sample twice
+and count nine codebases as ten. Amended, before the fixer has run on
+any package: ONE ENTRY PER SOURCE REPOSITORY. A second distribution is
+named in the script's `SAME_SOURCE` table with the evidence (the
+repository PyPI names, the version), marked in the table as "same source
+as mlflow, skipped", and the positions close up over it, so the sample
+is still ten and the reserves five. The data must agree with the table
+or the run stops and writes nothing: a second distribution can only use
+what the first does (its functions a subset of the first's), and the
+first must be ranked [amended after the review, below: when the first
+is not ranked, the second stands, with a note]. The change is to the
+sample's validity, not to
+any result, since there is none yet; the first run's output stays above
+as printed, and the amended run's follows below. Said before the
+re-run, from the table above: the sample becomes imbalanced-learn,
+litellm, mlflow, prefect, statsmodels, wandb, dask, langchain-community,
+sentry-sdk and snowflake-snowpark-python (ranks 1 to 3 and 5 to 11); the
+reserves apache-airflow-providers-cncf-kubernetes, ddtrace, google-adk,
+grpclib and scikit-learn (ranks 12 to 16); fastmcp-slim at 23 is marked
+and skipped though neither it nor fastmcp is in the fifteen. Nine of
+the ten are the first run's, with the detail printed above; the one new
+entry, snowflake-snowpark-python with 12 functions in 2 changed
+packages and 2 upgrades, gets its detail from the re-run.
+
+The test grew first to 19 checks, the expectations written before
+the code: a hand-written second distribution of appb (appb-slim, two of
+appb's five functions, spelled AppB_Slim in the test's table so that
+PEP 503 matching is exercised) is marked and skipped; with three
+reserves the positions close up (appe the third reserve, appf nothing);
+a table the data contradicts is refused with the functions named (appg
+listed as appb's second distribution: it uses Client.from_url and
+Client.parse, which appb does not); with --top 5 the fifth sampled is
+appd at rank 6, the skipped row inside the sample's span; the csv
+carries a role column; the command line exits 2 on a wrong table and
+writes no csv. Twelve guards broken on purpose on the new code: 10
+caught by a check, 2 stopped the run, 0 survived; the first pass had one
+survivor, the detail numbered by rank, because no skipped row fell
+inside the fixture's sample span with --top 3, and the --top 5 check was
+added for it. One harness correction on record: the harness rewrote the
+source in place and restored it within the same second as a same-size
+mutant, and Python's timestamp check then ran one test from the
+mutant's cached bytecode; the harness now clears the cache and runs
+with -B. Week 4's harness copied the tree per mutant and was not
+exposed.
+
+**The independent review (26 Oct), fourteen findings, all taken.**
+A fresh reader of the two files, given the rule and not the author's
+account, found: (1) the same-source table was checked against the data
+but not for its shape, so a name on both sides (a pair both ways, a
+self-pair, a chain) skipped a repository silently; now refused. (2) A
+first distribution absent from the ranking was refused as "the table is
+wrong", the least likely cause: the scan has a 120 s alarm and failures
+go to data/usage_failures.csv, and in that case the second distribution
+is the repository's only entry; now the second stands, with a note
+naming the two causes to check, and the subset refusal names its two
+causes too (the scan read the two sdists at different versions; a wrong
+table). (3) The header printed twelve hex digits of the digest and
+called the row count "pairs", though the scan appends across resumed
+runs and duplicates are expected; now the full sha256, the row count
+and the distinct count. The first run's record above therefore carries
+`sha256 1f1535089b8a` as printed; the re-run carries the whole digest.
+(4) "Uses" is an upper bound: the scan records a path for any mention,
+so a class imported as a base or an annotation counts as its
+constructor, and `typing_extensions.TypedDict [R2]` in five of the
+ten's details is almost always `class X(TypedDict)`, which R2 has no
+call to pin; the docstring says so and so does the rule above, by this
+bracket. (5) A function is identified by its defining path, so one that
+moved modules between upgrades counts once per module through the
+shared export path; the header now counts the paths that reach more
+than one defining path, and the docstring says what identity is. On the
+committed bundle the count is 2, one function: sglang's
+`BenchArgs.__init__`, defined in `bench_one_batch_server` for 0.5.5.post3
+-> 0.5.6 and in `test.bench_one_batch_server_internal` for 0.5.8.post1
+-> 0.5.9 and 0.5.9 -> 0.5.10, reached by the first module's paths; it
+touches no entry of the fifteen. (6)
+Spellings were handled three ways (raw in the ranking, PEP 503 in the
+table, the dist-info spelling in the mark); now stripped and normalised
+once in the ranking, the first spelling kept for display, the mark in
+the first distribution's own spelling. (7) The detail's upgrades were
+sorted as text (2.10.0 before 2.8.0); now by `fixer.bundle.version_key`.
+(8) The docstring said "to or from a plain literal"; the rule is "from".
+(9) With --top above the ranking the header claimed the larger number;
+with --show below the last reserve the reserves fell off the table; now
+the header counts the sampled and the table runs through the last
+reserve. (10) A short row in the pairs file died in `re.sub`; now
+refused with its line number, exit 2. (11) A tie at either cut, where
+"by name" decides, was not said: in the first run sentry-sdk and
+snowflake-snowpark-python tie on 12 at the sample's cut and grpclib and
+scikit-learn on 10 at the reserves'; in the amended ranking the
+sample's cut falls between 12 and 10 and the reserves' cut ties scikit-
+learn with shap on 10; the run now says so under the table. (12) The tie-break guard was pinned by appb-slim's position in
+the file, not by aa as the docstring claimed; aa's rows are now last in
+the file. (13) Self-use was dropped only for identical spellings; a
+case variant (AlphaLib) is now dropped by PEP 503 name. The reviewer's
+suggested row, Alpha_Lib, is not alphalib's name under PEP 503 (the
+underscore makes alpha-lib), and the first run of the reworked test
+failed seven checks through that one fixture row before the spelling
+was corrected; the expectations were right. (14) Nothing pinned a
+doubled row, a name on both sides, --top beyond the ranking, or the
+mark's spelling; now pinned.
+
+After the review: 29 checks, 26 guards broken on purpose (the twelve
+re-aimed at the reworked text and fourteen for the findings: the shape
+check dropped; the absent first skipped silently; the refusal without
+its causes; the mark in the normalised name; upgrades sorted as text;
+shared paths unreported; distinct pairs by raw spelling, which survived
+until the doubled row was made a case variant, APPF; names unstripped;
+scanners grouped by raw spelling; the tie unsaid; the table cut before
+the last reserve; the header counting --top; a short row skipped; the
+tie read from a skipped row): 24 caught by a check, 2 stopped the run
+(main not catching its two errors), 0 survived.
+
+The reviewer re-read the reworked files and confirmed the fourteen
+fixed, agreeing on the Alpha_Lib correction, and found four more, all
+taken: the amended-rule paragraph above still said "the first must be
+ranked" with no pointer to the change (bracketed now); the tie sentence
+in (11) named the amended ranking's reserve tie as the first run's
+(corrected above: the first run's was grpclib and scikit-learn); the
+standing note was printed for a second distribution at any rank and
+spelled the first in its normalised form, and it reached only stdout,
+so the csv called a standing entry a plain "sample"; now the note
+spells the first as the table writes it, says "outside the sample and
+the reserves" when that is where the entry falls, and goes into a note
+column of the csv beside the role. Three guards for these (the note in
+the normalised name; the csv's note column empty; the note the same
+inside and outside the fifteen), all caught: 30 checks, 29 guards
+broken, 27 caught by a check, 2 stopped the run, 0 survived. The
+printed form changes with this: three header lines, "note:" lines and
+tie lines under the table, the detail header counting the sampled,
+"rank N" on each sampled entry, a note column in the csv.
+
+**The amended run, 26 Oct, as printed from the Mac.** The test first,
+30 ok; then the script on the same two files. The ten and the five are
+the ones said above before the re-run; the pairs file has no doubled
+row (85,561 rows, 85,561 distinct); fastmcp-slim's eight functions are
+among fastmcp's nine, so the subset check passed for both pairs; the one
+tie at a cut, scikit-learn with shap on 10 at the reserves', is said
+under the table. The whole output, unedited:
+
+```
+data/usage_pairs.csv: 85,561 row(s), 85,561 distinct pair(s), sha256 1f1535089b8a435aafba4337ac70e08e63a05fad657188305577b503311586fe
+fixer/data/breakrank.sqlite: 1,071 rewritable function(s) in 120 package(s); 2 path(s) reach more than one defining path
+339 scanning package(s) use at least one; 880 (package, function) uses in all
+
+rank  functions  packages  upgrades  scanning package
+   1         16         3         6  imbalanced-learn  <- sample
+   2         14         6        13  litellm  <- sample
+   3         14         7        12  mlflow  <- sample
+   4         14         7        12  mlflow-skinny  <- same source as mlflow, skipped
+   5         13         8        13  prefect  <- sample
+   6         13         3         5  statsmodels  <- sample
+   7         13         5         6  wandb  <- sample
+   8         12         2         2  dask  <- sample
+   9         12         9        15  langchain-community  <- sample
+  10         12         6        12  sentry-sdk  <- sample
+  11         12         2         2  snowflake-snowpark-python  <- sample
+  12         10         1         5  apache-airflow-providers-cncf-kubernetes  <- reserve
+  13         10         5        10  ddtrace  <- reserve
+  14         10         7        15  google-adk  <- reserve
+  15         10         1         2  grpclib  <- reserve
+  16         10         5         6  scikit-learn  <- reserve
+  17         10         3         6  shap
+  18          9         5         8  fastmcp
+  19          9         2         2  geopandas
+  20          9         8        11  logfire
+  21          9         8        15  sglang
+  22          9         2         5  skops
+  23          8         4         7  fastmcp-slim  <- same source as fastmcp, skipped
+  24          8         7         8  google-cloud-aiplatform
+  25          8         1         2  gunicorn
+the last reserve, scikit-learn, ties on 10 with shap, the first left out: by name
+
+the sample, the 10 with the most rewritable functions (ties by name; one entry per repository):
+
+   1. imbalanced-learn, rank 1: 16 function(s)
+      joblib: 1 function(s) in 1 upgrade(s): 1.4.2 -> 1.5.0
+          joblib.memory.Memory.__init__   [R1]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 14 function(s) in 4 upgrade(s): 1.5.2 -> 1.6.0, 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.compose._column_transformer.ColumnTransformer.__init__   [R2]
+          sklearn.compose._column_transformer.make_column_transformer   [R2]
+          sklearn.ensemble._bagging.BaggingClassifier.__init__   [R2]
+          sklearn.ensemble._gb.GradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._weight_boosting.AdaBoostClassifier.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+          sklearn.metrics._classification.brier_score_loss   [R2]
+          ... and 6 more
+
+   2. litellm, rank 2: 14 function(s)
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      mcp: 3 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.client.sse.sse_client   [R2]
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 6 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.asyncio.connection.Connection.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+          redis.connection.Connection.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+
+   3. mlflow, rank 3: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   4. prefect, rank 5: 13 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      pydantic-settings: 3 function(s) in 3 upgrade(s): 2.12.0 -> 2.13.0, 2.13.1 -> 2.14.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+          pydantic_settings.sources.providers.dotenv.DotEnvSettingsSource.__init__   [R1]
+          pydantic_settings.sources.providers.env.EnvSettingsSource.__init__   [R1]
+      redis: 2 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+      websockets: 1 function(s) in 1 upgrade(s): 17.0 -> 17.0.1
+          websockets.asyncio.server.Server.__init__   [R1]
+
+   5. statsmodels, rank 6: 13 function(s)
+      pandas: 5 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parsers.readers.read_table   [R2]
+      scikit-learn: 1 function(s) in 1 upgrade(s): 1.7.2 -> 1.8.0
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      scipy: 7 function(s) in 3 upgrade(s): 1.15.3 -> 1.16.0, 1.16.3 -> 1.17.0, 1.17.1 -> 1.18.0
+          scipy.io.matlab._mio.loadmat   [R2]
+          scipy.linalg._decomp_qr.qr   [R2]
+          scipy.linalg.lapack.get_lapack_funcs   [R2]
+          scipy.optimize._minpack_py.fsolve   [R2]
+          scipy.sparse._construct.diags   [R2]
+          scipy.sparse._construct.diags_array   [R2]
+          scipy.stats._stats_py.linregress   [R2]
+
+   6. wandb, rank 7: 13 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 2 function(s) in 2 upgrade(s): 1.5.2 -> 1.6.0, 1.7.2 -> 1.8.0
+          sklearn.calibration.CalibratedClassifierCV.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      watchdog: 7 function(s) in 1 upgrade(s): 4.0.2 -> 5.0.0
+          watchdog.observers.fsevents.FSEventsObserver.__init__   [R1]
+          watchdog.observers.inotify.InotifyObserver.__init__   [R1]
+          watchdog.observers.kqueue.KqueueObserver.__init__   [R1]
+          watchdog.observers.polling.PollingObserver.__init__   [R1]
+          watchdog.observers.read_directory_changes.WindowsApiObserver.__init__   [R1]
+          watchdog.tricks.AutoRestartTrick.__init__   [R1]
+          watchdog.tricks.ShellCommandTrick.__init__   [R1+R2]
+
+   7. dask, rank 8: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.arrays.period.PeriodArray.__init__   [R1]
+          pandas.core.groupby.groupby.GroupBy.__init__   [R1]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          ... and 3 more
+      pyarrow: 1 function(s) in 1 upgrade(s): 24.0.0 -> 25.0.0
+          pyarrow.parquet.core.ParquetFile.__init__   [R2]
+
+   8. langchain-community, rank 9: 12 function(s)
+      datasets: 1 function(s) in 1 upgrade(s): 4.8.4 -> 4.8.5
+          datasets.download.download_manager.DownloadManager.__init__   [R2]
+      httpx-sse: 2 function(s) in 1 upgrade(s): 0.1.0 -> 0.2.0
+          httpx_sse._api.aconnect_sse   [R1]
+          httpx_sse._api.connect_sse   [R1]
+      networkx: 1 function(s) in 2 upgrade(s): 3.3 -> 3.4, 3.5 -> 3.6
+          networkx.readwrite.json_graph.node_link.node_link_data   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.json_format.MessageToJson   [R1]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 3 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      tqdm: 1 function(s) in 2 upgrade(s): 4.67.3 -> 4.68.0, 4.68.1 -> 4.68.2
+          tqdm.std.tqdm.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+   9. sentry-sdk, rank 10: 12 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      mcp: 2 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      redis: 4 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.ClusterPipeline.__init__   [R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+  10. snowflake-snowpark-python, rank 11: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.frame.DataFrame.groupby   [R1]
+          pandas.core.frame.DataFrame.transpose   [R2]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.resample.TimeGrouper.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          ... and 3 more
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.text_format.MessageToString   [R1]
+
+data/eval_sample.csv: 339 row(s) written
+```
+
+This is the sample. The fixer has not run on any of the ten; week 5's
+venvs and runs start from here, each substitution from the reserves, if
+one is needed, recorded in this section with its reason.
+
+**Commits.** a02c2df (26 Oct, 10:53, "wip: eval_sample script with
+tests, notes") holds the first script, its 15-check test and this
+section as first written, and a .gitignore line meant to add `logs/`
+that landed on the end of `Thumbs.db`, which had no final newline, so
+the file read `Thumbs.dblogs/`; the next commit puts the two on their
+own lines.

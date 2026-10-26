@@ -16,35 +16,53 @@ Writes data/eval_sample.csv          one row per scanning package that uses
 The rule. A function is REWRITABLE when the bundle holds a row on it of
 a kind the fixer's two rules act on: R1's, a parameter moved
 (PARAMETER_MOVED) or made keyword-only (PARAMETER_CHANGED_KIND whose
-message ends "-> keyword-only"); R2's, a default changed to or from a
-plain literal (PARAMETER_CHANGED_DEFAULT whose old value is a plain
-literal and not a spelling-only change, fixer/rewrite.py's `plain` and
+message ends "-> keyword-only"); R2's, a default changed from a plain
+literal (PARAMETER_CHANGED_DEFAULT whose old value is a plain literal
+and not a spelling-only change, fixer/rewrite.py's `plain` and
 `cosmetic`) or a parameter made required (PARAMETER_CHANGED_REQUIRED).
 A function counts once, however many rows or upgrades carry it; a
 function the fixer would withhold on (a removal beside the moved
 parameter) still counts, since the evaluation reads withheld lines too.
+A function is identified by its defining path, so one that moved
+modules between two upgrades counts once per module; the header says
+how many paths reach more than one defining path.
 
 A scanning package USES a function when one of its pairs names the
 function's defining path or one of its export paths (the label's
 matching, §24), or, for a constructor (`...__init__`), the class's path
 by either spelling: the scan records `from redis import Redis` as
 `redis.Redis`, and the fixer's locate takes a `Redis(...)` call to the
-constructor's rows. What the scan cannot record, a method called on an
-instance (`r.set(...)`), is not counted, so the sample leans to
-constructors, module-level functions and explicit class attributes; it
-is a convenience sample biased to large consumers, and the report says
-so. A package is not downstream of itself: a pair whose scanner is the
-changed package (PEP 503 names) is dropped, as the scan drops self-use.
+constructor's rows. A pair names a path, not a call: a class imported
+for a subclass or an annotation counts as its constructor, so the count
+is an upper bound on the call sites the fixer meets. What the scan
+cannot record, a method called on an instance (`r.set(...)`), is not
+counted. So the sample leans to constructors, module-level functions
+and explicit class attributes; it is a convenience sample biased to
+large consumers, and the report says so. Scanner names are PEP 503
+names (`fixer.env.normalise`), spellings merged and the first kept for
+display; a package is not downstream of itself: a pair whose scanner is
+the changed package is dropped, as the scan drops self-use.
 
 The ranking is by the number of distinct rewritable functions used,
 ties by name; the first TEN are the sample; the next five are reserves,
 taken in order only when a sample package's latest release cannot be
 downloaded as source or the old version of the changed package cannot
-be installed from a wheel, each substitution recorded in NOTES. The
-printed table (the top 25, with each package's count of functions,
-changed packages and upgrades), the ten's detail (changed packages,
-upgrades, functions), and the pairs file's row count and sha256 go into
-NOTES before any run.
+be installed from a wheel, each substitution recorded in NOTES. One
+entry per source repository: a second distribution built from the same
+repository (mlflow-skinny beside mlflow, fastmcp-slim beside fastmcp;
+PyPI names the same repository for both and ships them at the same
+version) would put the same call sites in the sample twice, so it is
+marked and skipped and the positions close up. `SAME_SOURCE` lists the
+pairs; the data must agree, or the run stops: a second distribution can
+only use what the first does. When the first is not ranked at all (its
+scan failed, or it uses nothing rewritable) the second stands for the
+repository, and a note says so, under the table and in the csv's note
+column. A tie at either cut, the sample's or
+the reserves', is said under the table, since there the name decides.
+The printed table (the top 25, or through the last reserve, with each
+package's count of functions, changed packages and upgrades), the ten's
+detail (changed packages, upgrades, functions), and the pairs file's
+row count, distinct count and sha256 go into NOTES before any run.
 """
 
 from __future__ import annotations
@@ -59,6 +77,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from fixer.bundle import version_key  # noqa: E402
 from fixer.env import normalise  # noqa: E402
 from fixer.rewrite import cosmetic, kind_change, plain  # noqa: E402
 
@@ -68,6 +87,26 @@ OUT = pathlib.Path("data/eval_sample.csv")
 
 R1_KINDS = {"PARAMETER_MOVED", "PARAMETER_CHANGED_KIND"}
 R2_KINDS = {"PARAMETER_CHANGED_DEFAULT", "PARAMETER_CHANGED_REQUIRED"}
+
+# Second distributions of one repository, as PyPI's project_urls name it
+# (read 26 Oct; both of each pair at the same version that day). The
+# sample takes one entry per repository (NOTES §38.16). The scan may
+# have read the two at different versions; the subset check below is
+# where that would show.
+SAME_SOURCE = {
+    "mlflow-skinny": "mlflow",      # github.com/mlflow/mlflow, 3.17.2
+    "fastmcp-slim": "fastmcp",      # github.com/PrefectHQ/fastmcp, 4.1.3
+}
+
+SKIPPED = "same source as {}, skipped"
+
+
+class SampleError(Exception):
+    """The same-source table and the data disagree; nothing is written."""
+
+
+class PairsError(Exception):
+    """The pairs file is not the scan's shape; nothing is written."""
 
 
 def rewritable(kind: str, message: str, old: str | None,
@@ -106,11 +145,11 @@ def load_functions(bundle: pathlib.Path):
     upgrades: dict[tuple[str, str], set[tuple[str, str]]] = (
         collections.defaultdict(set))
     rules: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    kinds = sorted(R1_KINDS | R2_KINDS)
     rows = con.execute(
         "SELECT package, version_from, version_to, symbol, export_paths, "
         "kind, message, old_value, new_value FROM change WHERE kind IN "
-        "('PARAMETER_MOVED', 'PARAMETER_CHANGED_KIND', "
-        "'PARAMETER_CHANGED_DEFAULT', 'PARAMETER_CHANGED_REQUIRED')")
+        f"({', '.join('?' * len(kinds))})", kinds)
     for pkg, frm, to, symbol, exports, kind, message, old, new in rows:
         rule = rewritable(kind, message, old, new)
         if rule is None:
@@ -124,8 +163,15 @@ def load_functions(bundle: pathlib.Path):
     return by_path, upgrades, rules
 
 
+def shared_paths(by_path) -> list[str]:
+    """The paths that reach more than one defining path: a function that
+    moved modules between upgrades, counted once per module."""
+    return sorted(p for p, keys in by_path.items() if len(keys) > 1)
+
+
 def read_pairs(pairs: pathlib.Path):
-    """(scanner, symbol) pairs, the row count and the file's sha256."""
+    """(scanner, symbol) rows, both stripped, and the file's sha256. A
+    short or empty row is refused with its line number."""
     digest = hashlib.sha256()
     out = []
     with pairs.open("rb") as f:
@@ -135,82 +181,177 @@ def read_pairs(pairs: pathlib.Path):
         reader = csv.DictReader(f)
         if not reader.fieldnames or "scanner" not in reader.fieldnames \
                 or "symbol" not in reader.fieldnames:
-            raise SystemExit(f"{pairs}: expected the columns scanner and "
+            raise PairsError(f"{pairs}: expected the columns scanner and "
                              f"symbol, found {reader.fieldnames}")
         for row in reader:
-            out.append((row["scanner"], row["symbol"]))
+            scanner = (row.get("scanner") or "").strip()
+            symbol = (row.get("symbol") or "").strip()
+            if not scanner or not symbol:
+                raise PairsError(f"{pairs}:{reader.line_num}: a short or "
+                                 "empty row; the scan writes two columns")
+            out.append((scanner, symbol))
     return out, digest.hexdigest()
 
 
+def distinct(pairs) -> int:
+    """How many distinct (PEP 503 scanner, symbol) pairs the rows hold;
+    the scan's file is appended to across resumed runs."""
+    return len({(normalise(s), y) for s, y in pairs})
+
+
 def rank(pairs, by_path):
-    """scanner -> set of (package, function) it uses, self-use dropped;
+    """scanner -> set of (package, function) it uses, self-use dropped,
+    spellings merged by PEP 503 name (the first kept for display);
     ranked by the count, ties by name."""
     uses: dict[str, set[tuple[str, str]]] = collections.defaultdict(set)
+    spelling: dict[str, str] = {}
     for scanner, symbol in pairs:
+        name = normalise(scanner)
+        spelling.setdefault(name, scanner)
         for key in by_path.get(symbol, ()):
-            if normalise(key[0]) == normalise(scanner):
+            if normalise(key[0]) == name:
                 continue
-            uses[scanner].add(key)
+            uses[name].add(key)
     ranked = sorted(uses.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-    return ranked
+    return [(spelling[name], keys) for name, keys in ranked]
 
 
-def describe(ranked, upgrades, rules, top: int, show: int,
-             reserves: int = 5) -> list[str]:
+def select(ranked, top: int, reserves: int = 5, same_source=None):
+    """(scanner -> its role, scanner -> its note). A role is 'sample',
+    'reserve', the skipped mark for a second distribution of a
+    repository, or ''. The positions close up over the skipped. A second
+    distribution whose first is not ranked stands, with a note. A table
+    the data contradicts, or that lists a name on both sides, raises
+    SampleError."""
+    if same_source is None:
+        same_source = SAME_SOURCE
+    table = {normalise(a): normalise(p) for a, p in same_source.items()}
+    written = {normalise(p): p for p in same_source.values()}
+    both = sorted(set(table) & set(table.values()))
+    if both:
+        raise SampleError(
+            f"{', '.join(both)}: listed both as a second distribution and "
+            "as a first in the same-source table; one entry per repository "
+            "names the first once")
+    uses = {normalise(s): keys for s, keys in ranked}
+    spelling = {normalise(s): s for s, _ in ranked}
+    roles: dict[str, str] = {}
+    notes: dict[str, str] = {}
+    taken = 0
+    for scanner, keys in ranked:
+        name = normalise(scanner)
+        standing = None
+        if name in table:
+            primary = table[name]
+            if primary not in uses:
+                standing = written[primary]
+            else:
+                extra = sorted(f for _, f in keys - uses[primary])
+                if extra:
+                    raise SampleError(
+                        f"{scanner} is listed as a second distribution of "
+                        f"{spelling[primary]}, but uses {len(extra)} "
+                        f"function(s) {spelling[primary]} does not "
+                        f"({', '.join(extra[:4])}): the scan read the two at "
+                        "different versions, or the table is wrong; settle "
+                        "which before running again")
+                roles[scanner] = SKIPPED.format(spelling[primary])
+                continue
+        taken += 1
+        roles[scanner] = ("sample" if taken <= top else
+                          "reserve" if taken <= top + reserves else "")
+        if standing is not None:
+            where = ("stands for the repository; check which"
+                     if roles[scanner] else
+                     "is outside the sample and the reserves")
+            notes[scanner] = (
+                f"{scanner} is listed as a second distribution of {standing}, "
+                "which is not ranked (its scan failed, or it uses nothing "
+                f"rewritable): {scanner} {where}")
+    return roles, notes
+
+
+def describe(ranked, upgrades, rules, roles, top: int, show: int,
+             notes=()) -> list[str]:
     lines = []
     lines.append(f"{'rank':>4}  {'functions':>9}  {'packages':>8}  "
                  f"{'upgrades':>8}  scanning package")
+    places = [i for i, (s, _) in enumerate(ranked, 1)
+              if roles[s] in ("sample", "reserve")]
+    show = max(show, places[-1] if places else 0)
     for i, (scanner, keys) in enumerate(ranked[:show], 1):
         pkgs = {k[0] for k in keys}
         ups = {(k[0], u) for k in keys for u in upgrades[k]}
-        mark = ("  <- sample" if i <= top else
-                "  <- reserve" if i <= top + reserves else "")
+        mark = f"  <- {roles[scanner]}" if roles[scanner] else ""
         lines.append(f"{i:>4}  {len(keys):>9}  {len(pkgs):>8}  {len(ups):>8}"
                      f"  {scanner}{mark}")
+    sampled = [i for i, (s, _) in enumerate(ranked) if roles[s] == "sample"]
+    reserved = [i for i, (s, _) in enumerate(ranked) if roles[s] == "reserve"]
+    for last, what, after in ((sampled, "sampled", "the first reserve"),
+                              (reserved, "reserve", "the first left out")):
+        if not last:
+            continue
+        i = last[-1]
+        nxt = next((j for j in range(i + 1, len(ranked))
+                    if not roles[ranked[j][0]].startswith("same source")),
+                   None)
+        if nxt is not None and len(ranked[nxt][1]) == len(ranked[i][1]):
+            lines.append(f"the last {what}, {ranked[i][0]}, ties on "
+                         f"{len(ranked[i][1])} with {ranked[nxt][0]}, "
+                         f"{after}: by name")
+    for note in dict(notes).values():
+        lines.append(f"note: {note}")
     lines.append("")
-    lines.append(f"the sample, the {top} with the most rewritable functions "
-                 "(ties by name):")
-    for i, (scanner, keys) in enumerate(ranked[:top], 1):
+    lines.append(f"the sample, the {len(sampled)} with the most rewritable "
+                 "functions (ties by name; one entry per repository):")
+    for n, i in enumerate(sampled, 1):
+        scanner, keys = ranked[i]
         lines.append("")
-        lines.append(f"  {i:>2}. {scanner}: {len(keys)} function(s)")
-        by_pkg: dict[str, list[tuple[str, str]]] = collections.defaultdict(list)
+        lines.append(f"  {n:>2}. {scanner}, rank {i + 1}: {len(keys)} "
+                     "function(s)")
+        by_pkg: dict[str, list[tuple[str, str]]] = (
+            collections.defaultdict(list))
         for k in keys:
             by_pkg[k[0]].append(k)
         for pkg in sorted(by_pkg):
             ks = sorted(by_pkg[pkg], key=lambda k: k[1])
             ups = sorted({u for k in ks for u in upgrades[k]},
-                         key=lambda u: (u[1], u[0]))
+                         key=lambda u: (version_key(u[1]), version_key(u[0])))
             ups_text = ", ".join(f"{a} -> {b}" for a, b in ups[:6])
             if len(ups) > 6:
                 ups_text += f" and {len(ups) - 6} more"
             lines.append(f"      {pkg}: {len(ks)} function(s) in {len(ups)} "
                          f"upgrade(s): {ups_text}")
             for k in ks[:8]:
-                lines.append(f"          {k[1]}   [{'+'.join(sorted(rules[k]))}]")
+                tags = "+".join(sorted(rules[k]))
+                lines.append(f"          {k[1]}   [{tags}]")
             if len(ks) > 8:
                 lines.append(f"          ... and {len(ks) - 8} more")
     return lines
 
 
-def write_csv(path: pathlib.Path, ranked, upgrades) -> None:
+def write_csv(path: pathlib.Path, ranked, upgrades, roles, notes) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["rank", "scanner", "functions", "packages", "upgrades",
-                    "detail"])
+                    "role", "note", "detail"])
         for i, (scanner, keys) in enumerate(ranked, 1):
             pkgs = sorted({k[0] for k in keys})
             ups = {(k[0], u) for k in keys for u in upgrades[k]}
             detail = ";".join(f"{k[0]}:{k[1]}" for k in sorted(keys))
-            w.writerow([i, scanner, len(keys), len(pkgs), len(ups), detail])
+            w.writerow([i, scanner, len(keys), len(pkgs), len(ups),
+                        roles[scanner], notes.get(scanner, ""), detail])
 
 
-def main(argv=None) -> int:
+def main(argv=None, same_source=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pairs", type=pathlib.Path, default=PAIRS)
     ap.add_argument("--bundle", type=pathlib.Path, default=BUNDLE)
     ap.add_argument("--out", type=pathlib.Path, default=OUT)
     ap.add_argument("--top", type=int, default=10)
-    ap.add_argument("--show", type=int, default=25)
+    ap.add_argument("--show", type=int, default=25,
+                    help="rows of the table, at least through the last "
+                         "reserve (default 25)")
     args = ap.parse_args(argv)
     if not args.pairs.is_file():
         print(f"{args.pairs} is not a file; the usage scan writes it "
@@ -221,18 +362,27 @@ def main(argv=None) -> int:
               "it", file=sys.stderr)
         return 2
     by_path, upgrades, rules = load_functions(args.bundle)
-    pairs, digest = read_pairs(args.pairs)
-    ranked = rank(pairs, by_path)
+    try:
+        pairs, digest = read_pairs(args.pairs)
+        ranked = rank(pairs, by_path)
+        roles, notes = select(ranked, args.top, same_source=same_source)
+    except (PairsError, SampleError) as e:
+        print(e, file=sys.stderr)
+        return 2
     functions = {k for keys in by_path.values() for k in keys}
-    print(f"{args.pairs}: {len(pairs):,} pairs, sha256 {digest[:12]}; "
-          f"{args.bundle}: {len(functions):,} rewritable function(s) in "
-          f"{len({k[0] for k in functions})} package(s)")
+    print(f"{args.pairs}: {len(pairs):,} row(s), {distinct(pairs):,} "
+          f"distinct pair(s), sha256 {digest}")
+    print(f"{args.bundle}: {len(functions):,} rewritable function(s) in "
+          f"{len({k[0] for k in functions})} package(s); "
+          f"{len(shared_paths(by_path))} path(s) reach more than one "
+          "defining path")
     print(f"{len(ranked):,} scanning package(s) use at least one; "
           f"{sum(len(k) for _, k in ranked):,} (package, function) uses in "
           "all\n")
-    print("\n".join(describe(ranked, upgrades, rules, args.top, args.show)))
+    print("\n".join(describe(ranked, upgrades, rules, roles, args.top,
+                             args.show, notes)))
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    write_csv(args.out, ranked, upgrades)
+    write_csv(args.out, ranked, upgrades, roles, notes)
     print(f"\n{args.out}: {len(ranked):,} row(s) written")
     return 0
 
