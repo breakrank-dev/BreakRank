@@ -10207,3 +10207,199 @@ says the trees were read whole.
 expected values written before this run are the harness test's, on the
 fixture; the ten's counts are the result.
 
+**The harness, built 28 Oct, after edf076a.** Three scripts, each with
+its test on the fixture and its expectations written first.
+`scripts/eval_run.py`: the stages plan, resolve, fetch, old, new, run,
+count, draw, as above; `scripts/eval_sheet.py`: one numbered block per
+drawn call with the call before and after, the rule lines as printed,
+the symbol's signature in the old and the new version read statically
+with griffe from the two directories (fixer/oldapi.py's reading, "not
+read" when a version cannot answer), the three source lines around it,
+and the columns suggested, reason, verdict, note; `scripts/
+eval_verdicts.py`: the filled sheet read back (a rewritten call's
+verdict one of correct, no-op, unsafe, wrong; a withheld one's one of
+justified, not justified, nothing needed; anything else, or an empty
+one, refused with the call's id), the counts over counts overall, per
+rule and per sample package, the unread beside them, and the record
+written as docs/eval/verdicts.csv. `scripts/test_eval_run.py` (24
+checks): the plan from a sample csv and the fixture bundle, a reserve
+and a skipped row planning nothing, a function the bundle has no row
+on refused; the newest final release chosen from a hand-written PyPI
+record in eight cases (pre-, dev- and yanked releases passed over, the
+sdist before the wheel, a release with neither giving no source); one
+real run on the fixture project with the fixture site and bundle, the
+command pinned to §38.18's with no --apply, and the report parsed to
+scripts/test_fixer_rewrite.py's numbers (2 files, 48 lines, 50 hits of
+which 48 resolved and 2 unverified, R1 16/9/4, R2 26/10/2/3, 32
+rewritten, 13 withheld, 1 left to you, 2 need nothing, a diff of 2
+files); a report without hits, a run that stopped, a report cut off
+before its footer, a "[stderr]" trailer, the "were not read" line, a
+path with a space; the draw's allocation in five cases and the pooled
+fallback; the placed sdist read back by fixer/env.py; a single-module
+distribution. `scripts/test_eval_sheet.py` (9 checks) and
+`scripts/test_eval_verdicts.py` (6 checks) likewise. Guards broken on
+purpose, after the review below: 25 on the harness (21 caught by a
+check, 4 stopped the run, 0 survived, after one survivor, the pooled
+draw taken from the list's head, got its check), 8 on the sheet and 6
+on the verdicts (13 caught, 1 stopped the run, 0 survived, after three
+survivors got theirs: the new signature read from the old directory,
+which the fixture could not show while its "new" was its old; a drawn
+call the report lacks passed over silently; the signature looked up
+under the first of a call's symbols only).
+
+**The independent review of the harness (28 Oct), fifteen findings,
+all taken.** The important ones: (1) the counting unit was a printed
+decision line, not a call: the report prints a call's decision under
+every entry whose rows the call meets (scripts/test_fixer_rewrite.py
+asserts as much for a call resolving to two defining paths), so the
+harness would have counted such a call twice and could have drawn it
+twice; decisions are now merged on (file, line, column, use, kind,
+call) with the symbols collected, and the counts are of calls. (2) When
+even one call from every run that has one exceeds the budget, the
+allocation handed one call to the first runs alphabetically; now the
+calls are drawn from all of them as one list, proportional in
+expectation, and the manifest says which of the two ways applied
+[§38.18's draw paragraph, read with this]. (3) Two calls on one line at
+one column (`Client("h", 1).send(b"t", 5)`) were one identity; the use
+and the call's text now tell them apart, and draw.csv carries use,
+symbol and call. (4) A path with a space was not read as a hit. (5) A
+report cut off before its footer (a timeout) parsed as a clean zero;
+now an error, with the fixer's stderr kept. (6) pip's every failure
+sent the version to the sdist fallback; now only "No matching
+distribution found" does. (7) A skipped run or a FAILED version counted
+as done and was never retried without --redo. (8) The totals lacked
+the per-changed-package table and the unverified share §38.18 asks
+for; the record lacked griffe's and libcst's versions; the plan stage
+never wrote the manifest; a single-module distribution could not be
+placed from its sdist; an archive error aborted the stage instead of
+being recorded; `py2.py3-none-any` is a pure-Python wheel too and now
+counts as one [§38.18 says py3-none-any and means pure Python]. The
+test gained the ten checks that pin these. The reviewer re-read the
+reworked files, confirmed thirteen fixed and two partly, and found six
+more, all taken: a root-level single module (six.py) still could not
+be placed, and pip's offline message ends in the same line as its
+no-wheel message, so the fallback would have been tried offline and
+the recorded cause wrong (now "(from versions: none)" and "Retrying"
+mean not that); two chained method calls on one line, both withheld,
+still collided (the rule lines now enter the merge key, and the parser
+checks that the calls it counts add up to the footer, writing an error
+when they do not); a bare tool name on PATH gave the tool record
+garbage for the interpreter and its libraries (now resolved with
+shutil.which); a sample whose tree the manifest did not name had its
+source context read from the working directory; the rule lines were
+joined with " | ", which a withheld line itself contains ("| would be:
+..."), so they could not be split back (now " || ", which the report
+never prints); the signature was looked up under the first of a call's
+symbols while the fixer takes the first the old version can show (now
+the first that answers); and a re-run after a fix would have
+overwritten the first run's report and record (now each run record
+carries the tool's version and commit, and a superseded report is kept
+as <stem>.<commit>.txt). Eleven checks and eight guards came with
+these; the counts above are the final ones.
+
+**The run, 28 Oct, on the Linux machine.** The tool: breakrank-fix
+0.1.0 from the tree at edf076a (the fixer package unchanged since
+78e837a), Python 3.13.17, griffe 2.4.1, libcst 1.9.0, packaging 26.3;
+the old and new versions installed with Python 3.12's pip. The ten
+trees, the newest final release of each on PyPI that day (filename,
+size, upload date, the first twelve hex digits of the sha256 PyPI
+states and the download matched):
+
+    dask                       2026.8.0   dask-2026.8.0.tar.gz                       11,561,752  2026-08-24  8a94c37b5de6
+    imbalanced-learn           0.14.2     imbalanced_learn-0.14.2.tar.gz             19,172,446  2026-06-07  f80ce7eafbce
+    langchain-community        0.4.2      langchain_community-0.4.2.tar.gz           33,268,708  2026-05-22  a99308160d53
+    litellm                    1.106.5    litellm-1.106.5.tar.gz                     21,194,762  2026-10-27  c1a3869f31da
+    mlflow                     3.17.2     mlflow-3.17.2.tar.gz                       11,165,270  2026-10-21  3fcdb58c6833
+    prefect                    3.9.0      prefect-3.9.0.tar.gz                        6,319,483  2026-10-21  ef29cf3a1883
+    sentry-sdk                 2.73.0     sentry_sdk-2.73.0.tar.gz                    1,079,078  2026-10-22  4a2ab97b16e4
+    snowflake-snowpark-python  1.55.3     snowflake_snowpark_python-1.55.3.tar.gz     1,824,761  2026-10-22  c4a158545d0e
+    statsmodels                0.15.0     statsmodels-0.15.0.tar.gz                  15,736,853  2026-08-27  5d257fe58d07
+    wandb                      0.31.0     wandb-0.31.0.tar.gz                        40,420,416  2026-10-16  dcdaa635576f
+
+161,743,529 bytes in all, every one an sdist, no reserve needed. The
+39 old and 39 new versions: 38 of each from wheels; pyyaml 5.4.1 and
+6.0 from their sdists unpacked (their wheels stop before Python 3.12),
+`lib3/yaml` and `lib3/_yaml` placed beside a hand-written dist-info,
+as foreseen above. 86 runs, 40.3 minutes in all, the longest
+statsmodels against pandas 2.3.3 -> 3.0.0 at 232 s; 78 ended with hits
+(exit 1), 8 with none (exit 0: wandb against watchdog, langchain-
+community against datasets, and six more where the tree mentions the
+package without meeting a changed function), none stopped, none timed
+out. The counts, as the harness printed them (the unverified beside
+the hits as a count over a count; "R1 rw" and "R2 pin" the rules'
+footers; a call both rules rewrote counts once under rewritten):
+
+```
+sample package               runs  hits unverified/hits rewritten withheld left nothing R1 rw R2 pin  no report
+dask                            2  4137       3025/4137       250      206    0     179     0    250  0
+imbalanced-learn                6   996         776/996        64       83    0       4     0     64  0
+langchain-community            15   117          21/117        30        4    0       2     0     30  0
+litellm                        13  2369        149/2369        11       11    2      10     0     11  0
+mlflow                         12   319         236/319         8        7    0      13     1      7  0
+prefect                        13    58            1/58        12        1    0       5     0     12  0
+sentry-sdk                     12   321          20/321       112       12    1      56     0    112  0
+snowflake-snowpark-python       2   421         330/421         3        4    0      10     0      3  0
+statsmodels                     5  4468       3352/4468       150       27    0      35     0    150  0
+wandb                           6    47           37/47         3        1    0       1     0      3  0
+ALL                            86 13253      7947/13253       643      356    3     315     1    642  0
+
+changed package              runs  hits unverified/hits rewritten withheld left nothing R1 rw R2 pin  no report
+asyncpg                         2    36            0/36        35        1    0       0     0     35  0
+click                           2     2             0/2         1        0    0       0     0      1  0
+datasets                        1     0             0/0         0        0    0       0     0      0  0
+httpcore                        2     5             3/5         0        0    0       0     0      0  0
+httpx                           2   120          55/120         0        0    0      12     0      0  0
+httpx-sse                       1     2             0/2         0        2    0       0     0      0  0
+joblib                          1     3             0/3         0        0    0       3     0      0  0
+kubernetes                      1     1             0/1         0        0    0       1     0      0  0
+litellm                         2    67            0/67         0        6    0      57     0      0  0
+mcp                             6   780         112/780        40        8    1       0     0     40  0
+networkx                        2     4             0/4         2        2    0       0     0      2  0
+pandas                          7  8489       6190/8489       398      234    0     229     0    398  0
+protobuf                        2     7             0/7         0        0    0       3     0      0  0
+pyarrow                         1     4             0/4         2        2    0       0     0      2  0
+pydantic-settings               7    50            0/50         0        0    0       0     0      0  0
+pyyaml                          1    31           29/31         0        0    0       2     0      0  0
+redis                          22   190           0/190        45       15    2       0     0     45  0
+scikit-learn                   10   899         699/899        59       86    0       1     1     58  0
+scipy                           3   972         859/972        20        0    0       4     0     20  0
+tqdm                            2    28            0/28        18        0    0       0     0     18  0
+typing-extensions               5  1556          0/1556        23        0    0       0     0     23  0
+uvicorn                         2     5             0/5         0        0    0       3     0      0  0
+watchdog                        1     0             0/0         0        0    0       0     0      0  0
+websockets                      1     2             0/2         0        0    0       0     0      0  0
+ALL                            86 13253      7947/13253       643      356    3     315     1    642  0
+
+data/eval/counts.csv: 86 row(s)
+```
+
+Read before any verdict: of 13,253 hits, 7,947 (three in five) are
+unverified, almost all of them pandas's and scipy's methods on objects
+the tool cannot type (`df.groupby(...)`, the upper bound §38.16 warned
+of); 643 calls were rewritten and R1 accounts for ONE of them
+(mlflow's `sk_metrics.log_loss(y_true, y_pred=y_proba, ...)` against
+scikit-learn 1.8.0 -> 1.9.0, `y_pred` made keyword-only): downstream
+code passes moved parameters by name already, so on this sample the
+fixer's rewriting is R2's, the pinning of changed defaults, 642 calls.
+pandas 2.3.3 -> 3.0.0 alone gives 398 of them: `concat` 171 (`sort`
+and `copy`), `DataFrame.set_index` 77, `merge` 37, `astype` 27,
+`assert_index_equal` 16, `Series.rename` 13 and a tail of methods;
+then redis's constructors 45, mcp's two constructors 40, asyncpg's
+`connect` 35, typing-extensions's functional `TypedDict(...)` 23,
+scipy's `fsolve` and others 20, tqdm's constructor 18, scikit-learn's
+`make_scorer` and estimators. 356 calls were withheld, 234 of them
+pandas's; 315 needed nothing.
+
+**The draw, 28 Oct, 09:33 UTC.** Rewritten: 643 calls in 41 runs, 200
+drawn by Random(20261028) as the allocated way (three from every run
+with three, the rest in proportion), over 22 (sample, changed package)
+pairs: dask/pandas 47, statsmodels/pandas 26, imbalanced-learn/
+scikit-learn 20, sentry-sdk/mcp 15, sentry-sdk/redis 13, prefect/
+redis 12, sentry-sdk/asyncpg 9, langchain-community/redis 8, langchain-
+community/tqdm 8, statsmodels/scipy 8, and twelve pairs with 1 to 5.
+Withheld: 356 calls in 19 runs, 30 drawn by Random(20261029), one from
+every run and the eleven over in proportion (dask/pandas 8, litellm/
+redis 5, imbalanced-learn/scikit-learn 4, the rest 1 or 2). The sheet:
+230 calls, every one with both signatures read. The verdicts follow,
+in docs/eval/verdicts.csv and here.
+
