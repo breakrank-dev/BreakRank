@@ -10067,3 +10067,143 @@ breakrank-fix`) once the development venv's `pip install -e .` is the
 only `breakrank-fix` on the Mac again, so that the two are never
 confused.
 
+
+### 38.18 Week 5: the evaluation of §38.6 on the ten. The rule, fixed before any download (28 Oct)
+
+§38.17's commit is 689895b (28 Oct). The sample is §38.16's ten, the
+measure is §38.6's second number, and what follows fixes everything
+§38.6 left open, before a byte is downloaded. Where this section and
+§38.6 differ in a word, §38.6 is the promise and this is how it is kept.
+
+**Where it runs.** On the Linux machine, as every heavy run has since
+§20 (the Mac's rule); the tool is `breakrank-fix` installed from the
+repository at 689895b into a venv there (`pip install -e .`), its
+griffe and libcst versions recorded by the harness. The fixer package
+has not changed since 78e837a.
+
+**The ten trees.** On the day the harness runs (stated in the manifest
+and here after), PyPI's JSON record of each sample package
+(`/pypi/<name>/json`) is read once and the newest release that is
+final (no pre-, dev- or yanked release) by PEP 440 order is taken; its
+sdist is downloaded once into a directory of its own, unpacked, and
+never built, installed or imported. Its filename, size, sha256 and
+upload time go into `data/eval/manifest.json`. A newest release
+without an sdist gives its pure-Python wheel (`py3-none-any`) as the
+source, unpacked the same way; a release with neither falls to the
+reserve rule (§38.16), the substitution recorded here. The tree given
+to the fixer is the whole unpacked tree, tests and examples included:
+they are downstream code too, and the report says the trees were read
+whole. The network use is this: ten JSON records, ten archives, and
+the old and new versions below.
+
+**The old versions.** 86 runs over 39 distinct (changed package, old
+version) pairs, counted from §38.16's detail (every upgrade a sample
+package meets is run, as §38.16 decided before the list existed). Each
+old version is installed from its wheel with Python 3.12, `pip install
+--only-binary=:all: --no-deps --target data/eval/old/<package>-<version>
+<package>==<version>`: a flat directory holding the package and its
+dist-info, which is a site-packages directory to `--env` (fixer/env.py)
+[§38.6 said "a venv per package"; a target directory is the same thing
+to the tool and runs the same code, none]. `--no-deps` because the
+reading is static: griffe reads the sources and imports nothing, so
+pandas 2.3.3 needs no numpy beside it. Where no wheel exists for 3.12
+(expected: pyyaml 5.4.1, whose wheels stop at 3.9) the sdist is
+unpacked, not built, and its package directory is placed in a bare
+directory with a hand-written dist-info (METADATA naming the
+distribution and version; top_level.txt naming the package), which is
+recorded in the manifest; nothing of any old version is executed. The
+new version of each changed package is fetched the same way into
+`data/eval/new/`, for the reader's eyes only: the verdicts below need
+the new signature beside the old.
+
+**The runs.** For each (sample package, changed package, from, to), one
+command, no `--apply`:
+
+    breakrank-fix <changed> <tree> --from <from> --to <to> --env data/eval/old/<changed>-<from> --diff data/eval/<sample>/<changed>-<from>-<to>.diff
+
+stdout and stderr to `data/eval/<sample>/<changed>-<from>-<to>.txt`,
+exit code and wall time to the manifest. A run that exits 2 is recorded
+with its message and not retried with other flags; a tree the tool
+cannot read in ten minutes is recorded as such. The harness,
+`scripts/eval_run.py`, has the stages resolve, fetch, old, run and
+count, each re-runnable alone; its test runs the last two on the fixture
+(§38.13's project against §38.15's bundle) with the counts of
+scripts/test_fixer_rewrite.py as the expected values, and nothing of it
+touches the network.
+
+**What is counted, per run, by the harness from the report**: files
+read and files mentioning the import root; lines using the upgrade's
+changes; hits by confidence (resolved, referenced, unverified); R1's
+rewritten / withheld / need nothing; R2's pinned / withheld / left to
+you / need nothing; rewritten calls (a line the report shows as
+`-> rewritten`, which may carry R1 and R2 at once); withheld calls
+(`-> withheld`). Totals per sample package, per changed package and
+overall, with the unverified share beside the hits as §38.6 asks.
+
+**The reading.** The unit is one rewritten call. It gets one of the
+four verdicts of §38.6: CORRECT, the rewritten call does under the new
+version what the original did under the old, and the original would
+not have (the upgrade broke it or silently changed it); NO-OP, the
+rewritten call behaves as the original would under the new version
+too, so the change is harmless and needless (the pinned value is what
+the new default does for this call; the name was already in effect);
+UNSAFE, it parses and runs but means something else than the original
+did under the old version (a pin of an old default that was contextual,
+a sentinel pinned as a value); WRONG, it fails under the new version
+(a name that does not exist there, a value it refuses) or changes a
+call the upgrade did not touch. A call carrying both rules takes the
+worse verdict of its two parts, and counts in both rules' tallies, said
+so. If the rewritten calls number 200 or fewer in all, every one is
+read. If more, 200 are read: the list sorted by (sample package,
+changed package, from, to, file, line), the 200 drawn by Python's
+`random.Random(20261028)` as a proportional allocation over the runs
+with at least three from every run that has three, all from a run with
+fewer; the rest are counted and said unread. Thirty withheld calls are
+drawn the same way (seed 20261029) and read as JUSTIFIED (the tool was
+right to hold back), NOT JUSTIFIED (the call could have been rewritten
+safely), or NOTHING NEEDED (the line needed no change, so the flag only
+cost a look). The author reads every drawn call with a prepared sheet
+beside it: the call before and after, the old and new signatures from
+the two directories above, the rule's printed reason, and a suggested
+verdict; the author's verdict is the one recorded, and every case
+where it differs from the sheet's suggestion is recorded with the
+reason. The verdicts are a table, one row per read call (sample
+package, changed package, from, to, file, line, rules, verdict, note),
+committed as `docs/eval/verdicts.csv` with a one-line exception in
+.gitignore for that path, since it is the evaluation's record and not
+data; the raw reports stay under `data/eval/` and are not committed.
+
+**What is reported.** Counts over counts, never a percentage alone:
+rewritten calls read and total; correct, no-op, unsafe, wrong; the
+same per rule and per sample package; hits by confidence with the
+unverified share; the thirty withheld calls' three counts. Fewer than
+twenty rewritten calls in all: the counts and no rate. Recall is not
+claimed and the report says why (§38.6). The sample is the convenience
+sample §38.16 says it is and the upper-bound caveat of its "uses"
+holds: a package in the ten may meet an upgrade at no call site at all.
+
+**Bugs the evaluation finds.** Before the freeze of 13 Nov a bug in the
+fixer is fixed, the affected runs re-run and both results kept here;
+from 13 Nov a bug is recorded in the report and not fixed (§38.10).
+
+**The four choices in this, put to the author on 28 Oct with a
+recommendation each, and the recommendations taken.** (1) How much is
+read: 200 rewritten calls and 30 withheld ones. With the sheet beside
+each call the reading is a minute or two a call, four to six hours over
+the week; fewer would leave the per-rule and per-package splits too
+thin to say anything, and more would not be read with care. If the
+total is under 200, all of it. (2) Where the verdicts live: committed,
+`docs/eval/verdicts.csv`, with the one-line exception in .gitignore,
+because a reader of the report must be able to see every row the
+counts come from; the raw reports stay under `data/eval/`,
+uncommitted, as every run's output has. (3) Where it runs: on Linux,
+as every heavy run has (§20's rule for the Mac); the Mac does nothing
+in this step. (4) The trees whole: tests and examples are downstream
+code too, there is no principled line that leaves them out, and a line
+drawn after the counts are in would be drawn by the counts; the report
+says the trees were read whole.
+
+**Not decided here, on purpose:** nothing about the numbers. The
+expected values written before this run are the harness test's, on the
+fixture; the ten's counts are the result.
+
