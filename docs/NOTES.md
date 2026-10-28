@@ -9792,4 +9792,278 @@ tests, notes") holds the first script, its 15-check test and this
 section as first written, and a .gitignore line meant to add `logs/`
 that landed on the end of `Thumbs.db`, which had no final newline, so
 the file read `Thumbs.dblogs/`; the next commit puts the two on their
-own lines.
+own lines. 0448be5 (26 Oct, 14:35) is that commit: the amended script,
+the 30-check test, this section through the amended run, and the
+.gitignore fix.
+
+### 38.17 The 30 Oct checkpoint, done on 28 Oct: a fresh clone, `pipx install`, one run with the network off
+
+Varad's fresh-clone test (§38.10, §38.13): install the tool from a
+clone of the public repository with nothing of the development tree on
+the path, then run it with the network off, so that the bundle inside
+the installed package and the old version read from the project's venv
+are all it has. Done on the Mac on 28 Oct, two days before the date,
+in a new terminal window with no venv active:
+
+```
+cd ~/Projects
+git clone --branch ml/db-writer https://github.com/breakrank-dev/BreakRank.git breakrank-fresh
+git -C ~/Projects/breakrank-fresh log --oneline -1
+pipx install ~/Projects/breakrank-fresh
+which breakrank-fix
+breakrank-fix --version
+networksetup -listallhardwareports | grep -A 1 Wi-Fi
+networksetup -setairportpower en0 off
+networksetup -getairportpower en0
+ping -c 1 pypi.org
+cd ~/Projects/redisdemo
+breakrank-fix redis --to 8.0.0 --env ~/Projects/redis741
+networksetup -setairportpower en0 on
+```
+
+What it showed, as printed (pipx 1.17.2):
+
+```
+Cloning into 'breakrank-fresh'...
+remote: Enumerating objects: 1146, done.
+remote: Counting objects: 100% (273/273), done.
+remote: Compressing objects: 100% (189/189), done.
+remote: Total 1146 (delta 140), reused 181 (delta 77), pack-reused 873 (from 1)
+Receiving objects: 100% (1146/1146), 4.60 MiB | 4.26 MiB/s, done.
+Resolving deltas: 100% (672/672), done.
+0448be5 (HEAD -> ml/db-writer, origin/ml/db-writer) eval sample: one entry per source repository, the review's eighteen points taken, the first and the amended run recorded in NOTES 38.16; .gitignore: logs/ on its own line
+determining package name from '/Users/vaibhav/Projects/breakrank-fresh'...
+Using Python 3.14.7 environment at: .
+Resolved 1 package in 1.28s
+      Built breakrank-fix @ file:///Users/vaibhav/Projects/breakrank-fresh
+Prepared 1 package in 789ms
+Installed 1 package in 3ms
+ + breakrank-fix==0.1.0 (from file:///Users/vaibhav/Projects/breakrank-fresh)
+installing breakrank-fix from spec '/Users/vaibhav/Projects/breakrank-fresh'...
+Using Python 3.14.7 environment at: .
+Resolved 8 packages in 1.30s
+      Built breakrank-fix @ file:///Users/vaibhav/Projects/breakrank-fresh
+Prepared 8 packages in 760ms
+Installed 8 packages in 10ms
+ + breakrank-fix==0.1.0 (from file:///Users/vaibhav/Projects/breakrank-fresh)
+ + colorama==0.4.6
+ + griffe==2.4.1
+ + griffecli==2.4.1
+ + griffelib==2.4.1
+ + libcst==1.9.0
+ + packaging==26.3
+ + pyyaml==6.0.3
+  installed package breakrank-fix 0.1.0, installed using Python 3.14.7
+  These apps are now available
+    - breakrank-fix
+done! ✨ 🌟 ✨
+/Users/vaibhav/.local/bin/breakrank-fix
+breakrank-fix 0.1.0
+Hardware Port: Wi-Fi
+Device: en0
+Wi-Fi Power (en0): Off
+PING pypi.org (151.101.64.223): 56 data bytes
+
+--- pypi.org ping statistics ---
+1 packets transmitted, 0 packets received, 100.0% packet loss
+redis 7.4.1 -> 8.0.0: 1 release(s) crossed, 134 change(s); bundle built 2026-10-20T17:03:32Z
+  8.0.0          compared with the one before it: 134 change(s)
+
+project /Users/vaibhav/Projects/redisdemo: 1 file(s) read, 1 mention the import root(s) redis
+  old version redis 7.4.1 read from /Users/vaibhav/Projects/redis741/lib/python3.12/site-packages (import roots: redis): its classes' bases and signatures are known.
+  2 line(s) use 49 of the 134 change(s), 2 hit(s): 2 resolved, 0 referenced, 0 unverified.
+
+PART 1  changes your code uses, in the site's order (shortest public path first, then by name):
+
+    1  redis.client.Redis.__init__   used by 2   (2 line(s))
+         PARAMETER_CHANGED_DEFAULT (protocol)   2 -> None
+         PARAMETER_CHANGED_DEFAULT (retry)   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…
+         PARAMETER_CHANGED_DEFAULT (socket_connect_timeout)   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT
+         PARAMETER_CHANGED_DEFAULT (socket_keepalive)   None -> True
+         PARAMETER_CHANGED_DEFAULT (socket_keepalive_options)   None -> SENTINEL
+         PARAMETER_CHANGED_DEFAULT (socket_timeout)   None -> DEFAULT_SOCKET_TIMEOUT
+         PARAMETER_MOVED (cache)
+         PARAMETER_MOVED (cache_config)
+         PARAMETER_MOVED (client_name)
+         PARAMETER_MOVED (connection_pool)
+         PARAMETER_MOVED (credential_provider)
+         PARAMETER_MOVED (decode_responses)
+         PARAMETER_MOVED (driver_info)
+         PARAMETER_MOVED (encoding)
+         PARAMETER_MOVED (encoding_errors)
+         PARAMETER_MOVED (event_dispatcher)
+         PARAMETER_MOVED (health_check_interval)
+         PARAMETER_MOVED (lib_name)
+         PARAMETER_MOVED (lib_version)
+         PARAMETER_MOVED (maint_notifications_config)
+         PARAMETER_MOVED (max_connections)
+         PARAMETER_MOVED (oss_cluster_maint_notifications_handler)
+         PARAMETER_MOVED (protocol)
+         PARAMETER_MOVED (redis_connect_func)
+         PARAMETER_MOVED (retry)
+         PARAMETER_MOVED (retry_on_error)
+         PARAMETER_MOVED (retry_on_timeout)
+         PARAMETER_MOVED (single_connection_client)
+         PARAMETER_MOVED (socket_keepalive)
+         PARAMETER_MOVED (socket_keepalive_options)
+         PARAMETER_MOVED (ssl)
+         PARAMETER_MOVED (ssl_ca_certs)
+         PARAMETER_MOVED (ssl_ca_data)
+         PARAMETER_MOVED (ssl_ca_path)
+         PARAMETER_MOVED (ssl_cert_reqs)
+         PARAMETER_MOVED (ssl_certfile)
+         PARAMETER_MOVED (ssl_check_hostname)
+         PARAMETER_MOVED (ssl_ciphers)
+         PARAMETER_MOVED (ssl_exclude_verify_flags)
+         PARAMETER_MOVED (ssl_include_verify_flags)
+         PARAMETER_MOVED (ssl_keyfile)
+         PARAMETER_MOVED (ssl_min_version)
+         PARAMETER_MOVED (ssl_ocsp_context)
+         PARAMETER_MOVED (ssl_ocsp_expected_cert)
+         PARAMETER_MOVED (ssl_password)
+         PARAMETER_MOVED (ssl_validate_ocsp)
+         PARAMETER_MOVED (ssl_validate_ocsp_stapled)
+         PARAMETER_MOVED (unix_socket_path)
+         PARAMETER_MOVED (username)
+       app/cache.py:9:5             resolved    call      r = Redis("localhost", 6379, 0, None, 5)
+                                    -> rewritten: Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+                                       R1: the moved parameter(s) are not passed here: cache, cache_config, client_name, connection_pool, credential_provider, decode_responses and 37 more
+                                       R2, pin the old default: socket_connect_timeout=None (now DEFAULT_SOCKET_CONNECT_TIMEOUT), socket_keepalive=None (now True), socket_keepalive_options=None (now SENTINEL), protocol=2 (now None); not pinned: retry (old default Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) is not a plain value; now Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…); already passed: socket_timeout; delete an argument to accept its new default
+       app/cache.py:16:22           resolved    call      self.plain = Redis("h", connection_pool=pool)
+                                    -> rewritten: Redis("h", connection_pool=pool, socket_timeout=None, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+                                       R1: already passed by name: connection_pool
+                                       R2, pin the old default: socket_timeout=None (now DEFAULT_SOCKET_TIMEOUT), socket_connect_timeout=None (now DEFAULT_SOCKET_CONNECT_TIMEOUT), socket_keepalive=None (now True), socket_keepalive_options=None (now SENTINEL), protocol=2 (now None); not pinned: retry (old default Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) is not a plain value; now Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…); delete an argument to accept its new default
+
+PART 2  the upgrade's other 85 change(s), ranked, which your code does not name:
+       redis.client.Redis.response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(_RedisCallbacks) -> CaseInsensitiveDict(get_response_callbacks(user_protocol=connection_kwa…   used by 0
+       redis.cluster.REDIS_ALLOWED_KEYS   ATTRIBUTE_CHANGED_VALUE   ('connection_class', 'connection_pool', 'connection_pool_class', 'clien… -> ('connection_class', 'connection_pool', 'connection_pool_class', 'clien…   used by 0
+       redis.cluster.RedisCluster.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.cluster.RedisCluster.cluster_response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(self.__class__.CLUSTER_COMMANDS_RESPONSE_CALLBACKS) -> CaseInsensitiveDict(cluster_response_callbacks)   used by 0
+       redis.connection.Connection.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.connection.Connection.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.connection.URL_QUERY_ARGUMENT_PARSERS   ATTRIBUTE_CHANGED_VALUE   {'db': int, 'socket_timeout': float, 'socket_connect_timeout': float, '… -> {'db': int, 'socket_timeout': float, 'socket_connect_timeout': float, '…   used by 1
+       redis.connection.UnixDomainSocketConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.client.Redis.__init__ (retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   None -> True   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(_RedisCallbacks) -> CaseInsensitiveDict(get_response_callbacks(user_protocol=connection_kwa…   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (max_connections)   PARAMETER_CHANGED_DEFAULT   2 ** 31 -> 100   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (address_remap)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (event_dispatcher)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (policy_resolver)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (protocol)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_connect_timeout)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive_options)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_timeout)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ca_certs)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ca_data)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_cert_reqs)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_certfile)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_check_hostname)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ciphers)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_exclude_verify_flags)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_include_verify_flags)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_keyfile)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_min_version)   PARAMETER_MOVED   used by 0
+       redis.asyncio.connection.Connection.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.asyncio.connection.Connection.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.connection.URL_QUERY_ARGUMENT_PARSERS   ATTRIBUTE_CHANGED_VALUE   MappingProxyType({'db': int, 'socket_timeout': float, 'socket_connect_t… -> MappingProxyType({'db': int, 'socket_timeout': float, 'socket_connect_t…   used by 0
+       redis.cluster.ClusterPipeline.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.commands.bf.BFBloom (BFCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.CFBloom (CFCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.CMSBloom (CMSCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.TDigestBloom (TDigestCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.TOPKBloom (TOPKCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.connection.AbstractConnection.__init__ (driver_info)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (lib_name)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (lib_version)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_read_size)   PARAMETER_CHANGED_DEFAULT   65536 -> DEFAULT_SOCKET_READ_SIZE   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.connection.AbstractConnection.__init__ (command_packer)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (event_dispatcher)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maint_notifications_config)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maint_notifications_pool_handler)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maintenance_notification_hash)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maintenance_state)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_host_address)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_socket_connect_timeout)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_socket_timeout)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (oss_cluster_maint_notifications_handler)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.ClusterNode.__init__ (max_connections)   PARAMETER_CHANGED_DEFAULT   2 ** 31 -> 100   used by 0
+       redis.asyncio.cluster.ClusterNode.__slots__   ATTRIBUTE_CHANGED_VALUE   ('_connections', '_free', '_lock', '_event_dispatcher', 'connection_cla… -> ('_background_tasks', '_connections', '_free', '_lock', '_event_dispatc…   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (driver_info)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (lib_name)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (lib_version)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_read_size)   PARAMETER_CHANGED_DEFAULT   65536 -> DEFAULT_SOCKET_READ_SIZE   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.commands.search.AsyncPipeline.client   OBJECT_CHANGED_KIND   used by 0
+       redis.commands.timeseries.info.TSInfo.labels   ATTRIBUTE_CHANGED_VALUE   list_to_dict(response.get('labels')) -> []   used by 0
+       redis.commands.timeseries.info.TSInfo.rules   ATTRIBUTE_CHANGED_VALUE   response.get('rules') -> []   used by 0
+       redis.commands.vectorset.commands.VSimResult   ATTRIBUTE_CHANGED_VALUE   Optional[List[Union[List[EncodableT], Dict[EncodableT, Number], Dict[En… -> list[list[EncodableT] | dict[EncodableT, Number] | dict[EncodableT, dic…   used by 0
+       redis.http.http_client.HttpClient.__init__ (retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.multidb.config.MultiDbConfig.__init__ (command_retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.multidb.config.MultiDbConfig.command_retry   ATTRIBUTE_CHANGED_VALUE   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.multidb.config.MultiDbConfig.__init__ (command_retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.multidb.config.MultiDbConfig.command_retry   ATTRIBUTE_CHANGED_VALUE   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+
+getattr, strings and importlib are invisible to this tool. In the files that import the package, a method called on an object whose class the tool does not know is listed as unverified; an object made by another package's call or bound to a literal is not the package's and is not listed; a project module that re-exports the package's names is not followed.
+R1, pass by name: 0 call(s) rewritten, 0 withheld, 2 need nothing. R2, pin the old default: 2 call(s) pinned, 0 withheld, 0 left to you, 0 need nothing; the diff follows.
+changes found with griffe.
+
+--- a/app/cache.py
++++ b/app/cache.py
+@@ -6,14 +6,14 @@
+ from redis import Redis
+ 
+ pool = redis.ConnectionPool(host="localhost", port=6379, db=0)
+-r = Redis("localhost", 6379, 0, None, 5)
++r = Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+ client = redis.from_url("redis://localhost")
+ 
+ 
+ class Cache:
+     def __init__(self, url):
+         self.r = redis.Redis.from_url(url)
+-        self.plain = Redis("h", connection_pool=pool)
++        self.plain = Redis("h", connection_pool=pool, socket_timeout=None, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+ 
+     def put(self, key, value):
+         self.r.set(key, value, 60)
+```
+
+Read against what was expected: the clone's head is 0448be5; pipx
+built the wheel from the clone and installed it with its three
+dependencies (griffe 2.4.1, now split into griffelib and griffecli;
+libcst 1.9.0; packaging 26.3) under Python 3.14.7, pipx's default
+interpreter on that Mac, which is neither the project venv's nor the
+demo venv's (3.12); `which` names `~/.local/bin/breakrank-fix`, so the
+development tree is not on the path; the Wi-Fi was off and the one
+packet to pypi.org was lost (the name resolved from the Mac's cache,
+the packet went nowhere); the report is the one of §38.15(c) to the
+character, two calls pinned, the diff printed, the old version read
+from the 3.12 venv's site-packages by a 3.14 interpreter, griffe
+2.4.1 reading what griffe 2.3.0 read on 26 Oct with the same result.
+The checkpoint is met: the installed tool carries its bundle, reads the
+old version from a venv it was not installed in, and needs no network.
+On the 30th the lines from the Wi-Fi off to the Wi-Fi on are repeated
+as the demo; nothing else is needed. The clone stays at ~/Projects/breakrank-fresh for that and
+is deleted after, as is the pipx install (`pipx uninstall
+breakrank-fix`) once the development venv's `pip install -e .` is the
+only `breakrank-fix` on the Mac again, so that the two are never
+confused.
+
