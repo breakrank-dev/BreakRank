@@ -10400,6 +10400,286 @@ community/tqdm 8, statsmodels/scipy 8, and twelve pairs with 1 to 5.
 Withheld: 356 calls in 19 runs, 30 drawn by Random(20261029), one from
 every run and the eleven over in proportion (dask/pandas 8, litellm/
 redis 5, imbalanced-learn/scikit-learn 4, the rest 1 or 2). The sheet:
-230 calls, every one with both signatures read. The verdicts follow,
-in docs/eval/verdicts.csv and here.
+230 calls, every one with both signatures read. The harness, its
+tests and this record through the draw are c0d6ea0 (28 Oct, 16:03;
+the three tests 28, 9 and 6 ok on the Mac). The verdicts follow, in
+docs/eval/verdicts.csv and here.
 
+**The sheet's suggestions, and their correction on 10 Nov before the
+reading.** Each of the 230 calls got a suggested verdict and a reason
+on 28 Oct, written from the new version's source (the files under
+data/eval/new, read beside data/eval/old): by group of (changed
+package, upgrade, function, parameters pinned), on the ground that one
+pin of one default means one thing. First tally of the suggestions:
+rewritten, correct 35, no-op 85, unsafe 68, wrong 12; withheld,
+justified 10, nothing needed 20. The reading began on 10 Nov, one call
+at a time with the author, and the second call showed the group grade
+wrong for its line: the 47 `concat` calls where `sort=False` was
+pinned had all been suggested unsafe with the caveat "no change where
+the other axis cannot be all dates", and dask's
+`_collection.py:4096` joins Series that share one index object, where
+nothing is combined or sorted in either version. A caveat the reader
+is left to resolve is not a suggestion, so before any further verdict
+each of the 47 was read on its own, in its tree, against the rule the
+two pandas sources give (pandas/core/indexes/api.py: the indexes of
+the other axis are first reduced to distinct objects; 2.3.3 set
+sort=True for a union of all-DatetimeIndex indexes whatever the caller
+passed; 3.0.0 does so only for the no_default sentinel and obeys an
+explicit False). The pin can change a result only where the other axis
+holds two or more different indexes, all DatetimeIndex, joined outer,
+their union not already in order. 43 of the 47 cannot meet that
+(Series joined end to end; frames joined end to end with string or
+identical columns; side-by-side joins on a RangeIndex, a PeriodIndex,
+a MultiIndex, string labels, or one shared index; one inner join) and
+are suggested no-op, each with its own reason. Four can, all through
+user data whose column labels are dates: mlflow's `load_table` over
+runs whose wide tables have one column per date (#105, unusual but
+real: read_json turns date-like labels into a DatetimeIndex, and runs
+arrive newest first), and three far-fetched ones (#103 mlflow's
+per-row predictions, #104 `log_table`'s append, #161 snowpark's
+`map_in_pandas`); those four stay unsafe, by the criterion now said
+outright: a rewritten call is unsafe when some input that can reach
+its line gives a different result than the original gave under the old
+version, however unusual, and no-op when none can. The same second
+look at the other caveats: scipy's three `diags` calls (statsmodels
+mixed_linear_model.py) pass 1 / vc_var, a float array, added into a
+float matrix, where the old and the new dtype inference agree: no-op,
+not unsafe; scikit-learn's four `BaggingClassifier()` examples fit
+without sample weights, as the suggestion assumed; redis's
+`driver_info=None` pins were re-read in 7.2.1 and 7.2.2
+(`resolve_driver_info`) and stand as unsafe: the old defaults announced
+redis-py and its version to the server, the pinned None announces
+nothing. Suggestions after the correction: rewritten, correct 35,
+no-op 131, unsafe 22, wrong 12; withheld unchanged. 46 suggestions
+changed, all from unsafe to no-op (ids 2, 3, 4, 5, 7, 8, 11, 13, 14,
+15, 21, 23, 24, 33, 34, 50 to 53, 76, 77, 102, 162, 164 to 170, 173,
+174, 175, 178, 179, 182 to 192). One verdict had been given before the
+correction, #1, no-op, which the correction does not touch.
+
+**What the pins cost, found in the same reading (10 Nov).** A default
+that changes to a sentinel is usually a parameter on its way out, and
+the new version says so when the parameter is passed at all. Of the
+200 rewritten calls on the sheet, the pins of 128 add a warning under
+the new version, each read in its source: pandas 3.0's Pandas4Warning
+for `copy` (concat, merge, astype, rename, rename_axis, to_timestamp)
+and for set_index's `verify_integrity`; scikit-learn's FutureWarning
+for `force_all_finite` (1.6), `response_method=None` (1.6),
+`force_int_remainder_cols` (1.7), `criterion` and `probability` (1.9)
+and the renamed `y_pred` (1.9, the one R1 call); redis's deprecated
+`lib_name`, `lib_version` and `cluster_error_retry_attempts`; scipy
+1.18's `lwork`; networkx 3.4's `link`. By suggestion: 102 of the 131
+no-ops, all 22 unsafe, 4 of the 35 correct. A warning is not a failure
+of the call, and the four verdicts of §38.6, fixed before the run, are
+about what the call does; but three of the ten sample packages run
+their own tests with such warnings as errors (pytest `filterwarnings`:
+dask "error", prefect "error", imbalanced-learn "error::FutureWarning"
+and "error::DeprecationWarning"), and 71 of the 128 are theirs (dask
+46, imbalanced-learn 16, prefect 9): applied there, the edit would
+fail the project's own suite wherever the line runs under it. Each
+such sheet says so in its reason, between brackets. Whether that
+changes a verdict is the author's decision, put to him on 10 Nov and
+recorded with his answer below.
+
+**Two readers, from 19 Nov (an amendment to "the author reads every
+drawn call").** The review is set for 1 Dec, and on 19 Nov one call of
+the 230 had a verdict. The reading is divided between the project's
+two authors, by sheet number, fixed before either reads further:
+Vaibhav reads the rewritten calls #1 to #100 and the withheld calls
+#201 to #215; Varad reads the rewritten calls #101 to #200 and the
+withheld calls #216 to #230; 115 each. The sheet's order is the draw's
+(sample package, changed package, upgrade, file, line), so the cut
+falls inside litellm's calls and gives each reader all four suggested
+verdicts: the first hundred are dask, imbalanced-learn, langchain-
+community and all but one of litellm's (suggested: correct 11, no-op
+76, unsafe 9, wrong 4); the second the last of litellm's, mlflow,
+prefect, sentry-sdk, snowflake-snowpark-python, statsmodels and wandb
+(correct 24, no-op 55, unsafe 13, wrong 8). Each reader's verdict
+stands for his calls and the record names the reader on every row.
+Both read from the same sheet, sorted for reading by kind of edit (the
+same function with the same parameters pinned, 53 kinds over the 200),
+each kind opened by a plain-language account of what the edit does and
+what the new version does with it; the verdict words, their meaning
+and the criterion for unsafe are stated once at the head of each
+reader's file, the same for both. No call is read by both: agreement
+between two readers who see the same suggestion would measure the
+readers and not the suggestion. What checks the suggestions is below.
+
+**A second, blind reading of the suggestions (19 Nov).** The
+suggestions were one reader's; before two more readers rely on them,
+one call of every kind of edit (43 calls; the 47 `concat` calls had
+their own call-by-call reading on 10 Nov) and all 30 withheld calls
+were given to readers who had the sheet without its suggestion and
+reason, the two versions' sources and the sample's tree, and the
+verdict definitions, and nothing else of this record. Their verdicts
+are set against the sheet's, every disagreement re-read in the source
+and settled with the lines that decide it; the outcome is recorded
+below before the readers' files go out.
+
+**The blind reading's outcome (19 Nov).** Three sets were read:
+22 and 21 rewritten calls, one from each of 43 of the 53 groups
+(package, upgrade, function, parameters pinned), and the 30 withheld
+calls. The ten groups not drawn: the 47 `concat` calls with `sort`
+pinned, read call by call on 10 Nov; six redis groups that differ from
+a drawn one only in the patch upgrade (7.3.0 to 7.3.1, 7.4.0 to
+7.4.1), whose `driver_info.py` and client defaults are the same files
+as 7.2.1's and 7.2.2's (diff, 19 Nov); and `pd.merge` beside
+`DataFrame.merge`, `make_column_transformer` beside
+`ColumnTransformer`, `diags_array` beside `diags`. Against the 10 Nov
+suggestions: the first set gave the same verdict on 22 of 22 and
+corrected two reasons in their mechanism (#68: scikit-learn 1.8's
+`make_scorer` refuses 'default' at the call, not when the scorer is
+used; #70: 1.9 builds the stage trees with squared_error whatever
+`criterion` says, so the pin cannot bring friedman_mse back). The
+withheld set gave the same verdict on 22 of 30; the other eight were
+all justified on the sheet and nothing needed in the reading (#209,
+#215 to #219, #223, #224): the 28 Oct suggestions had taken a true
+reason for holding back ("the call unpacks `**`") as justification by
+itself, where this section's own words ask first whether the line
+needed a change. The third set gave the same verdict on 15 of 21. Its
+six differences: #94 and #97 (litellm passes its own
+`connection_pool`, and redis reads the constructor's connection
+arguments only under `if not connection_pool:`, so the pins are never
+read: no-op, not unsafe and not correct); #128 (the helper is only
+called with `stateless=True`, where mcp keeps no session to time out:
+no-op, not correct); #86 (tqdm wraps a generator, has no total, draws
+no bar, and `ascii` is read only where a bar is built: no-op, not
+correct); #119 (asyncpg 0.30's `direct_tls=None` falls back to the
+same negotiation as False unless the connection string or the
+environment variable PGSSLNEGOTIATION says otherwise, and this
+connection string is fixed: no-op, not correct); #198 (click 8.3
+builds the Option without error and silently turns `--entity NAME`
+into a flag: unsafe, not wrong). The first three had already been
+corrected from the withheld set's reading of the same lines (#216 to
+#220 sit beside #94 to #97, #224 on #128's line) when the third set
+reported, and it reached them on its own. All 14 differences, of 73
+calls read blind, were re-read in the two versions' sources and
+settled as the blind reading had them: in every one the suggestion was
+the reading at fault, and in 12 of the 14 it had been the kinder of
+the two to the tool (a correct that is a no-op, a justified that is
+nothing needed).
+
+**What the differences had in common, and the re-reading it called
+for.** Each was a fact about the one call (what it passes, where it
+sits), which a grade given by kind cannot see: the lesson of the
+`concat` calls on 10 Nov, learnt a second time. So on 19 Nov every
+call of a kind where the call's own arguments can decide the grade was
+read on its own line: the 24 redis client calls for a
+`connection_pool` (#95 and #96 are #94's line; no other passes one);
+the eight tqdm calls for a total (#87 and #91 wrap `self.lazy_load()`,
+a generator, as #86 does; #88, #89, #92 and #93 pass a list and #90
+`total=len(items)`, so a bar is drawn and they stay correct); the nine
+asyncpg calls for their connection string (all built in the test file
+as postgresql://user:password@host, eight with /database, none with a
+query part: #120 to #127 follow #119); the eight mcp session managers
+for `stateless` (only #128 passes it); the nine `TypedDict` calls for
+`extra_items` (none); the three `force_all_finite` calls for an
+`ensure_all_finite` beside it (none); the two `assert_index_equal`
+calls for a MultiIndex (neither can get one); the pandas method calls
+whose receiver is a variable, for the receiver being pandas and not
+its dask twin (each is built by `pd.DataFrame(...)` in the same test).
+And the 66 calls then suggested other than no-op or nothing needed, on
+47 lines, were each read inside their function for whether the line
+can run under the new version at all. Three lines cannot.
+langchain-community's `falkordb_graph.py:129` (#78, #80, #82, #84)
+follows `from redis.commands.graph import Graph` in the same function,
+a module that none of the seven redis versions under data/eval has
+(7.2.1 to 8.0.0), and the caller turns the ImportError into its own.
+sentry-sdk's `test_mcp.py:1886` (#136) is in a test marked
+`skipif(IS_MCP_V2)`, so the pinned `version=None` is never built under
+mcp 2.0.0 and is the default under 1.30.0. snowpark's
+`resample_overrides.py:180` (#226, withheld) follows a call that
+always raises, as the comment above it says. One line is the opposite
+case: imbalanced-learn's `_easy_ensemble.py:285` (#55) is the
+project's own branch for scikit-learn 1.6 and later (the branch above
+it passes algorithm="SAMME" for 1.4 and 1.5), so it does not run under
+1.5.2 at all, and under 1.6.0 the pin puts the removed 'SAMME.R' on
+exactly the line written for the new version. Wrong stands, and it is
+the plainest case in the sample of what pinning an old default can do.
+Three final suggestions depart from the blind verdict, each on the
+caveat that reading wrote itself, that the line cannot run: #78 (read
+unsafe), #84 (read correct), #226 (read justified).
+
+**The criterion as it now stands, the same for both readers and
+printed at the head of each reader's file.** A rewritten call, three
+questions in order. (1) Does the new version refuse the edited line
+with an error, at the call or as soon as what it builds is used?
+Wrong. (2) If not, does the edited line do exactly what the unedited
+line does under the new version? No-op; a warning alone does not
+change this (it is counted beside the verdicts, below, and the
+author's word on it is still awaited). (3) If not, the edit changes
+something: it brings back what the call did before the upgrade,
+correct; or it does what the call did neither before the upgrade nor
+after it, for some value that can reach the line, however unusual,
+unsafe. A withheld call, two questions. Does the line need any change
+or decision for this upgrade? If not, nothing needed, even where the
+tool's reason for holding back is true. If it does, could the tool
+have made the edit safely by its rules? Then not justified; if it
+could not, justified. Three clauses hold for every call. The call is
+judged in its project, over the values that can reach its line. A line
+that cannot run under the new version, or a pinned parameter the
+library does not read on that call, changes nothing: no-op, or nothing
+needed. And the machine is an ordinary one: environment variables that
+exist for the library (PGSSLNEGOTIATION for asyncpg, tqdm's own
+overrides of its defaults) are unset, and an input only the new
+version accepts (scikit-learn 1.6's FrozenEstimator at wandb's two
+`CalibratedClassifierCV` calls) has no old result to keep and is not
+counted. The clauses are not free, and what each costs is said here so
+that the report can say it. Were the four calls on the falkordb line
+graded as if they ran, three would be unsafe and one correct; #136
+would be wrong; #226 would be justified. With PGSSLNEGOTIATION=direct
+set, the nine asyncpg pins keep 0.29's negotiation where the unedited
+call follows the variable, which by the letter is correct. And where a
+tqdm environment override sets `ascii`, an explicit keyword overrides
+it, so there the five tqdm pins graded correct would by the letter be
+unsafe.
+
+**The suggestions after the blind reading (19 Nov).** Rewritten:
+correct 20, no-op 153, unsafe 17, wrong 10. Withheld: justified 1
+(#220), nothing needed 29. Since 10 Nov 32 suggestions changed: 15
+lost a correct to no-op (#84, #86, #87, #91, #97, #119 to #127, #128),
+6 went from unsafe to no-op (#78, #80, #82, #94 to #96), one from
+wrong to no-op (#136), one from wrong to unsafe (#198), and 9 from
+justified to nothing needed (#209, #215 to #219, #223, #224, #226). By
+sample package: dask 49 no-op; imbalanced-learn 20 no-op, 4 wrong;
+langchain-community 6 correct, 11 no-op, 3 unsafe; litellm 8 no-op;
+mlflow 2 no-op, 3 unsafe; prefect 3 correct, 9 unsafe; sentry-sdk 11
+correct, 25 no-op, 6 wrong; snowflake-snowpark-python 2 no-op, 1
+unsafe; statsmodels 34 no-op; wandb 2 no-op, 1 unsafe. By changed
+package the 20 correct are redis 8.0's new defaults (8), mcp's idle
+timeout (7) and tqdm's `ascii` (5); the 17 unsafe are redis's
+`driver_info=None` (12), pandas's `sort=False` (4) and click's
+`flag_value=None` (1); the 10 wrong are mcp's `version=None` (6) and
+scikit-learn's removed or renamed values (4). These are suggestions
+and not verdicts: the verdicts are the two readers', and the record
+keeps both columns.
+
+**The warnings, recounted.** Of the 200, the pins of 116 add a warning
+under the new version, not 128 as counted on 10 Nov. The nine
+`RedisCluster(..., lib_name='redis-py')` calls (#143 to #151) add
+none: the cluster constructor's deprecation covers only
+`read_from_replicas` and `cluster_error_retry_attempts`; in 7.2.2 each
+connection warns about `lib_name` with or without the pin, because the
+cluster always hands it on, and from 7.3.1 the cluster resolves it
+first and nothing warns (found by the third set, confirmed in the
+three new versions). And the three `driver_info` pins on the falkordb
+line never run. By suggestion: 96 of the 153 no-ops, 16 of the 17
+unsafe, 4 of the 20 correct. The 71 in the three projects whose own
+tests turn warnings into errors are unchanged (dask 46,
+imbalanced-learn 16, prefect 9).
+
+**The readers' files (19 Nov).** `cards_vaibhav.txt` and
+`cards_varad.txt`, built from the sheet by a script kept with the
+working files and not committed: they are the sheet in another order,
+and the record is docs/eval/verdicts.csv. The 53 groups read alike in
+34 plain-language kinds (one pin of one default, whatever the patch
+upgrade or the function's spelling; "53 kinds" above meant the
+groups), 20 in each reader's file with the withheld calls as a 21st.
+Seven kinds hold more than one suggested grade, and each call that
+departs from its kind says why in its own reason. The first reader's
+115: correct 6, no-op 87, unsafe 3, wrong 4; nothing needed 15. The
+second's: correct 14, no-op 66, unsafe 14, wrong 6; justified 1,
+nothing needed 14. (The per-reader figures given with the split above
+were the 10 Nov suggestions'.) The split is unchanged: it was fixed
+before the reading, and that the calls which turned out to matter fall
+mostly in the second half is how the draw's order fell. The files went
+to the author on 19 Nov at 21:20.
