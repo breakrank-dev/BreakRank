@@ -10683,3 +10683,403 @@ were the 10 Nov suggestions'.) The split is unchanged: it was fixed
 before the reading, and that the calls which turned out to matter fall
 mostly in the second half is how the draw's order fell. The files went
 to the author on 19 Nov at 21:20.
+
+**The record before the reading is e0f81ca** (19 Nov, 21:15, on
+ml/db-writer; read back from the public branch on 22 Nov, the file the
+same to the byte as the one delivered): this section through the
+readers' files, committed by the author before his first verdict under
+the criterion. The files had gone to him at 21:12, not at 21:20 as the
+line above says: that line was written before they were sent and the
+time was a guess. The reading stopped that evening at its first kind,
+the 17 pandas calls with `copy=None` pinned, on the one question still
+open (whether a warning alone changes a no-op), and was taken up again
+on 22 Nov.
+
+**How the first reader's verdicts are entered (22 Nov, 01:50).** At
+his asking, in a spreadsheet built from the sheet and his card file:
+one row per call, in his file's order, with the suggested grade and
+its reason, the edit before and after, and a plain-language line
+beside them; his grade is picked from a list (the four words for a
+rewritten call, the three for a withheld one) in a column that starts
+empty, and an empty cell is a call not read. Card #1 carries his
+verdict of 10 Nov. A second tab holds each kind's account as his file
+gives it and a third the grade words, the three questions and the
+three clauses, the warning rule among them as it stands at the head of
+his file; grading a warning-only call no-op there is his word on that
+rule. The spreadsheet is read back into data/eval/sheet.csv when he
+says he is done, with the time of the reading; it changes no
+suggestion and holds nothing the card file does not.
+
+At 02:00 the second reader's 115 calls were added to the same workbook
+in the same form, on two tabs of his own (his cards, his kinds), his
+grade column empty, for him to enter his verdicts there once the first
+reader has shared it with him; a pasted answer in the form his card
+file asks for is taken as well. By then the first reader had graded
+his first kind, the 17 pandas calls with `copy=None` pinned, no-op,
+each of which only adds a warning: his word on the warning rule, given
+after being told that grading such a call no-op is what accepts it.
+
+**The first reader's verdicts (23 Nov, 17:57).** Read from his
+spreadsheet twice. At 17:45 every one of his 100 rewritten calls held
+a verdict, each the suggested one, and his 15 withheld calls held
+no-op, which is no word for a withheld call: a paste down the column
+had carried the rewritten calls' list of four over those rows. Nothing
+was taken from that. At his yes the 15 cells were cleared and the
+three-word list put back, and he graded them again; at 17:57 they read
+nothing needed, all 15, as suggested. So his 115: correct 6, no-op 87,
+unsafe 3, wrong 4; nothing needed 15; no call graded against its
+suggestion and no note written. That every verdict follows its
+suggestion is what a reader shown a suggestion with its reason mostly
+does, and is why the suggestions were read blind first (above): the
+verdicts are the authors' word on the sheet, and the check on the
+sheet is the blind reading, not the agreement. The second reader's two
+tabs were no longer in the workbook on 23 Nov; how his verdicts come
+is asked.
+
+**The record's columns, fixed before any verdict is counted (23
+Nov).** docs/eval/verdicts.csv gains three columns beside the verdict.
+`reader`: the one of the two whose call it is by the split of 19 Nov,
+sheet numbers 1 to 100 and 201 to 215 the first reader's, 101 to 200
+and 216 to 230 the second's; a number outside 1 to 230 has no reader
+and the sheet is refused. `reason`: the suggestion's reason as the
+sheet holds it, so that the record carries why each suggestion was
+what it was, the corrections of 10 and 19 Nov included.
+`adds_warning`: yes where the reason carries the mark the sheet writes
+for a pin that adds a warning under the new version ("[ADDS A
+WARNING"), empty otherwise. The warning rule stands as printed, by the
+first reader's word of 22 Nov: a warning alone leaves a no-op a no-op,
+and the warnings are counted beside the verdicts, never inside them.
+The summary gains one line per reader and one for the warnings, counts
+over counts as the rest. The expected values are in
+scripts/test_eval_verdicts.py before the code runs: eleven checks, the
+six of 28 Oct unchanged.
+
+The code followed the same afternoon: `reader_of`, `adds_warning`,
+`summarise_readers` and `print_readers` in scripts/eval_verdicts.py,
+the three columns in the record, the reader asked for as the sheet is
+read. The eleven checks passed on the first run. Eight guards were
+then broken on purpose, one at a time, with the bytecode cleared
+between runs: the first reader's span ended at 99, the second's at
+229, the two readers swapped, any mention of a warning taken for the
+mark, the reader left out of the record, the sheet read without asking
+for a reader, every rewritten call counted as warned, every record row
+marked yes. The test stopped or failed on each, and passes again on
+the script restored (the same file to the byte). On the sheet as it
+stood, its second half unread, the script refused at #101 and wrote
+nothing; on the first reader's half alone it printed his counts as
+above and, beside them, 72 of his 100 rewritten calls adding a warning
+(no-op 69, unsafe 3). This change had no second reader of its own: it
+is some sixty lines beside a test that names every one of them.
+.gitignore lets docs/eval/verdicts.csv through, the one csv kept under
+docs; the other two evaluation tests still give 28 and 9.
+
+**The second reader's answer (24 Nov, 18:06).** It came as the pasted
+answer his card file asks for, with a spreadsheet of his own making
+(his 115 cards, a grade beside each). Every one of his 115 calls is
+graded as suggested: correct 14, no-op 66, unsafe 14, wrong 6;
+justified 1, nothing needed 14. One reason is written, on #154, and
+ten questions, over 33 calls. Nothing was counted from it that
+evening. All but one of the ten bear on a grade, and turn on a fact
+the card does not give, so the facts were looked for first, by running
+the two versions of the library where a run can tell and in the source
+where it cannot, and they are set down here before his last word is
+asked. His 115 as entered are in the log of readings, beside the first
+reader's.
+
+**What the questions found (24 Nov).** Each is given with the check
+made and with what the criterion as printed makes of it.
+
+On #103 to #105 and #161: what does the unedited line do with date
+labels under pandas 3.0? If it also left them unsorted, the edit would
+be a no-op. Two frames whose date labels differ and are out of order
+were joined under 2.3.3 and under 3.0.0. 2.3.3 returns the labels
+sorted, with or without `sort=False`. 3.0.0 on the unedited call still
+sorts them, and warns that it will stop (Pandas4Warning, "Sorting by
+default when concatenating all DatetimeIndex is deprecated"). 3.0.0 on
+the edited call keeps the order of appearance. So the edited line does
+what the call did neither before the upgrade nor after it, and unsafe
+stands on the four. The cards said only that 3.0 obeys an explicit
+`sort=False`; what the unedited line does was missing from them.
+
+On #165 and #169: did anyone check the FRED dates? No one had; the
+cards said so. On 24 Nov the seven series were read on FRED's own data
+pages. IPMAN (monthly, from 1972-01), W875RX1 (from 1959-01), CMRMTSPL
+(from 1967-01) and PAYEMS (from 1939-01) each hold every month of the
+example's window, 1979-01 to 2014-12. GNPC96 and GNPDEF are quarterly
+from 1947-01, dated at quarter starts, and AMBSL is monthly from
+1918-01 to 2019-11 and is put on quarter starts by the example itself;
+the three cover 1948-01 to 2008-01. The frames of each call therefore
+hold the same dates, the union is the first index unchanged, and no-op
+stands on both, now on dates that were read and not supposed.
+
+On #106, #176 and #195: the edit is a no-op at this upgrade but writes
+in something the library is taking away (the old name `y_pred`, the
+keywords `verify_integrity` and `lwork`), so it would break at a later
+one; no grade says so; should the report? It should, and the count is
+already kept: these are three of the 116 rewritten calls whose edit
+adds a warning under the new version, and a warning of this kind is
+the library's notice that the keyword will go. The grade speaks of
+this upgrade only, by the warning rule fixed before the reading. The
+report is to give the 116 beside the verdicts and to say in words what
+the second reader says here.
+
+On #107 to #115: prefect's own tests turn warnings into errors; does
+that count toward wrong? It does not, by the same rule: the warning is
+counted beside the verdict, and of the 116 the 71 that lie in projects
+whose tests turn warnings into errors (dask 46, imbalanced-learn 16,
+prefect 9) are named as such. The nine are unsafe on another ground,
+the library's name no longer announced to the server, and stay unsafe.
+
+On #116 to #118: the tool's own line says the retry default also
+changed in redis 8.0 and was not pinned; is the edit still correct?
+The suggestion had not weighed the retry; its reason does not name it.
+It was measured on 24 Nov, with the socket's connect replaced by one
+that fails at once. redis 7.4.1 makes 4 attempts and sets no time
+limit on any. 8.0.0 on the unedited call makes 11 attempts of at most
+5 s each. 8.0.0 on the edited call makes 11 attempts with no time
+limit. The asyncio client of #118 counts the same. Where the host
+refuses the connection the edited line does what the unedited one
+does. Where the host never answers, an attempt without a limit lasts
+until the operating system gives up (about two minutes on Linux by its
+default, a figure not measured here), so the edited line waits some 23
+minutes where 7.4.1 waited some 8 and 8.0.0 unedited waits about one:
+a wait the call had neither before the upgrade nor after it. In
+prefect the host is a field of the user's block, so such a host can
+reach the three lines, and by the third question as printed that is
+unsafe and not correct. #85, the first reader's call of the same kind,
+is not touched: its host is "localhost" in an integration test, which
+answers or refuses at once, and there the edited line differs from the
+unedited one only where it brings 7.4.1 back (RESP2, no time limits,
+keepalive off). What #85 and the three share is a pin that is partial.
+The tool says so itself ("not pinned: retry"), and the report is to
+count such calls: 17 of the 200 rewritten calls carry a "not pinned"
+on their rule line (`lib_version` on 9, `retry` on 6,
+`max_connections` on 2).
+
+On #129 to #131 and #139 to #142: these lines are in tests; can a
+session there sit unused for thirty minutes? It cannot. The seven
+lines are in sentry-sdk's tests of its mcp integration. Each test
+drives the app in process, sends its requests and ends; none sleeps or
+moves the clock, and none turns on the integration that would see the
+timer's task. The timeout is thirty minutes in 1.30.0 and in 2.2.0 (30
+* 60), a cancel scope armed per session. No run of these tests can
+tell the edited line from the unedited one, and the clause printed on
+every card, the grade is for this line in this project, makes that a
+no-op. The suggestion said correct because the library reads the pin
+and `None` gives back the old meaning, which is true of the library
+and not of these seven lines. The second reader's reading is the one
+consistent with how the pyarrow and the concat calls were read.
+
+On #154 and #155, his reason and his question: `max_connections` also
+changed, from 2 ** 31 to 100, and was not pinned; can these tests open
+more than 100 connections? They open none. Both of sentry-sdk's
+cluster test files replace the cluster's network calls with stand-ins
+in an autouse fixture (`NodesManager.initialize`, `execute_command`,
+the pipeline's `execute`). The two fixtures were copied and run under
+7.4.1 and 8.0.0, edited and unedited, sync and async: the same results
+in every run, no socket opened in any, and on the edited lines one
+thing more, the DeprecationWarning for `cluster_error_retry_attempts`.
+Nothing reads `max_connections` here, and nothing reads the pins
+either. By the same clause the four cluster calls of the 8.0 upgrade,
+#152 to #155, are no-ops that add a warning, not correct. The cards'
+reasons did not mention `max_connections`; he is right that they
+should have.
+
+On #198: with the edit, `--entity my-team` no longer takes the name;
+does click then stop with an error? wandb's command class was copied
+and run under click 8.2.1 and 8.3.0. Unedited, both versions take the
+name in all four sandbox commands. Edited under 8.3.0, `ls`, `sh` and
+`logs` stop with a usage error and exit status 2 ("Got unexpected
+extra argument (my-team)"; with `--entity=my-team`, "Option '--entity'
+does not take a value"). `exec`, which hands unknown words on to the
+command it runs, does not stop: it takes `my-team` for the sandbox id
+and leaves the entity None. Without `--entity` nothing changes. The
+suggestion was first wrong and was moved to unsafe on 19 Nov because
+nothing fails where the option is made. But the first question as
+printed also counts an error "as soon as what it builds is used", and
+what this line builds is the option: used, it is refused in three
+commands of four and misread in the fourth. That is the second
+reader's reading, wrong, and the runs bear it out. The `exec` case is
+to be told with it in the report, being the worse of the two because
+it is silent.
+
+On #199 and #200: where does `clf` come from; can a frozen classifier
+reach these lines? It is whatever the caller of wandb's
+`plot_calibration_curve` passes, and under scikit-learn 1.6 a
+FrozenEstimator can be passed; the unedited line would then use
+ensemble False and the edited one would force True. The criterion of
+19 Nov leaves that input out, as one that only the new version accepts
+and that has no old result to keep. Two things are owed here. That
+half of the third clause was not printed at the head of the readers'
+files, which gave only the half about environment variables; so the
+words above, "printed at the head of each reader's file", were not
+true of it, and the second reader could not have known it. And its
+cost was not said with the other three: were such an input counted,
+#199 and #200 would be unsafe. No-op stands on the two by the rule
+fixed before the reading.
+
+**What follows for the counts, and what is awaited.** If the second
+reader takes the criterion's reading on these, 15 of his calls change:
+#116 to #118 from correct to unsafe; #129 to #131, #139 to #142 and
+#152 to #155 from correct to no-op; #198 from unsafe to wrong. His
+half would then read correct 0, no-op 77, unsafe 16, wrong 7, and the
+200 together correct 6, no-op 164, unsafe 19, wrong 11, against the
+suggestions' 20, 153, 17 and 10. The 116 warnings would then lie on
+no-op 100 and unsafe 16, where they lay on no-op 96, unsafe 16 and
+correct 4. The withheld calls do not move, and the first reader's 115
+stand. Fourteen of the 15 take a correct away. The blind reading of 19
+Nov had read each of these kinds as the suggestion has it (#84 for the
+redis 8.0 client, #139, #152, #154, #198): it set the two versions of
+the library side by side, and did not ask whether the line's
+surroundings let the difference show (a test that never waits, a
+fixture that never connects) or what the default left unpinned does
+beside the pinned ones. A reader's questions found what the blind
+reading and the suggestions both missed, which is what the second
+reader is for. The verdicts are his to give. They are asked of him
+with these answers, and nothing is counted until they come.
+
+**The second reader's verdicts (26 Nov, 11:35).** His spreadsheet came
+back with the 15 calls changed as the entry of 24 Nov sets out, and
+with nothing else changed: #116 to #118 from correct to unsafe; #129
+to #131, #139 to #142 and #152 to #155 from correct to no-op; #198
+from unsafe to wrong; the other 100 grades, the suggestions and their
+reasons as in his first file. Beside each of the 15 he wrote his
+reason, dated 24 Nov, in his own words. So his 115: correct 0, no-op
+77, unsafe 16, wrong 7; justified 1, nothing needed 14. The record's
+note column carries his reason as he wrote it. On #154 the reason cell
+still holds the remark made with his first grade (that
+`max_connections` is not restored); the record keeps it and says in
+brackets that his reason for no-op is the one on #152, which he says
+applies to #152 to #155. His ten questions are not in the record; they
+are above, with their answers.
+
+**The working copy lost, and the sheet rebuilt (25 and 26 Nov).** The
+working copy on the Linux machine did not outlive 25 Nov, and with it
+went everything under data/eval there: the ten trees, the old and new
+versions, the 86 reports with counts.csv and the manifest, the sheet
+with the suggestions of 19 Nov and the first reader's verdicts, and
+the log of readings that the entry of 24 Nov names. None of it was
+ever committed, by the rule of 28 Oct, and as far as is known the raw
+reports were kept nowhere else. What that leaves, and what was done
+about it, in three parts.
+
+First, the run's counts stand as printed above, committed on 28 Oct
+(c0d6ea0); the reports themselves no longer exist. The run can be made
+again from this section: the ten trees are named above with their
+sizes and hashes, and the upgrades are §38.16's. Until it is, the two
+totals the record's summary needs (643 rewritten calls, 356 withheld)
+are taken from the table above, its ten per-sample rows written to a
+file of their own, and not from counts.csv.
+
+Second, the sheet was rebuilt on 26 Nov from two things that had been
+delivered and kept: the sheet of 28 Oct (the 230 drawn calls, each
+with its edit, its rule lines, both signatures and the context) and
+the two readers' card files of 19 Nov, which print every call's
+suggested grade and its reason. Checked: every card's head and place
+are its row's, 230 of 230; the suggestions tally as recorded on 19
+Nov, 20, 153, 17 and 10 with 1 and 29, by half 6, 87, 3, 4 and 14, 66,
+14, 6; the mark for a warning stands in 116 reasons (no-op 96, unsafe
+16, correct 4; 72 and 44 by half); and the reasons are, to the letter,
+the second reader's file's on all 115 of his calls and the first
+reader's spreadsheet's on the six compared (#1, #6, #12, #84, #85,
+#97).
+
+Third, the log of readings was a working file and is not rebuilt; the
+readers' own files hold what it held. The first reader's spreadsheet
+was read again on 26 Nov, at the revision it had on 23 Nov: 115
+grades, each the suggestion beside it, and one filled cell in its note
+column, the mark "graded 10 Nov" on #1, put there when the spreadsheet
+was built; the record carries it. The second reader's first answer is
+his file of 24 Nov, all 115 as suggested, and his last is the file of
+26 Nov.
+
+**Expected of the count, written before it (26 Nov).** By the two
+readers' files. Vaibhav: rewritten 100 read, correct 6, no-op 87,
+unsafe 3, wrong 4; withheld 15 read, nothing needed 15. Varad:
+rewritten 100 read, correct 0, no-op 77, unsafe 16, wrong 7; withheld
+15 read, justified 1, not justified 0, nothing needed 14. Together:
+200 of the 643 rewritten calls read and 443 unread, correct 6, no-op
+164, unsafe 19, wrong 11; 30 of the 356 withheld calls read, justified
+1, not justified 0, nothing needed 29. Warnings: 116 of the 200, on
+no-op 100 and unsafe 16. Fifteen verdicts differ from their
+suggestion, the 15 above. By rule: R1 acted on one call of the 200
+(#106, mlflow's `log_loss`, no-op), so R2's line is the total less
+that one: 199 read, correct 6, no-op 163, unsafe 19, wrong 11. The
+split by sample package is the result and is not guessed here.
+
+**The count (26 Nov, 11:43), as the script printed it:**
+
+```
+rewritten calls read: 200 of 643 (443 unread): correct 6, no-op 164, unsafe 19, wrong 11
+  R1: 1 read: correct 0, no-op 1, unsafe 0, wrong 0
+  R2: 199 read: correct 6, no-op 163, unsafe 19, wrong 11
+  (a call both rules rewrote counts once above and in both rules' lines)
+  dask: 49 read: correct 0, no-op 49, unsafe 0, wrong 0
+  imbalanced-learn: 24 read: correct 0, no-op 20, unsafe 0, wrong 4
+  langchain-community: 20 read: correct 6, no-op 11, unsafe 3, wrong 0
+  litellm: 8 read: correct 0, no-op 8, unsafe 0, wrong 0
+  mlflow: 5 read: correct 0, no-op 2, unsafe 3, wrong 0
+  prefect: 12 read: correct 0, no-op 0, unsafe 12, wrong 0
+  sentry-sdk: 42 read: correct 0, no-op 36, unsafe 0, wrong 6
+  snowflake-snowpark-python: 3 read: correct 0, no-op 2, unsafe 1, wrong 0
+  statsmodels: 34 read: correct 0, no-op 34, unsafe 0, wrong 0
+  wandb: 3 read: correct 0, no-op 2, unsafe 0, wrong 1
+withheld calls read: 30 of 356 (326 unread): justified 1, not justified 0, nothing needed 29
+Vaibhav: rewritten 100 read: correct 6, no-op 87, unsafe 3, wrong 4; withheld 15 read: justified 0, not justified 0, nothing needed 15
+Varad: rewritten 100 read: correct 0, no-op 77, unsafe 16, wrong 7; withheld 15 read: justified 1, not justified 0, nothing needed 14
+pins that add a warning under the new version: 116 of the 200 rewritten calls read: correct 0, no-op 100, unsafe 16, wrong 0 (counted beside the verdicts, never inside them)
+15 verdict(s) differ from the sheet's suggestion: #116, #117, #118, #129, #130, #131, #139, #140, #141, #142, #152, #153, #154, #155, #198
+docs/eval/verdicts.csv: 230 row(s)
+```
+
+Every line written before the count came out as written. The split by
+sample package was not guessed, and it is lopsided. All six correct
+verdicts lie in one package, langchain-community: #85, redis 8.0's
+protocol and timeouts against a real server in an integration test,
+and five tqdm calls (#88, #89, #90, #92, #93), three of which keep
+what 4.68.2 changed back on purpose. prefect's twelve are all unsafe,
+the nine pins of the library's name and the three partial pins. The
+eleven wrong are imbalanced-learn's four (values scikit-learn 1.6 to
+1.8 refuse), sentry-sdk's six (mcp's `version=None`) and wandb's one
+(click). By changed package, which the script does not print: pandas
+86 read, no-op 82, unsafe 4; redis 37, correct 1, no-op 21, unsafe 15;
+scikit-learn 23, no-op 19, wrong 4; mcp 15, no-op 9, wrong 6; tqdm 8,
+correct 5, no-op 3; typing-extensions 9, asyncpg 9, scipy 8, pyarrow 2
+and networkx 2, all no-op; click 1, wrong. The 17 calls whose rule
+line says "not pinned": no-op 13, unsafe 3, correct 1.
+
+**The record.** docs/eval/verdicts.csv: 230 rows and the 19 columns
+fixed on 23 Nov; the first twelve digits of its sha256 are
+15aaf097db43. It was checked apart from the script that wrote it,
+against the readers' own files: the columns, the 230 rows, the numbers
+1 to 230, the kinds and the readers by the split; on all 115 of the
+second reader's calls his verdict, the suggestion, its reason and the
+warning column as his file has them, and his note his reason as
+written; the first reader's 115 each the suggestion, the grades other
+than no-op as read from his spreadsheet; the suggestion and reason the
+card's on all 230; the call, its place and its rule lines the sheet of
+28 Oct's on all 230; a warning marked on 116 calls, all rewritten; R1
+on #106 alone; the totals above; no field holding a line break. The
+three evaluation tests give 11, 9 and 28.
+
+**Two commits, the code first.** On 26 Nov the public branch still
+stood at e0f81ca: the script and the test of 23 Nov had not been
+committed. They go first, with the .gitignore line, and the record and
+this section after them, so that the history shows the code before the
+record. Both commits bear 26 Nov or later; the order of the work is as
+this section tells it, not as their dates do.
+
+**For the report (26 Nov), as counts.** On the ten sample packages, 86
+runs on 28 Oct: 13,253 hits, 7,947 of them unverified; 643 calls
+rewritten (R1 1, R2 642), 356 withheld, 3 left to the user, 315
+needing nothing. Of the 200 rewritten calls read by the two readers
+under the criterion of 19 Nov: correct 6, no-op 164, unsafe 19, wrong
+11; 443 unread. Of the 200, 116 add a warning under the new version
+(no-op 100, unsafe 16), 71 of them in packages whose own tests turn
+warnings into errors. Of the 30 withheld calls read: justified 1, not
+justified 0, nothing needed 29; 326 unread. R1 was read on one call,
+and nothing is said of it beyond that. No rate is given without its
+two counts, and no recall is claimed (§38.6). What the 200 are: the
+draw of 28 Oct from a convenience sample. What the verdicts are: two
+authors' reading of suggestions that had themselves been read blind
+once, fifteen of them corrected by the second reader's questions.
