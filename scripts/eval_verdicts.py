@@ -11,8 +11,10 @@ Reads  data/eval/sheet.csv     scripts/eval_sheet.py's sheet with the
                                read calls are a part of
 Writes docs/eval/verdicts.csv  one row per read call: where it is, the
                                rule lines as printed and which rules acted,
-                               what the sheet suggested, the author's
-                               verdict and note; no source text
+                               what the sheet suggested and why, whether
+                               the pin adds a warning, the reader, his
+                               verdict and note; none of the sheet's
+                               source columns
 
 A rewritten call's verdict is one of correct, no-op, unsafe, wrong; a
 withheld call's one of justified, not justified, nothing needed (§38.6,
@@ -22,6 +24,14 @@ outside the lists is refused with the call's id. A rewritten call
 counts in the tally of every rule whose line under it says the rule
 acted ("R1, pass by name:" or "R2, pin the old default:"), so a call
 both rules rewrote counts twice, said so in the summary.
+
+Two readers read the sheet, by its numbers (the split of 19 Nov, NOTES
+§38.18): 1 to 100 and 201 to 215 the first, 101 to 200 and 216 to 230
+the second. The record names the reader of every call and a number
+outside the split is refused. A pin that adds a warning under the new
+version is marked in the sheet's reason ("[ADDS A WARNING"); a warning
+alone does not change a verdict, so the record says which calls carry
+one and the summary counts them beside the verdicts, never inside.
 """
 
 from __future__ import annotations
@@ -39,7 +49,11 @@ WORDS = {"rewritten": REWRITTEN, "withheld": WITHHELD}
 ACTED = {"R1": "R1, pass by name:", "R2": "R2, pin the old default:"}
 RECORD = ["id", "kind", "sample", "changed", "from", "to", "file", "line",
           "column", "confidence", "symbol", "rules", "rules_applied",
-          "suggested", "verdict", "note"]
+          "suggested", "reason", "adds_warning", "reader", "verdict", "note"]
+# the split of the reading by sheet number, fixed on 19 Nov (NOTES §38.18)
+READERS = (("Vaibhav", ((1, 100), (201, 215))),
+           ("Varad", ((101, 200), (216, 230))))
+WARNS = "[ADDS A WARNING"   # the sheet's mark in a reason
 
 
 class SheetError(Exception):
@@ -53,6 +67,24 @@ def normal(word: str) -> str:
 
 def valid(kind: str, verdict: str) -> bool:
     return normal(verdict) in WORDS.get(kind, ())
+
+
+def reader_of(call_id) -> str:
+    """Whose call it is by the split; a number outside it has no reader."""
+    try:
+        n = int(call_id)
+    except (TypeError, ValueError):
+        n = None
+    for name, spans in READERS:
+        if n is not None and any(lo <= n <= hi for lo, hi in spans):
+            return name
+    raise SheetError(f"#{call_id} is outside the split of the reading "
+                     "(1 to 230): it has no reader")
+
+
+def adds_warning(row: dict) -> bool:
+    """Whether the sheet marked the call's pin as adding a warning."""
+    return WARNS in (row.get("reason") or "")
 
 
 def rules_applied(row: dict) -> list[str]:
@@ -77,6 +109,7 @@ def read_sheet(path: pathlib.Path) -> list[dict]:
                 raise SheetError(
                     f"#{r['id']} ({r['file']}:{r['line']}) has the verdict "
                     f"{word!r}, not one of {', '.join(WORDS[r['kind']])}")
+            reader_of(r["id"])
             r["verdict"] = normal(word)
             rows.append(r)
     return rows
@@ -110,6 +143,41 @@ def summarise(rows: list[dict], total_rewritten: int,
     return out
 
 
+def summarise_readers(rows: list[dict]) -> dict:
+    """Each reader's counts, and the warnings beside the verdicts."""
+    out = {"by_reader": {}}
+    for name, _ in READERS:
+        mine = [r for r in rows if reader_of(r["id"]) == name]
+        wh = [r for r in mine if r["kind"] == "withheld"]
+        out["by_reader"][name] = {
+            "rewritten": _tally([r for r in mine
+                                 if r["kind"] == "rewritten"]),
+            "withheld": {"read": len(wh),
+                         **{w: sum(1 for r in wh if r["verdict"] == w)
+                            for w in WITHHELD}}}
+    rw = [r for r in rows if r["kind"] == "rewritten"]
+    warned = [r for r in rw if adds_warning(r)]
+    out["warnings"] = {"read": len(rw), "adding": len(warned),
+                       **{w: sum(1 for r in warned if r["verdict"] == w)
+                          for w in REWRITTEN}}
+    return out
+
+
+def print_readers(c: dict, out=sys.stdout) -> None:
+    for name, t in c["by_reader"].items():
+        rw, wh = t["rewritten"], t["withheld"]
+        print(f"{name}: rewritten {rw['read']} read: correct "
+              f"{rw['correct']}, no-op {rw['no-op']}, unsafe {rw['unsafe']}, "
+              f"wrong {rw['wrong']}; withheld {wh['read']} read: justified "
+              f"{wh['justified']}, not justified {wh['not justified']}, "
+              f"nothing needed {wh['nothing needed']}", file=out)
+    w = c["warnings"]
+    print(f"pins that add a warning under the new version: {w['adding']} "
+          f"of the {w['read']} rewritten calls read: correct {w['correct']}, "
+          f"no-op {w['no-op']}, unsafe {w['unsafe']}, wrong {w['wrong']} "
+          "(counted beside the verdicts, never inside them)", file=out)
+
+
 def print_summary(c: dict, out=sys.stdout) -> None:
     rw, wh = c["rewritten"], c["withheld"]
     print(f"rewritten calls read: {rw['read']} of {rw['total']} "
@@ -139,7 +207,9 @@ def write_record(rows: list[dict], path: pathlib.Path) -> None:
         w.writeheader()
         for r in rows:
             w.writerow({**{k: r.get(k, "") for k in RECORD},
-                        "rules_applied": "+".join(rules_applied(r))})
+                        "rules_applied": "+".join(rules_applied(r)),
+                        "adds_warning": "yes" if adds_warning(r) else "",
+                        "reader": reader_of(r["id"])})
 
 
 def totals(counts_csv: pathlib.Path) -> tuple[int, int]:
@@ -168,6 +238,7 @@ def main(argv=None) -> int:
     rw, wh = totals(args.counts)
     c = summarise(rows, rw, wh)
     print_summary(c)
+    print_readers(summarise_readers(rows))
     write_record(rows, args.record)
     overruled = [r for r in rows
                  if r.get("suggested")

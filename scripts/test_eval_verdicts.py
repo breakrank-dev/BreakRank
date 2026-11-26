@@ -20,6 +20,26 @@ four (or the three) is refused with the call's id; an empty verdict is
 refused as unread; a verdict is read whatever its case and spacing
 ("No-Op", "nothing  needed"). The record written has one row per read
 call and no context column. 6 checks.
+
+Since 23 Nov the record names the reader, carries the suggestion's
+reason and says which pins add a warning (NOTES §38.18). Expected,
+written BEFORE that code ran. The reader is the split's: sheet numbers
+1, 100, 201 and 215 are Vaibhav's, 101, 200, 216 and 230 Varad's, 0
+and 231 nobody's (refused by number). A reason holding the mark
+"[ADDS A WARNING" marks a pin that adds one; the same words without
+the mark do not. A second sheet of six read calls:
+  100 rewritten, no-op, reason with the mark      (Vaibhav)
+  101 rewritten, no-op, reason with the mark      (Varad)
+  102 rewritten, unsafe, reason with the mark     (Varad)
+  103 rewritten, correct, reason without it       (Varad)
+  215 withheld, nothing needed                    (Vaibhav)
+  216 withheld, justified                         (Varad)
+By reader: Vaibhav rewritten 1 read (no-op 1), withheld 1 read (nothing
+needed 1); Varad rewritten 3 read (correct 1, no-op 1, unsafe 1),
+withheld 1 read (justified 1). Warnings: 3 of the 4 rewritten calls
+read add one, no-op 2 and unsafe 1. The record's rows carry reader,
+reason and adds_warning ("yes" or empty). A sheet with call 231 is
+refused with its number. 5 checks more, 11 in all.
 """
 
 import csv
@@ -143,6 +163,98 @@ def main() -> None:
               (True, True))
         check("a withheld call cannot take a rewritten call's verdict",
               ev.valid("withheld", "correct"), False)
+
+        print("\nTHE READER, THE REASON AND THE WARNINGS (23 Nov)")
+
+        def refused_by_number(i):
+            try:
+                ev.reader_of(i)
+            except ev.SheetError as e:
+                return f"#{i}" in str(e)
+            return False
+
+        check("the reader of a call is the split's: 1, 100, 201 and 215 the "
+              "first reader's, 101, 200, 216 and 230 the second's; 0 and 231 "
+              "have none and are refused by number",
+              ([ev.reader_of(i)
+                for i in (1, 100, 201, 215, 101, 200, 216, 230)],
+               refused_by_number(0), refused_by_number(231),
+               ev.reader_of("101")),
+              (["Vaibhav"] * 4 + ["Varad"] * 4, True, True, "Varad"))
+        mark = ("3.0 warns when copy is passed "
+                "[ADDS A WARNING: pandas 3.0 warns]")
+        check("a pin that adds a warning is told by the mark in its reason "
+              "and by nothing else",
+              (ev.adds_warning({"reason": mark}),
+               ev.adds_warning({"reason": "it adds a warning, in words"}),
+               ev.adds_warning({"reason": ""}), ev.adds_warning({})),
+              (True, False, False, False))
+        two = [row(100, "rewritten", "pa", "x", R2, "no-op"),
+               row(101, "rewritten", "pa", "x", R2, "no-op"),
+               row(102, "rewritten", "pb", "y", R2, "unsafe"),
+               row(103, "rewritten", "pb", "y", R2, "correct"),
+               row(215, "withheld", "pa", "x", R1W, "nothing needed"),
+               row(216, "withheld", "pb", "y", R1W, "justified")]
+        for r in two[:3]:
+            r["reason"] = mark
+        sheet2 = tmp / "sheet2.csv"
+        write(two, sheet2)
+        rows2 = ev.read_sheet(sheet2)
+        by = ev.summarise_readers(rows2)
+        check("the counts by reader, and the warnings beside the verdicts: "
+              "3 of the 4 rewritten calls read add one",
+              by,
+              {"by_reader": {
+                  "Vaibhav": {
+                      "rewritten": {"read": 1, "correct": 0, "no-op": 1,
+                                    "unsafe": 0, "wrong": 0},
+                      "withheld": {"read": 1, "justified": 0,
+                                   "not justified": 0,
+                                   "nothing needed": 1}},
+                  "Varad": {
+                      "rewritten": {"read": 3, "correct": 1, "no-op": 1,
+                                    "unsafe": 1, "wrong": 0},
+                      "withheld": {"read": 1, "justified": 1,
+                                   "not justified": 0,
+                                   "nothing needed": 0}}},
+               "warnings": {"read": 4, "adding": 3, "correct": 0,
+                            "no-op": 2, "unsafe": 1, "wrong": 0}})
+        out2 = io.StringIO()
+        ev.print_readers(by, out2)
+        text2 = out2.getvalue()
+        check("the summary names each reader with his counts and gives the "
+              "warnings as counts over counts",
+              ("Vaibhav: rewritten 1 read: correct 0, no-op 1, unsafe 0, "
+               "wrong 0" in text2,
+               "Varad: rewritten 3 read: correct 1, no-op 1, unsafe 1, "
+               "wrong 0" in text2,
+               "withheld 1 read: justified 1, not justified 0, nothing "
+               "needed 0" in text2,
+               "add a warning under the new version: 3 of the 4 rewritten "
+               "calls read" in text2,
+               "%" in text2),
+              (True, True, True, True, False))
+        record2 = tmp / "verdicts2.csv"
+        ev.write_record(rows2, record2)
+        with record2.open(encoding="utf-8", newline="") as f:
+            back2 = list(csv.DictReader(f))
+        outside = tmp / "outside.csv"
+        write(two + [row(231, "rewritten", "pa", "x", R2, "no-op")], outside)
+        try:
+            ev.read_sheet(outside)
+            no_reader = None
+        except ev.SheetError as e:
+            no_reader = str(e)
+        check("the record names the reader, carries the reason and says "
+              "which calls add a warning; a call outside the split is "
+              "refused with its number",
+              ([(r["id"], r["reader"], r["adds_warning"], r["reason"] == mark)
+                for r in back2],
+               no_reader is not None and "#231" in no_reader),
+              ([("100", "Vaibhav", "yes", True), ("101", "Varad", "yes", True),
+                ("102", "Varad", "yes", True), ("103", "Varad", "", False),
+                ("215", "Vaibhav", "", False), ("216", "Varad", "", False)],
+               True))
 
     print("\n" + "=" * 60)
     if failures:
