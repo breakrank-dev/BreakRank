@@ -11083,3 +11083,201 @@ two counts, and no recall is claimed (§38.6). What the 200 are: the
 draw of 28 Oct from a convenience sample. What the verdicts are: two
 authors' reading of suggestions that had themselves been read blind
 once, fifteen of them corrected by the second reader's questions.
+
+**The run made again (26 Nov, 11:49 to 12:24).** To put back what was
+lost, and to see whether this section's counts can be had a second
+time, the 86 runs were repeated on the Linux machine the same morning,
+after the record above was built. The ten trees were pinned to the
+releases of 28 Oct, since the harness's resolve stage would otherwise
+take the newest of the day: PyPI's record of each of the ten versions
+was read and holds the same file, size, upload date and sha256 as the
+table above (161,743,529 bytes in all), and those records were written
+into the manifest before the stage ran. Nothing else was changed: the
+same harness; the tool at 0.1.0 from the tree at e0f81ca (the fixer
+package as it has been since 78e837a; the tree not clean, the scripts
+of 23 Nov and this file being uncommitted there); griffe 2.4.1 and
+libcst 1.9.0 as on 28 Oct, Python 3.13.18 for 3.13.17 and packaging
+26.4 for 26.3; the old and new versions by Python 3.12's pip. The
+plan: 86 runs over 39 old and 39 new versions, 38 of each from wheels
+and pyyaml 5.4.1 and 6.0 from their sdists, as before. The runs: 78
+ended with hits and 8 with none, none stopped, none timed out; 33.4
+minutes in all (40.3 on 28 Oct), the longest again statsmodels against
+pandas 2.3.3 -> 3.0.0, at 201 s. The counts: both tables above, by
+sample package and by changed package, came out the same in every
+cell. The draw, by the same two seeds: the same 230 calls; and the
+sheet built from it holds on all 230 rows the same 17 columns as the
+sheet of 28 Oct (the call, its place, the edit before and after, the
+rule lines, both signatures and the context), to the letter. So the
+reports exist again under data/eval, uncommitted as before, and the
+two totals of the record (643 and 356) are counts.csv's again. Two
+things the table above does not print, from the same counts.csv: of
+the 13,253 hits, 3,182 are resolved and 2,124 referenced, beside the
+7,947 unverified; and by rule, R1 rewrote 1 call, withheld 13 and
+found 524 needing nothing, while R2 pinned 642, withheld 344, left 3
+to the user and found 38 needing nothing.
+
+**The two commits (26 Nov).** 1f04001, at 11:53: the script, its test
+and the .gitignore line. b251ea2, at 12:44: the record and this
+section through "For the report". Both are on the public branch and
+were read back from it the same hour: the five files there are the
+ones built, to the byte, and the record's sha256 begins 15aaf097db43.
+The account of the run made again, above, was written after the file
+for b251ea2 had been sent and is not in it; it goes with the next
+commit.
+
+## 39. Counts and one check made on 27 Nov
+
+Made while the results were being put together for the review of 1 Dec.
+The first five are counts of something this notebook already holds, with
+no test behind them. The sixth is a check that was not in any rule fixed
+beforehand, and says so.
+
+**Used share by public depth, on the development data.** From the
+bundle, releases dated before 28 July 2026, `alias_user_count > 0`
+counted by `public_depth`:
+
+| public depth | changes | used | share |
+|---|---|---|---|
+| 1 | 868 | 233 | 26.8% |
+| 2 | 3,806 | 294 | 7.7% |
+| 3 | 5,199 | 57 | 1.1% |
+| 4 | 5,316 | 15 | 0.3% |
+| 5 | 648 | 6 | 0.9% |
+| 6 | 494 | 0 | 0.0% |
+| 7 | 249 | 0 | 0.0% |
+| all | 16,580 | 605 | 3.6% |
+
+It is §34's rule read as a table: the order the rule imposes is the
+order of these shares, except between depths 4 and 5. It is counted on
+the rows every comparison of §34 to §36 was made on and describes
+them; no test was fixed for it and none is claimed. The holdout's rows
+are not in it.
+
+**The guards broken for the two rewrite rules, added up.** §38.14's
+forty and §38.15's fifty-six make 96: 90 caught by a check, 2 that
+stopped the run, 4 equivalent.
+
+**The API's tests, counted.** On main at a1c11c1, `python -m pytest
+--collect-only -q` collects **49** tests in the five files under tests/:
+test_analyze.py 11, test_breakages.py 20, test_explanation.py 5,
+test_requirements_parser.py 11, test_startup.py 2. The full run on main
+the same day passed all 49. And 28 test scripts stand under scripts/ on
+ml/db-writer. *Corrected the same day:* the first count written here
+was 47 in four files. It was made by counting `def test_` in a file
+listing that had been cut short, and tests/test_startup.py was not in
+the listing. The run of the suite on main showed 49; the collection
+above confirms it by file.
+
+**The dataset's packages, against §20's table of the ingest.** §20
+accounts for the 500 packages of the fill: 314 with rows, 27 compared
+and clean, 159 that failed in one of four ways. The package table has
+351, ten more than 314 + 27, because it is not built from that log: it
+is every package in changes.csv (314) and every package in packages.csv
+that changes.csv does not have (37, F32's "37 that changed nothing",
+from the one run that also wrote releases.csv). Counted in the bundle:
+
+| | packages |
+|---|---|
+| with at least one change | 289 |
+| without a change, at least one release compared and clean | 54 |
+| without a change, no release compared | 8 |
+| all | 351 |
+
+The 54 are 25 + 29. Twenty-five are in changes.csv with nothing but
+version strings or metadata rows (314 - 289; §33.6's 1,815 rows not
+written took every row they had, and their releases were written
+analysed_clean). Twenty-nine are among F32's 37. The other 8 of the 37
+have releases and no comparison that succeeded: fastuuid, multiprocess,
+numpy, ruamel-yaml-clib, types-requests and types-toml (nine or ten
+releases each read analysis_failed, the rest no_baseline, no_source or
+yanked), playwright and psycopg-binary (no_source on all ten). So the
+37 are not §20's 27 plus its ten small failure rows, although 8 of
+them are packages of that kind; the two tables come from different
+runs and count different things.
+
+**The site's database beside the dataset.** For the record of which
+number is which: the dataset (changes.csv as loaded, and the bundle) is
+21,452 changes, 3,204 releases, 351 packages, analysed_clean 1,531. The
+table on Neon after §33.10 is 25,490 changes and 3,851 releases,
+analysed_clean 1,756: the same load plus the 4,038 aged-out rows of
+earlier loads and their releases (§8, §13.2). Every result of §24 to
+§36 and of §38 is on the dataset. A sentence about what the site can
+say (how many releases it can call clean) is about the table.
+
+**The locate step on the 230 read calls, checked by a second script.**
+§38.18's verdicts say whether an edit was right. They do not say
+whether the call is to the function the tool named, and nothing in
+§38.6 or §38.18 asked. This check was added on 27 Nov, after the
+reading; no rule for it was fixed before its first count was seen, and
+it is recorded as that.
+
+`scripts/eval_locate_check.py` imports nothing from fixer/. For each row
+of docs/eval/verdicts.csv it finds the call with `ast` at the record's
+line and column, follows the called name through the file's imports
+(and through the sample package's own re-exports) to a dotted path,
+follows that path through the library's re-exports in
+data/eval/old/<package>-<from> (griffe, `allow_inspection=False`) to
+where the function or class is defined, and compares the definition's
+path with the record's symbol. For an `__init__` the class's own or
+inherited `__init__` is looked up along its bases. A method on an object
+is settled only where the object comes from a constructor of a library
+class: the call is chained on it, or the object was assigned by a
+`name = Class(...)` statement that always runs before the call, with no
+other binding of the name that can reach the call. Anything else is
+left "by hand" with the reason.
+
+Result: **224 confirmed, 6 left by the script.** Of the 224, 195 are
+calls through an imported name, 20 are methods on an object assigned
+from the constructor and 9 are chained on the constructor. The six are
+sheet numbers 201 to 206, all `pdf.groupby(...)` in dask's
+`test_split_apply_combine_on_series`
+(dask/dataframe/tests/test_groupby.py, lines 478 to 663). `pdf` is bound
+twice there, in the two branches of `if empty:`, as
+`pd.DataFrame(...).iloc[:0]` (line 480) and as `pd.DataFrame(...)` (line
+486), and nowhere else in the function. A row slice through `.iloc` is
+a DataFrame (pandas 2.3.3: core/indexing.py 1766 returns
+`self.obj._slice(...)`, and `_slice`, core/generic.py 4383, builds its
+result with `_constructor_from_mgr`), so all six are
+`pandas.core.frame.DataFrame.groupby`, read by hand. **In all 230 calls
+the call is to the function the tool named.**
+
+How the count came about, in order. A first version of the script took
+the nearest earlier assignment for an object's class and confirmed all
+230. That rule cannot see a second binding in another branch or in a
+loop, so it was replaced by the stricter rule above before anything was
+written down, and the stricter rule is what left the six for reading.
+The self-test came after the first count: `--selftest` plants 28 calls
+in a made-up library and project, 9 right ones beside 19 look-alikes
+(the project's own function or class of the same name, another class
+with the same method, the asyncio twin of a class, a parameter, a name
+bound again in sequence, in a branch, in a loop, by a loop variable or
+twice at module level, two imports that disagree, a tuple assignment, a
+function's result, a record that points at no call). What each must
+give is written beside it in the script and was written before the
+self-test's first run, which gave 28 of 28.
+
+For 154 of the 230 calls the library defines another function or class
+with the record's last name (redis.client.Redis and
+redis.asyncio.client.Redis; pandas' concat and Styler.concat), so a
+match on the name alone would not have settled them.
+
+What it does not show. Only the record's calls are looked at, and all
+230 are `resolved` calls: nothing is said about the 7,947 unverified
+hits or about calls the tool missed, and no recall is claimed, as in
+§38.18. The library is read with griffe on both sides, so the check is
+separate from the fixer's code and not from griffe. It ran in the Linux
+environment, where data/eval/trees and data/eval/old are (the fetch and
+old stages of scripts/eval_run.py make them), in about a minute, on
+Python 3.13.18 with griffe 2.4.1, and again on Python 3.12 with griffe
+2.2.0, the oldest the repository allows: the same status and the same
+path on every one of the 230 rows, and 28 of 28 in the self-test. The
+self-test alone was also run on the Mac the same evening, which has no
+trees: 28 of 28.
+
+```
+python scripts/eval_locate_check.py --selftest
+python scripts/eval_locate_check.py
+```
+
+It writes data/eval/locate_check.csv, one row per call, which is not
+committed (data/ is ignored).
