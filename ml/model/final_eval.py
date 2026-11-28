@@ -35,6 +35,16 @@ A second look is sometimes right: a bug found in metrics.py, say. It is
 never invisible. data/ is not committed, so the ledger is a local record;
 the block this script prints at the end goes into NOTES, which is.
 
+WHAT IT REPORTS FIRST (NOTES §36.2). Path length alone ships, so its
+numbers on the holdout lead: PR-AUC, its lift over popularity with the
+paired interval, and precision@10 and nDCG@20 with theirs. The model is
+fitted and scored beside it, as what was tried, with its lift over path
+length. Every number averages over the order of tied scores
+(metrics.CONVENTION), and the ledger row says so; it also carries path
+length's numbers, in columns added on 11 Oct, before the holdout was
+ever opened. A ledger written by older code has other columns, and this
+script stops before writing to it rather than misalign it.
+
 KEEP IT IN STEP WITH train.py. It must fit exactly what train.py ships.
 When F7 (tuning) changes how train.py fits, this file changes in the same
 commit. F2 did: --relevance defaults to train.SHIPPED_RELEVANCE, the same
@@ -60,8 +70,9 @@ from ml.holdout import (FROZEN_ON, GROUP, HOLDOUT_FILE,  # noqa: E402
                         HOLDOUT_START, MIN_POSITIVES, MIN_RANKABLE_PAIRS,
                         assert_no_holdout, fingerprint, holdout_mask, track)
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import (DRAWS, evaluate, intervals,  # noqa: E402
-                              n_rankable, ndcg_at_k, tie_averaged)
+from ml.model.metrics import (CONVENTION, DRAWS,  # noqa: E402
+                              evaluate, intervals, n_rankable, ndcg_at_k,
+                              tie_averaged)
 from ml.model.train import (COUNT_OF, RELEVANCE,  # noqa: E402
                             SHIPPED_RELEVANCE, SHIPPED_TUNING, TUNING,
                             fit_cv, graded_gain, prepare, relevance_problem,
@@ -200,21 +211,27 @@ def main() -> None:
 
     # linear (F8) is printed and goes in the NOTES block, not the ledger.
     names = ["model", "linear", "popularity", "kind_prior", "semver",
-             "griffe_all"]
+             "griffe_all", "path"]
     res = {n: evaluate(scored, n, label) for n in names}
     m, pop, sem = res["model"], res["popularity"], res["semver"]
+    # NOTES §36.2: path length alone ships, so its numbers lead, with the
+    # intervals the model's have, paired with popularity's.
+    pth = res["path"]
+    pci = intervals(scored, label, "path", "popularity")
+    path_lift = (pth["pr_auc"] / pop["pr_auc"] if pop["pr_auc"]
+                 else float("nan"))
+    tie = tie_averaged(scored, label)
     floor = float(hold[label].mean())
     pos = int(hold[label].sum())
     r10, r20 = n_rankable(scored, label, 10), n_rankable(scored, label, 20)
     # nDCG@20 with graded gains (F2), for either kind of model: printed
-    # below and in the NOTES block, not in the ledger, whose columns stay
-    # as they were so no earlier row is left misaligned.
+    # below and in the NOTES block, not in the ledger.
     ndcg_g = (ndcg_at_k(scored.assign(_gain=graded_gain(scored, label)),
                         "model", label, 20, gain="_gain")
               if COUNT_OF[label] in scored else None)
     # F11: the interval on each number, over the holdout's upgrades with
     # the model held fixed. Printed and put in the NOTES block; like
-    # ndcg_g, not in the ledger, whose columns stay as they were.
+    # ndcg_g, not in the ledger.
     ci = intervals(scored, label, "model", "popularity")
     changes = len(hold.drop_duplicates(GROUP + ["symbol"]))
     pairs = len(hold[GROUP].drop_duplicates())
@@ -252,8 +269,20 @@ def main() -> None:
         "rankable10": r10,
         "ndcg_at_20": round(m["ndcg_at_20"], 6),
         "rankable20": r20,
+        "convention": CONVENTION,
+        "ranker": "path",
+        "path_pr_auc": round(pth["pr_auc"], 6),
+        "path_lift_vs_pop": round(path_lift, 4),
+        "path_precision_at_10": round(pth["precision_at_10"], 6),
+        "path_ndcg_at_20": round(pth["ndcg_at_20"], 6),
         "reason": args.again or "first opening",
     }
+    if LEDGER.exists() and list(prior.columns) != list(row):
+        sys.exit(f"{LEDGER} has other columns than this script writes: it "
+                 "was written by code from\nbefore 11 Oct (NOTES §36.2). "
+                 "Nothing was written and no number was shown.\nKeep that "
+                 "file aside and run this again; the earlier openings stay "
+                 "in it.")
     pd.DataFrame([row]).to_csv(LEDGER, mode="a", index=False,
                                header=not LEDGER.exists())
 
@@ -276,7 +305,16 @@ def main() -> None:
     print()
     print(f"  floor (positive rate)   {floor:.4f}   ({pos} positives, "
           f"{changes:,} changes in {pairs:,} upgrades)")
-    for n in names:
+    print("  every number averages over the order of tied scores "
+          f"({CONVENTION})")
+    print("\n  PATH LENGTH ALONE, THE RANKER THAT SHIPS (NOTES §36.2)")
+    print(f"  path         PR-AUC     {pth['pr_auc']:.4f}   95% interval "
+          f"{pci['pr_auc'][0]:.4f} to {pci['pr_auc'][1]:.4f}")
+    print(f"  lift over popularity    {path_lift:.2f}x   95% interval "
+          f"{pci['lift'][0]:.2f} to {pci['lift'][1]:.2f}")
+    print(f"  path vs floor           {pth['pr_auc'] / floor:.1f}x")
+    print("\n  THE MODEL, WHICH WAS TRIED, BESIDE IT")
+    for n in [x for x in names if x != "path"]:
         print(f"  {n:<12} PR-AUC     {res[n]['pr_auc']:.4f}"
               + (f"   95% interval {ci['pr_auc'][0]:.4f} to "
                  f"{ci['pr_auc'][1]:.4f}" if n == "model" else
@@ -285,6 +323,8 @@ def main() -> None:
                  else ""))
     print(f"\n  lift over popularity    {lift:.2f}x   95% interval "
           f"{ci['lift'][0]:.2f} to {ci['lift'][1]:.2f}")
+    print(f"  lift over path length   {tie['lift_path']:.2f}x   95% interval "
+          f"{tie['ci_path'][0]:.2f} to {tie['ci_path'][1]:.2f}")
     print(f"  model vs floor          {m['pr_auc'] / floor:.1f}x")
     print(f"  beats semver (the gate) "
           f"{'yes' if m['pr_auc'] > sem['pr_auc'] else 'NO'}")
@@ -300,6 +340,11 @@ def main() -> None:
                      "it only with that n, as an anecdote.")
         return text
 
+    print("\n  within an upgrade, path length (the ranker that ships):")
+    print(per_pair("precision@10", pth["precision_at_10"], r10,
+                   pci["precision_at_10"]))
+    print(per_pair("nDCG@20", pth["ndcg_at_20"], r20, pci["ndcg_at_20"]))
+    print("  and the model:")
     print(per_pair("precision@10", m["precision_at_10"], r10,
                    ci["precision_at_10"]))
     print(per_pair("nDCG@20", m["ndcg_at_20"], r20, ci["ndcg_at_20"]))
@@ -322,30 +367,30 @@ def main() -> None:
     if moved:
         print(f"  Against the frozen list of {moved['frozen_pairs']} pairs: "
               f"{moved['gone']} gone, {moved['added']} added.")
-    print(f"  PR-AUC {m['pr_auc']:.4f} (95% interval {ci['pr_auc'][0]:.4f}"
-          f"-{ci['pr_auc'][1]:.4f}) vs popularity {pop['pr_auc']:.4f}: "
-          f"{lift:.2f}x ({ci['lift'][0]:.2f}-{ci['lift'][1]:.2f});")
+    print(f"  Every number averages over the order of tied scores. Path "
+          f"length alone, the ranker\n  that ships (§36.2): PR-AUC "
+          f"{pth['pr_auc']:.4f} ({pci['pr_auc'][0]:.4f}-"
+          f"{pci['pr_auc'][1]:.4f}) vs popularity {pop['pr_auc']:.4f}: "
+          f"{path_lift:.2f}x ({pci['lift'][0]:.2f}-{pci['lift'][1]:.2f});\n"
+          f"  precision@10 {pth['precision_at_10']:.4f} "
+          f"({pci['precision_at_10'][0]:.4f}-{pci['precision_at_10'][1]:.4f})"
+          f" over {r10} upgrades; nDCG@20 {pth['ndcg_at_20']:.4f} "
+          f"({pci['ndcg_at_20'][0]:.4f}-{pci['ndcg_at_20'][1]:.4f}) over "
+          f"{r20}.")
+    print(f"  The model, which was tried: PR-AUC {m['pr_auc']:.4f} (95% "
+          f"interval {ci['pr_auc'][0]:.4f}-{ci['pr_auc'][1]:.4f}), "
+          f"{lift:.2f}x popularity ({ci['lift'][0]:.2f}-"
+          f"{ci['lift'][1]:.2f})\n  and {tie['lift_path']:.2f}x path length "
+          f"({tie['ci_path'][0]:.2f}-{tie['ci_path'][1]:.2f}); "
+          f"precision@10 {m['precision_at_10']:.4f} "
+          f"({ci['precision_at_10'][0]:.4f}-{ci['precision_at_10'][1]:.4f}),"
+          f" nDCG@20 {m['ndcg_at_20']:.4f} "
+          f"({ci['ndcg_at_20'][0]:.4f}-{ci['ndcg_at_20'][1]:.4f})"
+          + (f", {ndcg_g:.4f} with graded gains." if ndcg_g is not None
+             else "."))
     print(f"  semver {sem['pr_auc']:.4f}; the line (logistic regression, "
           f"same features) {res['linear']['pr_auc']:.4f}. {changes:,} "
           f"changes in {pairs} upgrades; intervals resample upgrades.")
-    # F42 (NOTES §35) and F41 (§34): the same with every PR-AUC's ties
-    # averaged, and path length alone, which is only ever taken that way.
-    # Printed and in the NOTES block, not in the ledger.
-    tie = tie_averaged(scored, label)
-    print(f"  With ties averaged (F42): PR-AUC {tie['model']:.4f} vs "
-          f"popularity {tie['popularity']:.4f}, {tie['lift_pop']:.2f}x "
-          f"({tie['ci_pop'][0]:.2f}-{tie['ci_pop'][1]:.2f});\n  path "
-          f"length alone {tie['path']['pr_auc']:.4f}, "
-          f"{tie['lift_path']:.2f}x ({tie['ci_path'][0]:.2f}-"
-          f"{tie['ci_path'][1]:.2f}), its nDCG@20 "
-          f"{tie['path']['ndcg_at_20']:.4f} against the model's "
-          f"{m['ndcg_at_20']:.4f}.")
-    print(f"  precision@10 {m['precision_at_10']:.4f} "
-          f"({ci['precision_at_10'][0]:.4f}-{ci['precision_at_10'][1]:.4f}) "
-          f"over {r10} upgrades; nDCG@20 {m['ndcg_at_20']:.4f} "
-          f"({ci['ndcg_at_20'][0]:.4f}-{ci['ndcg_at_20'][1]:.4f}) over {r20}"
-          + (f" ({ndcg_g:.4f} with graded gains)." if ndcg_g is not None
-             else "."))
 
 
 if __name__ == "__main__":

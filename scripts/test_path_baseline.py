@@ -379,63 +379,60 @@ def case_scripts(tmp: pathlib.Path) -> None:
     if p.returncode:
         print(out[-2500:])
         return
-    head = re.search(r"with ties averaged \(F42\): model PR-AUC ([0-9.]+), "
-                     r"popularity ([0-9.]+), path length alone ([0-9.]+)",
-                     out)
-    block = out.split("with ties averaged (F42)")[-1]
-    lifts = {name: re.search(name + r"\s+([0-9.]+)x\s+([0-9.]+)x to "
-                             r"([0-9.]+)x", block)
-             for name in ("lift over popularity", "lift over path length")}
-    check("it prints the tie-averaged block, each lift inside its own "
-          "interval",
-          (bool(head), all(m and float(m.group(2)) <= float(m.group(1))
-                           <= float(m.group(3)) for m in lifts.values())),
-          (True, True))
-    table = re.search(r"^model\s+([0-9.]+)\s", out, re.M)
-    check("the model's scores tie in this fixture, so the table's ordinary "
-          "PR-AUC and the block's differ",
-          bool(head and table and table.group(1) != head.group(1)), True)
-    if head and all(lifts.values()):
-        check("and each lift is the block's own ratio, to two places",
-              [abs(float(head.group(1)) / float(head.group(i))
-                   - float(lifts[n].group(1))) < 0.006
-               for i, n in ((2, "lift over popularity"),
-                            (3, "lift over path length"))], [True, True])
+    feats = pd.read_csv(tmp / "data" / "features.csv")
+    test = feats[feats["split"] == "test"]
+    path_ap = round(average_precision_ties(test[LABEL], -test["public_depth"]),
+                    4)
+    block = out.split("the ranker that ships (NOTES §36.2), on the same test "
+                      "half:")[-1]
+    lines = {name: re.search(name + r"\s+([0-9.]+)x?\s+([0-9.]+)x? to "
+                             r"([0-9.]+)x?", block)
+             for name in ("PR-AUC", "lift over popularity", "precision@10",
+                          "nDCG@20", "the model over it")}
+    check("train.py prints path length's block (NOTES §36.2): its four "
+          "numbers and the model's lift over it, each inside its interval",
+          all(m and float(m.group(2)) <= float(m.group(1))
+              <= float(m.group(3)) for m in lines.values()), True)
+    check("its PR-AUC there is path's on the test half, ties averaged, "
+          "which the test works out from features.csv alone",
+          lines["PR-AUC"] and round(float(lines["PR-AUC"].group(1)), 3),
+          round(path_ap, 3))
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",
                          typ="series")["notes"]
-    found = re.search(r"pr_auc_ties=([0-9.]+) lift_vs_popularity_ties="
-                      r"([0-9.]+)x lift_ties_95=([0-9.]+)-([0-9.]+) "
-                      r"path=([0-9.]+) lift_vs_path=([0-9.]+)x "
+    found = re.search(r"path=([0-9.]+) lift_vs_path=([0-9.]+)x "
                       r"lift_vs_path_95=([0-9.]+)-([0-9.]+)", notes)
-    check("model_run's notes carry them all", bool(found), True)
-    if found and head and all(lifts.values()):
-        pl = lifts["lift over path length"]
-        pp = lifts["lift over popularity"]
+    check("model_run's notes carry path's PR-AUC and the model's lift over "
+          "it, and say the convention",
+          (bool(found), "convention=ties-averaged" in notes), (True, True))
+    if found and lines["the model over it"]:
+        pl = lines["the model over it"]
         check("the same numbers as printed",
-              (found.group(1), found.group(2), found.group(3),
-               found.group(4), found.group(5), found.group(6),
-               found.group(7), found.group(8)),
-              (head.group(1), pp.group(1), pp.group(2), pp.group(3),
-               head.group(3), pl.group(1), pl.group(2), pl.group(3)))
+              (float(found.group(1)), found.group(2), found.group(3),
+               found.group(4)),
+              (path_ap, pl.group(1), pl.group(2), pl.group(3)))
 
     p = subprocess.run([sys.executable, str(ROOT / "ml/model/final_eval.py"),
                         "--unseal", "--tuning", "fixed"], cwd=tmp,
                        capture_output=True, text=True, timeout=900)
     out = p.stdout + p.stderr
     hold = pd.read_csv(tmp / "data" / "holdout.csv")
-    said = re.search(r"path length alone ([0-9.]+),", out)
+    said = re.search(r"that ships \(§36.2\): PR-AUC ([0-9.]+) ", out)
     check("final_eval.py's path PR-AUC is path's on the holdout, ties "
           "averaged",
           said and float(said.group(1)),
           round(average_precision_ties(hold[LABEL],
                                        -hold["public_depth"]), 4))
-    check("final_eval.py puts the tie-averaged numbers and path length "
-          "alone in its NOTES block",
+    check("final_eval.py leads its NOTES block with path length, the model "
+          "beside it with its lift over path length",
           (p.returncode, bool(re.search(
-              r"With ties averaged \(F42\): PR-AUC [0-9.]+ vs popularity "
-              r"[0-9.]+, [0-9.]+x \([0-9.]+-[0-9.]+\);\n  path length alone "
-              r"[0-9.]+, [0-9.]+x \([0-9.]+-[0-9.]+\), its nDCG@20 [0-9.]+ "
-              r"against the model's [0-9.]+\.", out))), (0, True))
+              r"Path length alone, the ranker\n  that ships \(§36.2\): "
+              r"PR-AUC [0-9.]+ \([0-9.]+-[0-9.]+\) vs popularity [0-9.]+: "
+              r"[0-9.]+x \([0-9.]+-[0-9.]+\);\n  precision@10 [0-9.]+ "
+              r"\([0-9.]+-[0-9.]+\) over \d+ upgrades; nDCG@20 [0-9.]+ "
+              r"\([0-9.]+-[0-9.]+\) over \d+\.\n  The model, which was "
+              r"tried: PR-AUC [0-9.]+ \(95% interval [0-9.]+-[0-9.]+\), "
+              r"[0-9.]+x popularity \([0-9.]+-[0-9.]+\)\n  and [0-9.]+x "
+              r"path length \([0-9.]+-[0-9.]+\);", out))), (0, True))
 
 
 def case_rule() -> None:
@@ -583,8 +580,9 @@ def case_files(tmp: pathlib.Path) -> None:
               (True, True, False))
     (tmp / "sweep.csv").unlink()
     code, out = verdict_on(tmp)
-    check("refused: no sweep at all, with the command that makes one",
-          (code != 0, "stability.py --at " + ",".join(DATES) in out),
+    check("refused: no sweep at all, naming the sweep kept aside that the "
+          "rule was applied to",
+          (code != 0, "stability_label_alias_cv_tuned_at-20261010.csv" in out),
           (True, True))
 
 

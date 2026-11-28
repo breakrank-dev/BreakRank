@@ -115,7 +115,7 @@ def sweep(df: pd.DataFrame, cuts=None, relevance: str | None = None,
     sized.clear()
 
     def stand_in(df, q, label, feats, objective, stopping="cv",
-                 relevance="binary", tuning="fixed"):
+                 relevance="binary", tuning="fixed", contest=False):
         fitted.append(q)
         taught.append(relevance)
         sized.append(tuning)

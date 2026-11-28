@@ -71,7 +71,7 @@ from ml.features.build import (BOOLEAN, CATEGORICAL, NUMERIC,  # noqa: E402
 from ml.holdout import (GROUP, HOLDOUT_START, assert_no_holdout,  # noqa: E402
                         drop_holdout)
 from ml.model import train as T  # noqa: E402
-from ml.model.metrics import ndcg_at_k  # noqa: E402
+from ml.model.metrics import CONVENTION, ndcg_at_k  # noqa: E402
 
 PASS, FAIL = "  ok  ", "  FAIL"
 failures = []
@@ -337,9 +337,12 @@ def case_scripts(tmp: pathlib.Path, lab: pd.DataFrame) -> None:
 
     # Two quantile sweeps train.py could quote, told apart by their size.
     stamp = str(HOLDOUT_START.date())
+    # Stamped with the convention train.py quotes from 11 Oct (NOTES
+    # §36.2); the stamp this file tests is the relevance.
     sweep = pd.DataFrame({"cut": ["2026-04-01", "2026-05-01", "2026-06-01"],
                           "skipped": False, "lift_vs_pop": [2.5, 2.7, 2.9],
-                          "beats_pop": True, "holdout_from": stamp})
+                          "beats_pop": True, "holdout_from": stamp,
+                          "convention": CONVENTION})
     sweep.assign(relevance="graded").to_csv(
         data / "stability_label_alias_cv_graded.csv", index=False)
     sweep.head(2).assign(relevance="binary").to_csv(

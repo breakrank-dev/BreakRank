@@ -12,9 +12,22 @@ The default relevance is SHIPPED_RELEVANCE below; NOTES §25 says how
 item 3 decides it.
 
 Reads  data/features.csv         (must have a `split` column)
+       data/stability_*.csv      the sweeps whose range model_run quotes
 Writes artifacts/ranker.txt      the model
        artifacts/metrics.json    a `model_run` row, ready for the database
        artifacts/importance.csv  which features did the work
+       artifacts/path_metrics.json  path length's `model_run` row: the
+                                 ranker that ships (NOTES §36.2)
+
+WHAT SHIPS (NOTES §36.2). Item 15's rule found that neither this model
+nor a two-feature one beats path length alone, shortest public import
+path first, with nothing fitted, so the site serves path length and the
+report quotes its numbers. This script still fits the model: its scores
+stay in the database as the fallback, and the report says it was tried.
+Beside it, on the same test half, it measures path length with the
+intervals the model's numbers have, and writes its model_run row
+(ml/model/ship.py names it). Every number takes one convention from 11
+Oct, metrics.CONVENTION: ties averaged over every order of them.
 
 LEARNING TO RANK, NOT CLASSIFICATION, and the difference is the product.
 A classifier answers "will this change break someone?" one row at a time.
@@ -62,9 +75,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import HOLDOUT_START, assert_no_holdout  # noqa: E402
 from ml.model.baselines import add_baseline_scores  # noqa: E402
-from ml.model.metrics import (DRAWS, compare, evaluate,  # noqa: E402
-                              intervals, n_rankable, ndcg_at_k,
+from ml.model.metrics import (CONVENTION, DRAWS, compare,  # noqa: E402
+                              evaluate, intervals, n_rankable, ndcg_at_k,
                               tie_averaged)
+from ml.model.ship import (PATH_METRICS, REFERENCE_DATES,  # noqa: E402
+                           path_version)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -216,6 +231,91 @@ def stability_name(label: str, stopping: str, objective: str = "lambdarank",
             + ("_graded" if relevance == "graded" else "")
             + ("_tuned" if tuning == "cv" else "")
             + ("_at" if at else "") + ".csv")
+
+
+def quotable(stab: pathlib.Path, relevance: str, tuning: str,
+             rerun: str) -> pd.DataFrame | None:
+    """The measured rows of a sweep whose range a model_run row may carry
+    into its notes, or None, with a note printed saying why not.
+
+    A stability file written BEFORE the holdout froze scored every cut on
+    test halves that ran to the end of the data, holdout rows included.
+    Quoting it would carry pre-freeze numbers into model_run and on to the
+    site. stability.py stamps each row with the boundary it ran under; a
+    file without the stamp, or with a different one, is stale and is not
+    quoted.
+
+    The same goes for what the sweep's models were taught. A range
+    measured on binary models says nothing about a graded one, and the
+    reverse, so each row also says its relevance (a file written before
+    item 3 has none, and was binary), and how its trees were sized (F7; a
+    file from before item 7 has none, and was fixed). A mismatch in either
+    is not quoted.
+
+    And, from 11 Oct, how its ties were counted (NOTES §36.2). A file
+    without `convention` took scikit-learn's PR-AUC and one fixed order of
+    tied scores, and the row it would go into averages over every order of
+    them, so it is not quoted either."""
+    if not stab.exists():
+        print(f"note: {stab} not found, so no row quotes its range. Run "
+              f"{rerun} first.")
+        return None
+    st = pd.read_csv(stab, dtype={"cut": str})
+    fresh = ("holdout_from" in st and len(st) > 0 and
+             (st["holdout_from"].astype(str)
+              == str(HOLDOUT_START.date())).all())
+    if not fresh:
+        print(f"note: {stab} predates the holdout freeze, so its cuts "
+              "included holdout rows.\nNot quoted. Re-run "
+              f"{rerun}, then this script.")
+        return None
+    taught = (st["relevance"].astype(str) if "relevance" in st
+              else pd.Series("binary", index=st.index))
+    if not taught.eq(relevance).all():
+        print(f"note: {stab} was measured on models with "
+              f"{', '.join(sorted(set(taught)))} relevance, and this one "
+              f"is {relevance}.\nNot quoted. Re-run {rerun}, then "
+              "this script.")
+        return None
+    sized = (st["tuning"].astype(str) if "tuning" in st
+             else pd.Series("fixed", index=st.index))
+    if not sized.eq(tuning).all():
+        kinds = ", ".join(sorted(set(sized)))
+        print(f"note: {stab} was measured on {kinds}-tuned models, and "
+              f"this one is {tuning}.\nNot quoted. Re-run {rerun}, "
+              "then this script.")
+        return None
+    counted = (st["convention"].astype(str) if "convention" in st
+               else pd.Series("(none)", index=st.index))
+    if not counted.eq(CONVENTION).all():
+        print(f"note: {stab} was measured before 11 Oct, with scikit-learn's "
+              "PR-AUC and one fixed\norder of tied scores, and this row "
+              "averages over every order of them (NOTES §36.2).\nNot "
+              f"quoted. Re-run {rerun}, then this script.")
+        return None
+    st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
+    if st.empty:
+        print(f"note: {stab} has no usable splits, so no row quotes its "
+              "range.")
+        return None
+    return st
+
+
+def range_note(st: pd.DataFrame, lift: str, beats: str, low: str) -> str:
+    """What a model_run row's notes say of a sweep: at how many of its cut
+    dates the ranker beats popularity, the median and range of its lift,
+    and at how many the lower end of the lift's 95% interval is above
+    1.0x. A sweep from before item 5 has no intervals, and then nothing is
+    said of them rather than their absence read as zero."""
+    v = st[lift].astype(float)
+    wins = int(st[beats].astype(bool).sum())
+    note = (f" | across {len(st)} cut dates: beats popularity "
+            f"{wins}/{len(st)}, lift vs popularity median "
+            f"{v.median():.2f}x min {v.min():.2f}x max {v.max():.2f}x")
+    if low in st and st[low].notna().all():
+        clear = int((st[low].astype(float) > 1).sum())
+        note += f", lift's 95% interval above 1.0x at {clear}/{len(st)}"
+    return note
 
 
 def group_sizes(df: pd.DataFrame) -> np.ndarray:
@@ -718,26 +818,35 @@ def main() -> None:
               "their own features.\n** NOTES §29 says what that does to the "
               "report.")
 
-    # F42 (NOTES §35): every PR-AUC above takes sklearn's convention, which
-    # scores a run of tied scores as one threshold. The same numbers with
-    # ties averaged, paired the same way, beside them; and F41 (§34), path
-    # length alone, which ties on most rows and is only ever taken this
-    # way. Read here; path is ruled on at seven dates by
-    # scripts/path_verdict.py.
+    # NOTES §36.2: path length alone ships. Its numbers on this test half,
+    # with the intervals the model's have: every one of them paired with
+    # popularity's on the same resamples, and precision@10 and nDCG@20 over
+    # the same upgrades. Then the model's lift over it, as what was tried.
+    # Every number in this script averages over the order of tied scores
+    # (metrics.CONVENTION), so the two are on one scale.
     tie = tie_averaged(scored, label)
-    m_ties, pth = tie["model"], tie["path"]
-    print(f"\nwith ties averaged (F42): model PR-AUC {m_ties:.4f}, "
-          f"popularity {tie['popularity']:.4f}, path length alone "
-          f"{pth['pr_auc']:.4f}")
-    print(f"  {'lift over popularity':<22}{tie['lift_pop']:>6.2f}x   "
-          f"{tie['ci_pop'][0]:.2f}x to {tie['ci_pop'][1]:.2f}x")
-    print(f"  {'lift over path length':<22}{tie['lift_path']:>6.2f}x   "
+    pth = evaluate(scored, "path", label)
+    pci = intervals(scored, label, "path", "popularity")
+    lift_path_pop = pth["pr_auc"] / pop if pop else float("nan")
+    print("\npath length alone, the ranker that ships (NOTES §36.2), on the "
+          "same test half:")
+    for name, v, (lo, hi), fmt, n in (
+            ("PR-AUC", pth["pr_auc"], pci["pr_auc"], "{:.3f}", None),
+            ("lift over popularity", lift_path_pop, pci["lift"], "{:.2f}x",
+             None),
+            ("precision@10", pth["precision_at_10"], pci["precision_at_10"],
+             "{:.3f}", r10),
+            ("nDCG@20", pth["ndcg_at_20"], pci["ndcg_at_20"], "{:.3f}",
+             r20)):
+        print(f"  {name:<22}{fmt.format(v):>7}   {fmt.format(lo)} to "
+              f"{fmt.format(hi)}" + (f"   over {n} upgrades" if n else ""))
+    print(f"  {'the model over it':<22}{tie['lift_path']:>6.2f}x   "
           f"{tie['ci_path'][0]:.2f}x to {tie['ci_path'][1]:.2f}x   "
-          "(shortest import path first, nothing fitted)")
-    print(f"  path length alone, within an upgrade: precision@10 "
-          f"{pth['precision_at_10']:.4f} (model {m['precision_at_10']:.4f}),"
-          f" nDCG@20 {pth['ndcg_at_20']:.4f} (model "
-          f"{m['ndcg_at_20']:.4f})")
+          "(PR-AUC: what was tried)")
+    if not pci["lift"][0] > 1:
+        print("** Path length's interval over popularity reaches 1.0x: on "
+              "some draws of test\n** upgrades it does not beat popularity. "
+              "Say so beside the number.")
 
     ART.mkdir(exist_ok=True)
     model.booster_.save_model(str(ART / "ranker.txt")) if hasattr(
@@ -785,6 +894,7 @@ def main() -> None:
     floor = float(test[label].mean())
     notes = (f"label={label} objective={args.objective} "
              f"relevance={args.relevance} tuning={args.tuning} "
+             f"convention={CONVENTION} "
              + (f"setting={setting_text(model.tuned_['params'])} "
                 if tuned else "") +
              f"stopping={args.stopping} trees={best} test_rows={len(test)} "
@@ -798,9 +908,6 @@ def main() -> None:
              f"linear={lin:.4f} lift_vs_linear={lift_lin:.2f}x "
              f"lift_vs_linear_95={ci_lin['lift'][0]:.2f}-"
              f"{ci_lin['lift'][1]:.2f} "
-             f"pr_auc_ties={m_ties:.4f} "
-             f"lift_vs_popularity_ties={tie['lift_pop']:.2f}x "
-             f"lift_ties_95={tie['ci_pop'][0]:.2f}-{tie['ci_pop'][1]:.2f} "
              f"path={pth['pr_auc']:.4f} "
              f"lift_vs_path={tie['lift_path']:.2f}x "
              f"lift_vs_path_95={tie['ci_path'][0]:.2f}-"
@@ -822,70 +929,13 @@ def main() -> None:
                 if args.objective != "lambdarank" else "")
              + (" --relevance graded" if graded else "")
              + (" --tuning cv" if tuned else ""))
-    # A stability file written BEFORE the holdout froze scored every cut on
-    # test halves that ran to the end of the data, holdout rows included.
-    # Quoting it here would carry pre-freeze numbers into model_run and on
-    # to the site. stability.py now stamps each row with the boundary it
-    # ran under; a file without the stamp, or with a different one, is
-    # stale and is not quoted.
-    #
-    # The same goes for what the sweep's models were taught. A range
-    # measured on binary models says nothing about a graded one, and the
-    # reverse, so each row also says its relevance (a file written before
-    # item 3 has none, and was binary) and a mismatch is not quoted either.
-    fresh = False
-    if not stab.exists():
-        print(f"note: {stab} not found, so this model_run row will carry a "
-              f"single-cut\nnumber with no range. Run {rerun} first.")
-    else:
-        st = pd.read_csv(stab)
-        fresh = ("holdout_from" in st and len(st) > 0 and
-                 (st["holdout_from"].astype(str)
-                  == str(HOLDOUT_START.date())).all())
-        taught = (st["relevance"].astype(str) if "relevance" in st
-                  else pd.Series("binary", index=st.index))
-        if not fresh:
-            print(f"note: {stab} predates the holdout freeze, so its cuts "
-                  "included holdout rows.\nNot quoted. Re-run "
-                  f"{rerun}, then this script.")
-        elif not taught.eq(args.relevance).all():
-            fresh = False
-            print(f"note: {stab} was measured on models with "
-                  f"{', '.join(sorted(set(taught)))} relevance, and this one "
-                  f"is {args.relevance}.\nNot quoted. Re-run {rerun}, then "
-                  "this script.")
-        # And how its trees were sized (F7). A file from before item 7 has
-        # no stamp and was fixed.
-        sized = (st["tuning"].astype(str) if "tuning" in st
-                 else pd.Series("fixed", index=st.index))
-        if fresh and not sized.eq(args.tuning).all():
-            fresh = False
-            kinds = ", ".join(sorted(set(sized)))
-            print(f"note: {stab} was measured on {kinds}-tuned models, and "
-                  f"this one is {args.tuning}.\nNot quoted. Re-run {rerun}, "
-                  "then this script.")
-    if fresh:
-        st = st[~st["skipped"].astype(bool)] if "skipped" in st else st
-        if not st.empty:
-            lift = st["lift_vs_pop"].astype(float)
-            wins = int(st["beats_pop"].astype(bool).sum())
-            # "popularity", not best_base: both columns in the stability
-            # file are measured against popularity. Naming whichever
-            # baseline won THIS split put a claim nobody measured into a
-            # row the site prints, as soon as kind_prior won one.
-            notes += (f" | across {len(st)} cut dates: beats popularity "
-                      f"{wins}/{len(st)}, lift vs popularity median "
-                      f"{lift.median():.2f}x min {lift.min():.2f}x "
-                      f"max {lift.max():.2f}x")
-            # A sweep from before item 5 has no intervals; say nothing
-            # about them rather than read their absence as zero.
-            if "lift_lo" in st and st["lift_lo"].notna().all():
-                clear = int((st["lift_lo"].astype(float) > 1).sum())
-                notes += (f", lift's 95% interval above 1.0x at "
-                          f"{clear}/{len(st)}")
-        else:
-            print("note: stability file has no usable splits; the model_run "
-                  "row will carry a single-cut number with no range.")
+    st = quotable(stab, args.relevance, args.tuning, rerun)
+    if st is not None:
+        # "popularity", not best_base: both columns in the stability file
+        # are measured against popularity. Naming whichever baseline won
+        # THIS split put a claim nobody measured into a row the site
+        # prints, as soon as kind_prior won one.
+        notes += range_note(st, "lift_vs_pop", "beats_pop", "lift_lo")
 
     # positive_rate IS A TOP-LEVEL FIELD, not just a phrase inside notes.
     # It has been in the notes string since day 5 — recoverable only by
@@ -900,6 +950,66 @@ def main() -> None:
     print(f"\nartifacts/metrics.json — this is your model_run row:\n"
           f"{json.dumps(run, indent=2)}")
 
+    # PATH LENGTH'S ROW (NOTES §36.2), the ranker the site serves: its own
+    # numbers on this test half with their intervals, the model beside it,
+    # and its lift over popularity across the sweeps' dates. Those are the
+    # thirteen of the report: the quantile sweep's own dates and the seven
+    # reference dates of the --at sweep, a date the two share counted once.
+    # Path length is fitted on nothing, so the same row comes out whatever
+    # this run fits (`model=` in its notes names the run it was written
+    # beside); its name says its label (ship.path_version), so another
+    # label's numbers never land in the row the site serves. Every --at
+    # sweep writes the same file, so the _at file is quoted only when it
+    # holds exactly the seven reference dates.
+    stab_at = DATA / stability_name(label, args.stopping, args.objective,
+                                    args.relevance, at=True,
+                                    tuning=args.tuning)
+    at_rerun = rerun + " --at " + ",".join(REFERENCE_DATES)
+    at = quotable(stab_at, args.relevance, args.tuning, at_rerun)
+    if at is not None and sorted(at["cut"].astype(str)) != sorted(
+            REFERENCE_DATES):
+        print(f"note: {stab_at} was cut at "
+              f"{', '.join(sorted(at['cut'].astype(str)))}, not the seven "
+              "reference dates,\nso path length's row does not quote it. "
+              f"Run {at_rerun}, then this script.")
+        at = None
+    ship_cols = ["path_lift_vs_pop", "path_beats_pop", "path_lift_lo"]
+    found = [x for x in (st, at) if x is not None
+             and all(c in x for c in ship_cols)
+             and x[ship_cols].notna().all().all()]
+    p_notes = (f"ranker=path length alone (minus public_depth, nothing "
+               f"fitted) label={label} convention={CONVENTION} "
+               f"test_rows={len(test)} positive_rate={floor:.4f} "
+               f"holdout_from={HOLDOUT_START.date()} "
+               f"test_changes={n_changes} test_upgrades={n_upgrades} "
+               f"pr_auc_95={pci['pr_auc'][0]:.4f}-{pci['pr_auc'][1]:.4f} "
+               f"popularity={pop:.4f} "
+               f"lift_vs_popularity={lift_path_pop:.2f}x "
+               f"lift_95={pci['lift'][0]:.2f}-{pci['lift'][1]:.2f} "
+               f"precision_at_10_95={pci['precision_at_10'][0]:.4f}-"
+               f"{pci['precision_at_10'][1]:.4f} rankable10={r10} "
+               f"ndcg_at_20_95={pci['ndcg_at_20'][0]:.4f}-"
+               f"{pci['ndcg_at_20'][1]:.4f} rankable20={r20} "
+               f"model={version}:{m['pr_auc']:.4f} "
+               f"model_over_path={tie['lift_path']:.2f}x "
+               f"model_over_path_95={tie['ci_path'][0]:.2f}-"
+               f"{tie['ci_path'][1]:.2f}")
+    if found:
+        dates = (pd.concat(found, ignore_index=True)
+                 .drop_duplicates("cut", keep="first"))
+        p_notes += range_note(dates, *ship_cols)
+    else:
+        print("note: no sweep here carries path length's lift over "
+              "popularity, so its model_run row\nwill carry a single-cut "
+              f"number with no range. Run {rerun}\nand {at_rerun}, then "
+              "this script.")
+    prun = {"version": path_version(label),
+            **{k: round(v, 6) for k, v in pth.items()},
+            "positive_rate": round(floor, 6), "notes": p_notes}
+    PATH_METRICS.write_text(json.dumps(prun, indent=2))
+    print(f"\n{PATH_METRICS} — path length's model_run row, the ranker the "
+          f"site serves:\n{json.dumps(prun, indent=2)}")
+
     print(f"\nHow to say this out loud, with all three numbers:\n"
           f"  PR-AUC {m['pr_auc']:.3f}, against a floor of {floor:.3f} "
           f"(the positive rate)\n"
@@ -910,6 +1020,11 @@ def main() -> None:
         print("\n** The model does NOT beat its own baseline. Do not report "
               "this as a\n** result. Fix the model or report the baseline "
               "as the finding.")
+    print(f"\nAnd for the ranker that ships, path length alone (NOTES "
+          f"§36.2):\n  PR-AUC {pth['pr_auc']:.3f}, against the same floor "
+          f"of {floor:.3f}: {pth['pr_auc'] / floor:.1f}x the floor and "
+          f"{lift_path_pop:.1f}x popularity\n  ({pci['lift'][0]:.1f}x to "
+          f"{pci['lift'][1]:.1f}x over resampled upgrades).")
 
 
 if __name__ == "__main__":

@@ -43,8 +43,9 @@ Six baselines, weakest first:
                with nothing fitted. The ablation found the two
                reachability features matching all 17 (§32.3); this is
                the rule anyone could write down from that, and the one an
-               examiner will ask about. Most of its scores tie, so its
-               PR-AUC is always taken with ties averaged (F42, §35).
+               examiner will ask about. Most of its scores tie, and
+               every number averages over the order of the ties (F42,
+               F44). It ships (NOTES §36.2).
 
 All six are scored on the TEST half only, with the same metrics the
 ranker will use, so the comparison is like for like.
@@ -62,7 +63,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC  # noqa: E402
 from ml.holdout import assert_no_holdout  # noqa: E402
-from ml.model.metrics import compare, evaluate, n_rankable  # noqa: E402
+from ml.model.metrics import (CONVENTION, compare, evaluate,  # noqa: E402
+                              n_rankable)
+from ml.model.ship import path_scores  # noqa: E402
 
 DATA = pathlib.Path("data")
 FEATURES = DATA / "features.csv"
@@ -154,8 +157,8 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
                         label: str) -> pd.DataFrame:
     test = test.copy()
 
-    # Constant: no information at all. Ties are broken randomly in metrics.py,
-    # which is what "no ranking" honestly means.
+    # Constant: no information at all. metrics.py averages every number
+    # over the order of the ties, which is what "no ranking" honestly means.
     test["griffe_all"] = 1.0
 
     # astype(str) before each map below. train.py and final_eval.py pass
@@ -182,13 +185,11 @@ def add_baseline_scores(train: pd.DataFrame, test: pd.DataFrame,
     test["linear"] = linear_scores(train, test, label)
 
     # F41. Shortest import path first: nothing fitted, so train plays no
-    # part. A row with no depth scores as the deepest. Most rows tie:
-    # precision@10 and nDCG@20 break ties by metrics.py's fixed random
-    # order, as for every baseline, and its PR-AUC is taken with ties
-    # averaged (metrics.average_precision_ties, F42).
-    depth = pd.to_numeric(test["public_depth"], errors="coerce")
-    deepest = depth.max() if depth.notna().any() else 0
-    test["path"] = -depth.fillna(deepest).astype(float)
+    # part. A row with no depth scores as the deepest in this frame. Most
+    # rows tie, and every number averages over the order of the ties
+    # (metrics.CONVENTION). It ships (NOTES §36.2); ship.path_scores is
+    # the one definition, here and on the site.
+    test["path"] = path_scores(test)
 
     return test
 
@@ -215,7 +216,8 @@ def main() -> None:
 
     test = add_baseline_scores(train, test, args.label)
 
-    names = ["griffe_all", "semver", "popularity", "kind_prior", "linear"]
+    names = ["griffe_all", "semver", "popularity", "kind_prior", "linear",
+             "path"]
     results = {n: evaluate(test, n, args.label) for n in names}
 
     print(f"\nlabel: {args.label}")
@@ -253,21 +255,19 @@ def main() -> None:
     print(f"strongest baseline: {best} at {results[best]['pr_auc']:.4f}")
     print(f"the line (logistic regression, the ranker's {len(LINEAR_FEATS)} "
           f"features): {results['linear']['pr_auc']:.4f}")
-    # F41 and F42 (NOTES §34, §35): with ties averaged, which path needs
-    # and every tied baseline will move to.
-    tied = {n: evaluate(test, n, args.label, ties=True)["pr_auc"]
-            for n in ("path", "popularity", "kind_prior", "semver")}
-    print("with ties averaged (F42): path length alone (shortest import "
-          f"path first, F41) {tied['path']:.4f},\n  popularity "
-          f"{tied['popularity']:.4f}, kind_prior {tied['kind_prior']:.4f}, "
-          f"semver {tied['semver']:.4f}")
+    # Every number above averages over the order of the ties (F42, F44):
+    # path length alone, the ranker that ships (NOTES §36.2), among them.
+    print(f"path length alone (shortest import path first, the ranker that "
+          f"ships): {results['path']['pr_auc']:.4f}")
     print(f"\n** The ranker has to beat {results[best]['pr_auc']:.4f} PR-AUC "
           f"to be worth shipping. **")
     print(f"** The kill-date gate is the semver line: "
           f"{results['semver']['pr_auc']:.4f}. **")
 
     out = DATA / f"baselines_{args.label}.csv"
-    pd.DataFrame(results).T.to_csv(out)
+    # Stamped, as sweep rows are (NOTES §36.3): an older file under this
+    # name took the old convention and has no stamp.
+    pd.DataFrame(results).T.assign(convention=CONVENTION).to_csv(out)
     print(f"\nsaved -> {out}")
 
 

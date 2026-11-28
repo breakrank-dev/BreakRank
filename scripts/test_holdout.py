@@ -71,6 +71,7 @@ sys.path.insert(0, str(ROOT))
 from ml.features.build import add_features  # noqa: E402
 from ml.holdout import (GROUP, HOLDOUT_START, MIN_POSITIVES,  # noqa: E402
                         MIN_RANKABLE_PAIRS, holdout_mask, split_off)
+from ml.model.metrics import CONVENTION  # noqa: E402
 
 PASS, FAIL = "  ok  ", "  FAIL"
 failures = []
@@ -513,8 +514,8 @@ def case_serving(tmp: pathlib.Path) -> None:
           (True, False))
     # Control: the same file WITH the stamp is quoted, so the check above
     # fails if train.py simply stopped quoting stability files at all.
-    sweep.assign(holdout_from=str(HOLDOUT_START.date())).to_csv(
-        stab, index=False)
+    sweep.assign(holdout_from=str(HOLDOUT_START.date()),
+                 convention=CONVENTION).to_csv(stab, index=False)
     code, out = run("ml/model/train.py", tmp, "--label", "label",
                     "--tuning", "fixed")
     notes = pd.read_json(tmp / "artifacts" / "metrics.json",

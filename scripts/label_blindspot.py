@@ -97,8 +97,12 @@ def report(name: str, test: pd.DataFrame, label: str) -> dict | None:
               "reported badly")
         return None
 
-    m = evaluate(test, "model", label)
-    pop = evaluate(test, "popularity", label)
+    # By the convention §11.6 was measured on (scikit-learn's PR-AUC, one
+    # fixed order of tied scores), so a run here reads against its record.
+    # From 11 Oct every shipped number averages over the order of ties
+    # (NOTES §36.2); this script re-measures an older result.
+    m = evaluate(test, "model", label, ties=False, expected=False)
+    pop = evaluate(test, "popularity", label, ties=False, expected=False)
 
     # PR-AUC is computed across every row, so it survives here. The floor
     # is the positive rate, and vs-floor is the one ratio that means the

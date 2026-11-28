@@ -2992,8 +2992,9 @@ Each of the first four both fixes a defect AND raises the headline.
 13. F22 + F24 — symbol age, days-since-previous-release. Re-run. (Likely [better].)
 14. F23 — changelog TF-IDF. The book's biggest skipped item.
 15. F25 + F26 — the classifier comparison; one real-release story.
-   *[10 Oct: F25 is now which model ships, if any, against path length
-   alone, which the model did not beat (§34.2). Next, with its own rule.]*
+   *[10 Oct: F25 is now which ranker ships, against path length alone,
+   which the model did not beat (§34.2). Its rule is §36.1. 11 Oct:
+   path length alone ships (§36.2).]*
 16. F28 + F29 (Varad) — real count on the frontend; move the API off Render or add keep-alive. Before any live demo.
 
 Items 1–5 are about a week and turn the project from "good student
@@ -5314,7 +5315,7 @@ break, the binary curves, is used by almost nobody.
 Varad answered on 9 Oct. The all-clear (F15, item 12) is decided by the
 pipeline, his option (b), once F1 has been changed in two ways. §33.1 was
 written and pushed before `scripts/version_count.py` read the real data.
-The count goes in §33.2, and the retrain in §33.3.
+The count goes in §33.2, the retrain in §33.3 and the load in §33.4.
 
 ### 33.1 The rule, fixed before the count
 
@@ -5617,6 +5618,844 @@ package, is 16th.
 §31.2's coda stands: the label measures use, not breakage, and
 PBKDF2HMAC's change of kind is probably a reimplementation.
 
+### 33.4 The load (10 Oct)
+
+From c2fa88f: `lambdarank-label_alias-tuned` re-loaded under its own
+name, 21,452 scores (replacing 21,440), all written 2026-10-10. The 12
+rows that came back hold scores now, and by the narrowed rules
+version-string rows with a score read 0, package-metadata rows 0.
+trained_at is unchanged (2026-10-05), so the API needed no restart, and
+/health named the model. model_run's pr_auc reads 0.2938, scikit-learn's
+convention, until evaluate()'s default moves (§35.1); the report's
+number is 0.289. The rest is 9 Oct's: 23,267 breakage rows sent, 27,900
+in the table, 232 releases with no status the files can establish, and
+F32's four packages on which releases.csv and changes.csv disagree.
+
+### 33.5 The database, step 3 of §33.1: 'unknown', the rows the loader stops writing, the deletion step (12 Oct). The rule, fixed before the run
+
+Varad applied migration 007 on 12 Oct: `release.analysis_status` accepts
+`unknown` and it is the column's default. Written before any of it ran,
+and pushed first. Nothing here adds, renames or drops a column; tables,
+the key, the upsert and the scores stay as they are.
+
+**What the loader writes from this round (ml/db.py).**
+
+1. **A release the files cannot establish is written as `unknown`.**
+   That is a release changes.csv names only as the older side of a pair
+   and releases.csv gives no usable row for (§14's agreement rule, in
+   release_plan): 232 of them on 9 Oct (§33.4). Until now the loader
+   wrote them with no status, a new row took the column's default,
+   `analysed` before 007, and the site read "diffed, changes found, 0
+   changes" for a release nobody compared; 007's own comment names the
+   232. From today they are written `unknown`, n_changes 0, where the
+   database's CHECK accepts the value, which the loader reads from the
+   constraint as before. On a row already in the table, `unknown`
+   replaces only the pair `analysed` with n_changes 0, which was never a
+   verdict but the old default on a row written without one; a real
+   status (analysed_clean, no_baseline, analysis_failed, no_source,
+   yanked) stays, since an earlier load's files established it and
+   today's merely do not. On a database without 007 the loader writes no
+   status for them, as before, and says so. After the release upsert the
+   load counts the rows still reading `analysed` with 0 changes, which
+   should be 0, or name releases outside today's files, each of which is
+   then looked at (cryptography 48.0.1, Varad's question of 12 Oct, is
+   either one of the 232 or one of these).
+2. **The loader stops writing the rows F1 and F39 take out of the
+   model.** build.py's own two functions decide, `version_strings()` and
+   `metadata_strings()` (§33.1, §32.1), from the symbol, the kind and
+   griffe's explanation: the functions build.py drops by before any
+   feature is computed, and db_model_check.py counts by. A release left
+   with nothing is written **analysed_clean with n_changes 0**: it was
+   diffed, and what the diff found was its version string, which is not
+   a change. n_changes counts the rows written, once per database key
+   (`written_counts`): griffe reports pygments' `CppLexer.tokens` twice
+   for one release and the loader drops the second before the insert
+   (§8), so until today that release's n_changes was one more than its
+   rows; now the count is the rows the table holds, which is also what
+   the deletion step recounts to. The agreement check between
+   releases.csv and changes.csv (release_plan) still compares the
+   ingest's own counts, which include those rows, because both files came
+   from the ingest; only what is written changes. Expected from today's
+   files: 1,815 rows fewer than changes.csv holds (§33.2's count, made
+   on labelled.csv, which has changes.csv's rows) and 895 releases
+   analysed_clean that read `analysed` today (§33.2's all-clear, the
+   holdout's 160 among them).
+3. **The dry run says the same**: the rows it would not write, by rule,
+   and the releases it would write as unknown. **db_extras.py** (read
+   only) builds "what we sent" from the same rows, so after the deletion
+   step it does not report 1,815 rows as sent and missing; the ones still
+   in the table it counts on a line of their own.
+
+**What the deletion step removes (scripts/db_drop_versions.py, new).**
+Every breakage row already in the table that the same two rules mark,
+reading `symbol_path`, `kind` and `detail.griffe_message`, whichever load
+wrote it: the rows of today's files and the rows of earlier loads alike,
+since the rule is about what a row is, not which run wrote it. Not the
+rows of the package `breakrank-fixture`, which are Varad's (§8.1, §13.3);
+they are counted and left. With a row go its prediction rows, which are
+earlier models' (path length's and the model's current scores exclude
+these rows: 0 and 0 in db_model_check on 10 and 12 Oct, §33.4, §36.4).
+In the same transaction every release that lost rows has n_changes
+recounted from the table, and one left with none and reading `analysed`
+becomes analysed_clean, as the loader would write it. The script's
+default is a dry run of SELECTs only, which prints the count by rule and
+by name, its share of the table, the releases affected and the ones left
+with nothing, and the predictions by model version. `--expect N` deletes,
+and only when N is the count the script computes at that moment, so the
+number Varad read is the number that goes; any other N stops it before
+the transaction opens. What to expect: at least §33.2's 1,815, since
+those rows are in the table, plus the same kind of row from earlier
+loads, so between 1,815 and about 2,800 of the 27,900, 6.5% to 10%. A
+count outside that bracket means the rule read something the two
+functions would not, and the run stops there. The order on Neon: the dry
+run; its output to Varad; a Neon branch made as the restore point; the
+delete with `--expect`; then `python ml/db.py` without `--scores`, since
+the scores stand, which writes the 232 as unknown and the counts the
+table now has; then db_prune's dry run. db_prune's 5% guard is untouched,
+because none of this went through it.
+
+**db_prune.py** names the rows the deletion step is for as a category of
+its own, counted and never deleted there. Until today it could not see
+them: the ones in today's changes.csv counted as "ours" and were skipped
+without a word, and the ones from earlier loads were split between
+superseded and aged out (an independent review of this section checked
+the first wording, which said a dry run would have refused at 6.5%, and
+found it false: against a scratch table holding the 62 rows of a test
+dataset, the old db_prune read "would delete 0 rows"). It reads the
+explanation from the table for that. **db_model_check.py** counts them in
+the whole table too, not only among the rows with a score, so the
+deletion's effect is one number: 0 after.
+
+**Tested by** `scripts/test_db_loader.py`, three cases added (9 to 11,
+23 checks): the rows not written and the release left clean, with the
+agreement check on the ingest's counts and n_changes once per key, on a
+second fixture that has one row of each kind the rule distinguishes (a
+changed `__version__`, a module's changed `version`, a changed
+`__copyright__`, a removed `__version__`, a `version` changed to `unset`,
+a class's `VERSION`, and that one reported twice under one key); the dry
+run on a file of nothing but version strings; the `unknown` upsert with
+007, without it, and without 005; and check_schema reading the CHECK
+constraint, assuming `unknown` only when it names it. And
+`scripts/test_db_drop.py`, new, seven cases and 34 checks: the rule
+applied to rows as the table holds them, a row with no explanation
+included (a dunder goes on its name, a bare `VERSION` stays); the fixture
+skipped and counted; the plan (which releases lose rows, which are left
+with none, and that a `no_baseline` release left with none does not
+become clean); the transaction's order and the guard on the clean
+update; `--expect` (none: a dry run that opens no transaction; wrong:
+refused before one opens; right: deletes and reads the table again; an
+empty table: nothing opened); db_prune's category, first whatever else
+the row is, the fixture's rows left in the aged-out group as before; and
+db_extras's count, reading the griffe message out of `detail` as a dict,
+a string or nothing. Both files pass on pandas 2.2.3 and 3.0.2.
+Thirty-seven guards were broken on purpose, twenty in the loader, twelve
+in the deletion step, three in db_prune and two in db_extras, and each
+turned a check to FAIL; two first made the test crash instead, and the
+test was changed to fail cleanly. The independent review also found the
+rows of this section's first draft that the code did not match: the
+second fixture had no module-level `version` whose value changed to
+another value, db_extras had not been changed and would have reported
+every row the loader stopped writing as "sent and not in the table", the
+dry run crashed on a file of nothing but version strings, and n_changes
+counted a duplicate key twice; each is fixed above and tested.
+
+**And against a real Postgres**, the whole sequence, on a 7,874-row
+dataset made for it (dbint's synthetic changes.csv with griffe-shaped
+explanations and 71 rows added: 51 version strings, 11 metadata strings
+and 9 that look like them and stay; 7 of the 62 are all that 6 new
+releases have): migrations 001 to 006, the old loader (5811d22), which
+wrote 486 releases, 60 of them `analysed` with 0 changes, and 7,874
+rows; then by hand what Neon has and the files do not: a
+`breakrank-fixture` release with a version string among its rows, two
+releases from an earlier load with one such row each (`analysed` and
+`no_baseline`), and an earlier model's 1,176 scores, 58 of them on such
+rows; then migration 007. On that table: db_prune's dry run read 64
+in the new category, 2 aged (the fixture's), 0 to delete;
+db_model_check 52 version-string and 12 metadata rows in the table; the
+deletion step's dry run 64 (0.8% of 7,878), 48 releases losing rows, 8
+left with none, 7 of them to become clean; `--expect 63` refused with
+nothing deleted; `--expect 64` deleted 58 predictions and 64 rows,
+recounted 48 releases, 7 now analysed_clean, and read 0 marked rows
+after. What stayed is exactly the 9 that should (removed `__version__`s,
+`Config.VERSION`s, `version` to `unset`, removed `__author__`s) and the
+fixture's. Then the loader: 60 `analysed`/0 became `unknown`, the 6
+only-a-version-string releases were written analysed_clean, every
+release's n_changes equals its rows in the table, the earlier-load
+`analysed` release reads analysed_clean and the `no_baseline` one still
+`no_baseline`; a second load changed nothing. And the upsert's CASE on
+its own: an unknown release set by hand to `no_baseline` stayed, one set
+to `analysed`/0 became `unknown`, one set to analysed_clean stayed. The
+sequence was run three times, the last on the code delivered, and once
+more by the independent review on a server and a dataset of its own,
+rebuilt from the same script byte for byte, with the same numbers every
+time; db_extras before the deletion step read 2 rows not sent (the
+fixture's) and 64 the loader no longer writes, 0 sent and missing, and
+after it 2 and 0. The Neon runs go in §33.6.
+
+### 33.6 The runs on Neon (13 and 15 Oct)
+
+Code: 1fbf7ba (§33.5, pushed first), 1b9c854 (the loader, the deletion
+step, db_prune, db_extras, db_model_check and the two test files), both
+13 Oct after all 20 test files passed on the Mac; b6ae484 (15 Oct,
+`scripts/db_drop_split.py`, read only, for Varad's question below).
+Everything below was run from the Mac against production, in the order
+§33.5 fixed, and every number it predicted came out as predicted.
+
+**The dry runs, 13 Oct, read only.** The deletion step: 27,900 rows in
+the table; **2,336 marked** (8.4%), 2,270 version strings and 66
+package-metadata strings; by name `__version__` 1,924, `version` 140,
+`VERSION` 120, `version_tuple` 45, `__version_tuple__` 36,
+`__version_info__` 18, `__copyright__` 13, `__date__` 12; no
+`breakrank-fixture` row among them; 1,812 releases lose rows, 1,131 are
+left with none, 1,120 of those read `analysed`; the prediction rows on
+them are two old runs', lambdarank-label_alias 58 and
+lambdarank-label_scoped 1,465, none path length's or the tuned
+fallback's. Inside §33.5's bracket of 1,815 to about 2,800. db_prune: 14
+un-importable, 58 superseded, 4,040 aged out, **2,336 in its new
+category**, would delete 72 (0.3%). db_model_check: path-length 21,452
+predictions from one day, 0 and 0 with a score, and in the whole table
+2,270 and 66. Varad read the dry run's numbers (the raw output reached
+him with the results) and made the Neon branch
+`pre-version-drop-2026-10-15` from production as the restore point, set
+never to auto-delete, and said go.
+
+**The split (15 Oct, `db_drop_split.py`, before the delete), Varad's
+question**: of the 2,336, **1,815 are rows of today's changes.csv**,
+§33.2's count to the row (the file itself: 1,815 by rule, 1,815 distinct
+keys), and **521 came from earlier loads**, every one in a release that
+has left the six-release window (0 in a release today's files still
+name). Of the 1,131 releases left with nothing, **895 are named by
+today's files**, §33.2's all-clear, and the file's list and the table's
+agree on every one (895 in both, 0 file only, 0 table only); 236 are
+earlier loads' only.
+
+**The delete**, `--expect 2336`: 1,523 prediction rows and 2,336
+breakage rows in one transaction; n_changes recounted on 1,812 releases,
+1,120 of them analysed_clean; rows the rules mark afterwards, 0.
+Statuses before: analysed 2,915 (n_changes summing to 23,274),
+analysed_clean 636, analysis_failed 61, no_baseline 178, no_source 24,
+yanked 37; 3,851 releases.
+
+**The load**, `ml/db.py` without `--scores`, its dry run first and
+identical: 23,268 changes, 39,154 used symbols, 314 packages (164 with
+no packages.csv row, F32); 351 packages and 3,204 releases written;
+releases.csv 2,053 rows, agreeing on 183 packages, disagreeing on 4
+(boto3, botocore, filelock, idna), 164 packages uncovered; statuses
+written analysed_clean 1,531, analysed 1,141, no_baseline 178,
+analysis_failed 61, yanked 37, no_source 24, **232 as unknown**, 140
+pre_release and 34 dev_release skipped; **not written 1,815** (1,757
+version strings, 58 metadata), 895 releases left with nothing and
+written analysed_clean; **21,452 rows sent, 25,564 in the table**
+(27,900 less 2,336), one duplicate key dropped before insert, 807 private
+rows kept; usage_index 39,154. And the line §33.5 asked for: **316
+releases still read `analysed` with 0 changes, none of them in today's
+files** (absl-py 2.3.0, aiofile 3.11.1 and 3.12.0, aiosqlite 0.18.0,
+argcomplete 3.6.1 to 3.7.0, and 308 more).
+
+**After.** db_prune 14 / 58 / 4,040 / 0 in the new category, would delete
+72, not run. db_model_check: path-length 21,452 (trained_at 2026-10-12
+07:18:28, pr_auc 0.2651), lambdarank-label_alias-tuned 21,452,
+lambdarank-label_alias 21,440 (58 fewer), lambdarank-label_scoped 17,669
+(1,465 fewer), v0-fake 6; 0 and 0 in the whole table. db_extras: 21,452
+keys built, 1,815 not sent, 0 sent and missing, 4,112 in the table not
+ours (14 + 58 + 4,040, the fixture's among the aged), 1,353 release rows
+not from changes.csv, 82,019 prediction rows. Statuses after: analysed
+1,566 (n_changes summing to 23,797), analysed_clean 1,756,
+analysis_failed 61, no_baseline 178, no_source 24, **unknown 229**,
+yanked 37; still 3,851 releases, and the moves reconcile: analysed fell
+by 1,349, which is the 1,120 that became clean and the 229 that became
+unknown; clean rose by 1,120; nothing else moved.
+
+**229, not 232.** Three of the 232 kept a real status, as the rule says
+they must: boto3 1.43.87, botocore 1.43.87 and openai 3.6.0 read
+analysed_clean, established by an earlier load from a releases.csv that
+agreed on them then; today's disagrees on boto3 and botocore, and does
+not cover openai, or 3.6.0 would not be among the 232. Found by running
+release_plan on the files and reading the three back.
+
+**cryptography 48.0.1**, Varad's question of 12 Oct, reads
+analysed_clean with 0 changes and 0 rows. releases.csv records it as
+`analysed, 1`, cryptography is not among the four packages the files
+disagree on, so changes.csv has that one row for it, and the load wrote
+the release analysed_clean, which it does only when every row is a
+version string or a metadata line: 48.0.0 -> 48.0.1 changed its version
+string and nothing else. (A first look with `awk` read 20 rows for it
+and was wrong: changes.csv's third column is version_from, and the 20 are
+the 48.0.1 -> 49.0.0 pair, 49.0.0's 19 rows plus its version string.)
+The rest of the package: 46.0.4 no_baseline; 46.0.5, 46.0.6, 46.0.7 and
+50.0.1 analysed_clean; 47.0.0 35 rows, 48.0.0 6, 49.0.0 19, 50.0.0 13.
+Varad adds 50.0.1 as the site's third preset, the one-click "nothing
+broke".
+
+**What the table still gets wrong, all of it outside today's files**
+(a read-only report, 15 Oct): 159 releases have an n_changes that is not
+their row count (156 `analysed`, 2 `analysed_clean` that have rows, 1
+`no_baseline` that has rows); the 316 `analysed` with 0 changes are 151
+that have rows, whose count is merely stale, and 165 that have none,
+which nobody compared; no `unknown` release has rows. The loader cannot
+speak for any of these, since today's files do not name them, and the
+deletion step recounted only the releases it touched. **What follows:**
+one repair step, with its rule written here first (§33.7): n_changes set
+from the table for every release; `unknown` for an `analysed` release
+with no rows that today's files do not name; the two clean releases with
+rows and the no_baseline one decided by hand and named; and db_prune
+taught to recount the releases it deletes from, before its 72 rows go,
+which Varad agreed can wait for that. The Neon branch stays until his
+site checks are done.
+
+### 33.7 The repair of what earlier loads left behind. The rule, fixed before the code (15 Oct)
+
+What §33.6 found is one thing in three forms: a release's `n_changes`
+and `analysis_status` were written by the load that saw it, and nothing
+since has read them against the rows the table actually holds. The
+loader upserts and never removes (§8), db_prune deleted 3,745 rows on
+16 Sep (§13.3) and recounted nothing, and before 25 Sep a release the
+loader could not classify took the column's default, `analysed` with 0
+changes (§33.5). Today's files cannot fix it, since the loader writes
+only the releases they name. So a repair step of its own,
+`scripts/db_repair_counts.py`, with these rules, and nothing else:
+
+1. **n_changes is the rows in the table**, for every `analysed` release,
+   whatever load wrote it, with one exception: a release the loader
+   COUNTS, a version_to of today's changes.csv (the loader writes a count
+   for no other release, §33.5's `written_counts`), keeps the loader's
+   count when the table holds MORE rows for it than that. Those extra
+   rows are earlier loads' and this run did not produce them, which is
+   db_prune's "superseded" and db_prune's to remove, with its own
+   recount, so the step lists such releases and leaves them. Fewer rows
+   than the loader's count can only mean rows deleted since the load, and
+   is recounted. (Corrected on 15 Oct before any run, on the independent
+   review's two findings. The first wording said "for every release" and
+   claimed the step would change nothing for a release today's files
+   name, which is false whenever such a release carries a superseded row:
+   the repair would have raised its count above the loader's and the next
+   load lowered it again, until db_prune removed the row; on Neon the 58
+   superseded rows of §33.6 sit in exactly such releases. The second
+   wording excluded every release today's files name, which left a
+   release named only as a version_from, or only by a releases.csv row,
+   with a stale count forever: the loader writes no count for those, and
+   db_prune classes their rows as aged out.) A release of any other
+   status with no rows and a count that is not 0 is set to 0 as well: a
+   count of rows that are not there.
+2. **An `analysed` release with no rows that today's files do not name
+   becomes `unknown`.** Before 25 Sep that is how a release nobody
+   compared was written (the older side of a pair, with the default of
+   the day), and nothing has established it since; `analysed` says
+   "diffed, changes found", which is false for a release with none. A
+   release today's files do name is the loader's to write, and the step
+   leaves it alone and lists it (none qualifies after a load: §33.6; one
+   named only by a releases.csv row of a disagreeing package would stay
+   as it is, since the loader does not write those either).
+3. **A release of any other status that has rows is not repaired by
+   rule** (analysed_clean, no_baseline, no_source, yanked,
+   analysis_failed, unknown). The two kinds of fact contradict each other
+   (a verdict of nothing found, or nothing to compare against, beside
+   rows that say something was found), and which is stale cannot be read
+   from the table. The dry run lists each with its rows, and the decision
+   is written here, release by release, before anything is done about it.
+   Today there are three (§33.6). One case resolves itself: a hold whose
+   release today's files name has, by definition, rows this run did not
+   produce, which db_prune removes as superseded and recounts; a hold on
+   a release outside today's files stays a decision.
+4. **Nothing else moves**: no row is deleted, no status other than
+   `analysed` is changed, and a release today's files name keeps what the
+   loader wrote.
+
+The script is a dry run by default (SELECTs only) that prints the
+releases it would change, by what changes, with the ones under rule 3
+listed in full; `--expect N` applies rules 1 and 2 in one transaction
+only when N is the number of releases it would change at that moment,
+and refuses otherwise, as `db_drop_versions.py` does. Expected on Neon
+today, from §33.6's report: the 165 `analysed` releases with no rows set
+to `unknown`, and of the 156 `analysed` releases whose count is not
+their rows, all but the ones holding db_prune's 58 superseded rows
+recounted (151 of the 156 read 0; the version_to releases with more
+rows than their count are listed and left to db_prune); the dry run's
+own number is the record. Afterwards every release's n_changes equals
+its rows, except the rule 3 holds and the releases db_prune has yet to
+visit, so the sum over releases is the table's 25,564 less those rows.
+
+**db_prune.py** learns the same rule 1 for the releases it deletes rows
+from: after its delete, in the same transaction, each such release's
+n_changes is set from the table (where the database has the column), and
+a release left with no row at all is printed by name and not relabelled
+by db_prune: an `analysed` one outside today's files becomes `unknown`
+on the repair step's next run (rule 2), and a named one is the loader's.
+Its 72 rows (14 un-importable, 58 superseded, §33.6) go only after this
+round, with Varad's OK and a dry run, as before.
+
+The order on Neon: the repair's dry run; its output to Varad with the
+rule 3 decisions proposed; the apply with `--expect`; the read-only
+checks (db_model_check, db_extras, the status count by SQL; the loader
+is not run, and its dry run reads only the files, so it has nothing to
+say about the table); then db_prune's dry run and, with the OK, its
+delete; then the repair's dry run once more, for the releases db_prune
+emptied, and its apply if there are any. Tested by a new
+`scripts/test_db_repair.py` and additions to `scripts/test_db_drop.py`,
+on both pandas versions and against a real Postgres built from 001-007
+that reproduces §33.6's three forms, with guards broken on purpose, as
+every round since §33.
+
+**The code and what it was tested by (15 Oct, after the rule above was
+pushed as 9f8c22a; the correction to rule 1 and the wording of the
+emptied releases came from the review of this code, before any run).**
+`scripts/db_repair_counts.py`: a dry run of SELECTs only that prints
+each rule's releases by name (the first twelve), the counted releases
+with more rows than the loader's count, and the rule 3 holds in full
+with their rows; `--expect N` applies rules 1 and 2 in one transaction (the
+counts, then the status, the status update guarded by "still
+`analysed`, still no rows") and reads the table again; a database whose
+CHECK does not name `unknown` is refused before anything. "Today's files
+name" is read in the broad sense: changes.csv's version_to and
+version_from, and any releases.csv row whatever its status; the loader's
+`load_frames` now reads the version columns as text, as `load_releases`
+and `score_everything` already did, so a file whose versions all look
+like numbers cannot turn "1.10" into "1.1" on the way (the review's
+finding; no such file exists today). db_prune.py recounts, in its
+delete's transaction, every release it took a row from, skips the
+recount and says so on a database without migration 005 (the review
+found the first version crashed there), and prints by name, status
+unchanged, any release left with no row. `scripts/test_db_repair.py`,
+five cases and 28 checks, on a seventeen-release fixture with one of
+every kind the rule distinguishes (a stale count up and down, never
+compared, named by changes.csv only, named by releases.csv only, clean
+with rows, no_baseline with rows, a stale count on an empty clean
+release, a release in both rules, an unnamed `analysed` release with
+rows that rule 2 must never touch, a counted release with more rows than
+its count that rule 1 must never touch, a counted one with fewer, a
+version_from-only one and a releases.csv-only one with stale counts
+that rule 1 must recount); `scripts/test_db_drop.py` gains a ninth case
+(51 checks now): the recount's SQL and read-back, and db_prune's whole
+delete path through a stand-in engine, the two deletes, the recount and
+the names of the emptied, and the same on a database without the column.
+Both pass on pandas 2.2.3 and 3.0.2. Twenty-seven guards were broken on
+purpose, twenty-one in the repair step and six in db_prune, and each
+turned a check to FAIL; three survived first (rule 2 without its "no
+rows" condition, a prune that skipped the recount, and rule 1's
+exclusion read off the broad set instead of the counted one) and the
+fixtures were strengthened until they were caught; the 41 of §33.5 still
+are. An independent review of the first version found rule 1's
+deviation from rule 4 and then, in the fix, the exclusion drawn too
+wide; the pre-005 crash; the "decided by hand" wording on emptied
+releases (which rule 2 decides); the version dtype; and four wordings in
+the printed output. Each is fixed and the ones that are code have a
+check.
+
+Against a real Postgres: §33.5's scratch table (001-006, the old loader,
+the fixture, the earlier-load releases, 007) plus the forms of §33.6
+seeded by hand, pkg00 0.0.3 `analysed` 0 with 2 rows, 0.0.4 `analysed` 0
+with none, 0.0.5 analysed_clean with a row, 0.0.6 no_baseline with a row,
+0.0.7 `analysed` 5 with 2 rows, 0.0.8 `analysed` 2 with two
+un-importable rows, a stale row in pkg01 99.0.1 (a release of today's
+files whose own rows were all its version string, analysed_clean after
+the deletion step) and a stale row in pkg02 2.0.2 (a live `analysed`
+release, count 15). The deletion step and the load ran as in §33.5. Then
+the repair's dry run: rule 1 0.0.3 (0 -> 2) and 0.0.7 (5 -> 2), rule 2
+0.0.4, pkg02 2.0.2 listed as named with 16 rows against the loader's 15
+and left, rule 3 holds 0.0.5, 0.0.6 and pkg01 99.0.1 with their rows, 3
+releases to change; `--expect 2` refused with nothing changed; `--expect
+3` recounted 2 and relabelled 1 and read 0 still to change, 3 holds;
+afterwards 0.0.3 `analysed` 2/2, 0.0.4 `unknown`, 0.0.7 `analysed` 2/2,
+the holds and pkg02 untouched, and the sum of n_changes 7,820 against
+7,824 rows, the 3 hold rows and pkg02's stale row the difference. A
+second load and a second dry run changed nothing. Then db_prune: dry run
+2 un-importable, 2 superseded (99.0.1's and 2.0.2's stale rows), 8 aged,
+0 in §33.5's category; `--yes` deleted 4 rows, recounted 3 releases and
+printed two left with no row, pkg00 0.0.8 `analysed` and pkg01 99.0.1
+analysed_clean, neither relabelled. The repair's dry run then listed
+0.0.8 under rule 2 and `--expect 1` set it `unknown`; at the end the only
+two releases whose count is not their rows are the two true holds,
+0.0.5 and 0.0.6, which is what the rule says. The Neon runs go in §33.8.
+
+### 33.8 The repair and the prune on Neon (15 Oct)
+
+Code: 08caefa (§33.7's rule as corrected on review, the repair step,
+db_prune's recount, the loader reading versions as text), pushed after
+test_db_repair.py (28 checks), test_db_drop.py (51) and
+test_db_loader.py (55) passed on the Mac. Before the apply Varad made a
+second restore point, the Neon branch `pre-repair-2026-10-15`, from
+production after §33.6's round, so that a bad repair would roll back
+only the repair. Everything below ran from the Mac against production,
+in §33.7's order, and every number Varad and these notes predicted came
+out as predicted.
+
+**The repair's dry run** (read only): 3,851 releases. Rule 1, 151
+counts to set from the table, all of them from 0 (aiofile 3.12.0 0 -> 1,
+argon2-cffi 21.2.0 0 -> 15, ast-serialize 0.10.0, 0.11.0 and 0.11.1
+0 -> 2, and so on). Rule 2, 165 `analysed` releases with no rows to
+`unknown` (absl-py 2.3.0, aiofile 3.11.1, aiosqlite 0.18.0, argcomplete
+3.6.1, and so on). No release left to the loader. Five counted releases
+with more rows than the loader's count, left for db_prune: anthropic
+1.0.0 (count 367, 387 rows), debugpy 1.8.22 (5, 6), jedi 0.20.0 (15, 19),
+scikit-learn 1.7.0 (67, 69), wrapt 2.2.0 (39, 70); their extra rows,
+20 + 1 + 4 + 2 + 31 = 58, are db_prune's 58 superseded rows to the row.
+Rule 3, three holds, listed with their rows: importlib-metadata 9.0.0
+(analysed_clean, one row, `exercises.normalize_perf`), typedload 2.36
+(analysed_clean, one row, `gensetup.CLASSIFIERS`), and pydantic-ai-slim
+2.37.0 (no_baseline, three rows, the `engine_spec` value of three
+durability classes). 316 releases to change, §33.7's 165 and the 156
+less the five. Varad read it, agreed, and agreed to leave the five and
+the three for later.
+
+**The apply**, `--expect 316`: 151 recounted and 165 set to `unknown` in
+one transaction; afterwards 0 still to change and the 3 holds. The
+read-only checks: 25,564 rows; path-length's 21,452 scores; 0
+version-string and 0 metadata rows; db_extras 0 sent and missing, 4,112
+not ours (14 / 58 / 4,040). Statuses: analysed 1,401 (n_changes summing
+to 25,501), analysed_clean 1,756, analysis_failed 61, no_baseline 178,
+no_source 24, unknown 394, yanked 37; 3,851. Two reconciliations, the
+second Varad's: 25,501 + 58 (the five) + 5 (the holds' rows) = 25,564;
+and against 9 Oct, analysed 2,915 - 1,120 - 229 - 165 = 1,401,
+analysed_clean 636 + 1,120 = 1,756, unknown 229 + 165 = 394, the other
+300 unchanged.
+
+**db_prune**, its dry run 14 un-importable (all ast-serialize), 58
+superseded (in the five releases above), 4,040 aged out, 0 in §33.5's
+category; would delete 72 (0.3%). With Varad's OK, `--yes`: 63
+prediction rows (all lambdarank-label_scoped's, 17,669 -> 17,606) and 72
+breakage rows deleted; n_changes set from the table on the 10 releases
+that lost rows (the five, and five of ast-serialize); five left with no
+row at all, ast-serialize 0.9.0, 0.10.0, 0.11.0, 0.11.1 and 0.11.2,
+`analysed`, named and not relabelled. Its output went to Varad from the
+terminal as `prune_done_first_run.txt`: the command was run a second
+time by mistake, found nothing to delete, changed nothing, and wrote
+over /tmp/prune_done.txt.
+
+**The repair once more**, as §33.7's order says: the dry run had rule 1
+at 0, rule 2 the five ast-serialize releases, the db_prune line at 0,
+the 3 holds; `--expect 5` set the five to `unknown`, 0 recounted, 0
+still to change. The five fit rule 2 more than formally: their only rows
+had an un-importable root, and §9.5 found ast-serialize's to be
+`crates.`, a build directory, so whatever an earlier ingest compared, it
+was not the library.
+
+**Final**, every number Varad listed in advance: 25,492 rows (25,564 -
+72); path-length 21,452 scores; 0 and 0; db_extras 4,040 not ours, all
+aged out, 0 sent and missing, nothing left to delete; 81,956 prediction
+rows. Statuses: analysed 1,396 (n_changes summing to 25,487),
+analysed_clean 1,756, analysis_failed 61, no_baseline 178, no_source 24,
+unknown 399, yanked 37; 3,851. Every release's n_changes is now its rows
+in the table, except the three holds, whose 5 rows are the difference
+between 25,487 and 25,492. That is the end of step 3 of §33.1.
+
+**Two answers for the record.** The three of the 232 that kept a status
+(Varad's question): boto3 1.43.87, botocore 1.43.87 and openai 3.6.0,
+analysed_clean (§33.6). And the wording of `unknown`: Varad changes the
+site's text from "we have not compared it with the one before it" to
+"we can't confirm it was compared with the one before it", and these
+notes follow. Rule 2 of §33.7 says "nobody compared", which is stronger
+than the evidence: a load from before releases.csv existed could have
+diffed one of the 165, found nothing and left no trace. What it means,
+and all it means, is that nothing establishes the release was compared.
+The releases given him to check the text with: idna 3.11, one of the 229
+the files cannot establish, and absl-py 2.3.0, one of the 165. His PR
+carries the text and cryptography 50.0.1 as the third preset, and he
+deletes both Neon branches after his site checks.
+
+**What is left of the database work, one small round with its rule
+first (§33.9): the three holds.** importlib-metadata 9.0.0 and typedload
+2.36 each carry one row from a file outside the library, an exercises
+module and a setup-generation script, of the kind §10.1's layout fix
+stopped the ingest from reading; today's run re-analysed both releases
+and found nothing. db_prune counts a release as re-analysed only when
+today's changes.csv has it as a version_to, so it keeps those rows as
+aged out. pydantic-ai-slim 2.37.0's three rows are true findings from a
+window that started before it; today's window starts at it, releases.csv
+calls it no_baseline, and the loader wrote that over a release an
+earlier load had compared. Both are rules about which verdict wins, and
+they are written before any code touches them.
+
+### 33.9 The three holds. The rule, fixed before the code (18 Oct)
+
+§33.8 left three releases whose status and rows contradict each other,
+and both contradictions come from one gap. The loader and db_prune read
+"today's run compared this release" from changes.csv alone, and
+changes.csv records only the pairs that produced rows. The rest of a
+run's verdicts are in releases.csv (§14): the releases compared and
+found clean, and the ones the run did not compare, each with its reason.
+§33.5 made the loader trust releases.csv where it agrees with
+changes.csv; db_prune has not caught up with that, and the loader trusts
+it one step too far in the other direction. So two rules, one for each
+script, and nothing else; no schema changes, no migration.
+
+**Rule A, db_prune: a release is re-analysed today when today's files say
+the pair that produced its rows was run.** That is when changes.csv has
+it as a version_to, as before, OR when releases.csv, for a package the
+two files agree on (§33.5's agreement check, the loader's own
+`release_plan`), gives it `analysed_clean`. The ingest writes
+analysed_clean in exactly one place (run_ingest.py's stage 4), after
+`diff_series` ran the pair (previous -> V) and returned nothing, which is
+§13.2's definition of superseded word for word: the pair was re-run and
+did not produce the row. Nothing else counts: a release that is only a
+version_from, or that releases.csv calls no_baseline, analysis_failed,
+no_source or yanked, or whose package the two files disagree on, was not
+re-analysed, and its rows stay aged out, as §13.2 found and §8 decided
+(no_baseline is §13.2's version_from-only case by name, so this rule
+cannot bring that bug back). The set is computed once, in ml/db.py
+(`live_releases`), from the plan the loader writes from, so db_prune and
+the loader read the same files the same way. Varad's fixture is in no
+file and is untouched, as before.
+
+What follows on Neon: importlib-metadata 9.0.0's `exercises.normalize_perf`
+and typedload 2.36's `gensetup.CLASSIFIERS` are superseded, deleted and
+their releases recounted (0 -> 0) and named as left with no row, status
+unchanged, which for these two is now true. The dry run should read 0
+un-importable, 2 superseded, 4,038 aged out, 0 in §33.5's category,
+would delete 2 (0.0%); `--yes` deletes 2 breakage rows and whatever
+prediction rows sit on them (the dry run does not count those; the
+delete reports them), recounts 2 releases and names both; 25,490 rows
+after. Expected only if today's releases.csv names both releases
+analysed_clean in packages the files agree on, which is how they came to
+read analysed_clean on 15 Oct; the two read-only lines below confirm it
+before anything runs.
+
+**Rule B, the loader: a status that says today's run did not compare a
+release does not replace a verdict from a run that did.** The three such
+statuses are no_baseline (the window started at it), analysis_failed
+(its download or diff failed) and no_source (no sdist today); each
+describes today's run, not the release. For a release the table holds as
+analysed_clean, the status and count stay as they are, rows or no rows
+(with rows it is §33.7's rule 3 hold, which of the two is stale cannot be
+read from the table, and it stays listed; the review asked for this
+order to be stated, since the next sentence would otherwise claim it).
+For any other release the table holds rows for, whatever its status
+reads, the loader writes `analysed` with n_changes equal to those rows:
+rows under a release are the findings of a comparison and `analysed` is
+what they mean, and the status that reads there is whatever a load since
+has stamped over it, which is how pydantic-ai-slim 2.37.0 came to read
+no_baseline with three rows. Otherwise the status is written as before.
+This is §33.5's rule for `unknown` applied to the three: today's files
+merely do not establish the comparison, and an earlier load's did. The
+rows counted are every row of the release, so the rule assumes the
+deletion step of §33.5 has run, as it has (§33.6): on a table still
+holding version-string rows a release with nothing else would read
+`analysed` until that step emptied it. Two statuses are deliberately
+not under it. `yanked` is PyPI's statement about the release itself, not
+about our run, and the site should say it, so it is written as before; a
+yanked release with rows would be §33.7's rule 3 hold, and none has any.
+That is the one judgement in this rule and it is Varad's to overturn.
+And today's `analysed_clean` over a release with rows is written as
+before: today's run compared the pair and found nothing, the rows are an
+earlier run's, and rule A removes them. Today's verdict wins.
+
+What this has been doing since 25 Sep: when a package's window rolls
+forward, the release that becomes its oldest was the version_to of a
+pair in the load before, and each load since has written no_baseline
+over that verdict. The verdicts so overwritten are gone (nothing records
+them, and the Neon branches that held them are deleted), so the rule
+cannot restore them; from here on they are kept. On Neon today, with the
+same files as 15 Oct, exactly one release changes, pydantic-ai-slim
+2.37.0, no_baseline -> `analysed`, n_changes 3: every other release
+today's files call not compared already reads so, with no rows. The load
+prints the releases it kept this way, by name, and separately the
+analysed_clean releases of today's files that still hold rows (rule A's,
+db_prune's to remove; 0 if db_prune ran first, as the order below has
+it). The loader's dry run reads only the files, so it states rule B and
+leaves the names to the load; before the apply, the evidence is the
+repair step's dry run, which reads the table and now says, for each rule
+3 hold, which of these two rules resolves it, or that neither does and
+why (today's files do not name it, or name it only as the older side of
+a pair, or its package disagrees or is not loaded, or they call it
+yanked, or rule B keeps the table's analysed_clean over its rows), and it
+is decided by hand. Rule B
+is read off today's releases.csv through the loader's own code, not off
+the table's status, so the note says what the next load will do and
+nothing else (the review's finding: the first version read the table's
+status, which is right only while the table and the file agree, as they
+do on Neon today, and promised a load for releases the loader will never
+write). Rule A is asked first; read this way the two cannot both apply,
+since a re-analysed release is analysed or analysed_clean in the file.
+
+Expected after both, every number from §33.8's finals: 25,490 breakage
+rows (25,492 - 2); path-length's 21,452 scores; 0 version-string and 0
+metadata rows; db_extras 4,038 not ours, all aged out, 0 sent and
+missing, nothing left to delete. Statuses: analysed 1,397 (n_changes
+summing to 25,490, the table's count, with no exception left),
+analysed_clean 1,756, analysis_failed 61, no_baseline 177, no_source 24,
+unknown 399, yanked 37; 3,851. The repair step's dry run: nothing for
+rules 1 and 2 to change, 0 holds. Prediction rows 81,956 less the ones
+on the two deleted rows.
+
+The order on Neon: the two read-only lines (what releases.csv says about
+the three, and which pairs of their packages changes.csv holds); the
+three dry runs, db_prune's, the loader's and the repair step's (all read
+only), to Varad, who makes a fresh restore branch; `db_prune.py --yes`
+(rule A); `ml/db.py` without `--scores` (rule B; the scores stand); the
+read-only checks: the repair step's dry run, db_model_check, db_extras,
+the status count by SQL. Tested, before any of it, by additions to
+`scripts/test_db_loader.py`, `scripts/test_db_drop.py` and
+`scripts/test_db_repair.py` on both pandas versions, against a real
+Postgres built from 001-007 with the three forms seeded, with guards
+broken on purpose, and an independent review, as every round since §33;
+recorded below when done.
+
+**The code and what it was tested by (18 Oct, after the rule above; the
+review's two findings are folded into the rule's wording above and
+recorded here).** `ml/db.py`: `COMPARED` and `NOT_COMPARED` (yanked in
+neither); `planned_statuses()`, the status today's files establish per
+release as the loader plans it (release_plan's known, the fixture package
+left out whatever a file says), and `live_releases()`, rule A's set, the
+COMPARED ones of those; `table_state()`, one query before any write
+(status, count and rows per release); `shield_verdicts()`, rule B, pure,
+returning the rows to write, the ones kept and today's analysed_clean
+releases that still hold rows; `describe_shield()`. `write_all` reads the
+table and shields before the release upsert, where the database has the
+status column, and prints both lists by name; the dry run states the rule
+over the plan's not-compared releases and leaves the names to the load.
+`scripts/db_prune.py` takes its live set from `live_releases(changes,
+load_releases())`. `scripts/db_repair_counts.py` reads the same two
+functions and says, for each rule 3 hold, what settles it, rule B through
+`shield_verdicts` itself on that one release, and changes nothing else
+(§33.7's rule 4 holds: the live set and the statuses feed only the
+note, and the note reads the packages the loader loads, packages.csv's
+and changes.csv's, so a package only releases.csv names is nobody's
+until packages.csv lists it, as for the loader). Tests:
+`test_db_loader.py` case 12 (14 checks: twelve chosen pairings of table
+state and incoming status, among them the table's analysed_clean over
+rows kept under a not-compared status and today's analysed_clean over
+the table's analysed_clean with rows, Neon's two rule A holds' shape;
+the load's SQL order, the pre-005 path, the dry run's line),
+`test_db_drop.py` case 10 (8: the live set with, without and with a
+disagreeing releases.csv, the fixture package in a file, classify, and
+db_prune's dry run through a stand-in engine), `test_db_repair.py` (10
+more, on a fixture rebuilt so no release appears twice: holds of every
+kind the note distinguishes, among them a release the table calls
+no_baseline that today's file calls analysed_clean, rule A's; one the
+table calls unknown that the file calls no_baseline, rule B's; one in no
+file, one yanked today, one whose analysed_clean the rule keeps over its
+rows, one in a package only releases.csv names, with and without a
+packages.csv row). 69 / 59 / 38 checks, both pandas versions, the other
+eighteen test files unchanged and passing. Thirty-nine guards broken on purpose
+(A1-A4, B1-B20, P1-P2, R1-R13, the last six of the R's and the last two
+B's written from the review's findings): thirty-eight caught, each at
+the first run after the fixtures above; R1, rule B asked before rule A,
+survives and must, since read off the file the two rules cannot both
+apply. The 41
+of §33.5 and 27 of §33.7 re-run and still caught (two re-pointed at lines
+this round moved).
+
+The independent review found: (1) the repair step's note read rule B off
+the table's status where the rule speaks of today's file, right on Neon
+only because the 15 Oct load used the same files, and wrong in general
+(a release in no file of today's, with no_baseline in the table, was
+promised a load that will never come); fixed as above, with the fixture
+cases that showed it. (2) Rule B's two sentences both covered the
+table's analysed_clean with rows and the code chose the first without
+the rule saying so; the rule now says it, and a check pins it. On the
+second pass: the note's reading of "named" omitted the loader's package
+filter (fixed, with a check); the claim that one run had shown both
+orders end the same, when it had shown one order and an idempotent
+second load (both orders now run, below); an overclaim about case 12's
+coverage (reworded above). Also noted and taken: the fixture package
+could have become live through a releases.csv row (now excluded by
+name); rule B counts every row and so assumes the deletion step has run
+(stated above); one wording in the load's output. The numbers and the
+no-crash paths (pre-005, pre-007, no releases.csv) were checked and
+found right.
+
+Against a real Postgres: §33.7's whole sequence first (001-006, the old
+loader, the fixture and the earlier loads, the three forms, 007, the
+deletion step, the load, repair --expect 3, prune --yes, repair --expect
+1), then §33.9's forms seeded (pkg00 0.0.9 yanked with a row, pkg00
+0.0.10 analysed_clean with none, pkg03 0.0.1 analysed_clean with a row)
+and a releases.csv built to agree with the scratch changes.csv (every
+version_to analysed with the ingest's raw count, each package's oldest
+version_from no_baseline), naming pkg00 0.0.5 analysed_clean, 0.0.6 and
+0.0.10 no_baseline, 0.0.9 yanked and pkg03 0.0.1 analysed_clean with
+pkg03's first count off by one so the files disagree on it. The repair's
+dry run: nothing for rules 1 and 2, four holds, 0.0.5 rule A, 0.0.6 rule
+B, 0.0.9 "today's files call it yanked", pkg03 0.0.1 "today's files do
+not name it, or its package disagrees". db_prune's dry run 0 / 1 / 9 /
+0, would delete 1. The loader's dry run: 61 not-compared releases, the
+rule stated. The load was run FIRST here, on purpose, to see the other
+line: rule B kept 2 (0.0.6 no_baseline -> `analysed` 1; 0.0.10 kept
+analysed_clean), 1 analysed_clean of today's with a row still in the
+table (0.0.5); then db_prune --yes deleted that row, 0 predictions,
+recounted 0.0.5 and named it, analysed_clean, left with no row; a second
+load kept the same 2 and found 0 still with rows; the repair's dry run
+then showed the two true holds and nothing to change; at the end 7,821
+rows and n_changes equal to rows everywhere but those two. Then the same
+sequence once more from scratch in Neon's order, the prune first: it
+deleted the same row and named 0.0.5, the load then kept the same 2 and
+found 0 analysed_clean of today's with rows (the line §33.9 predicts for
+this order), db_prune's dry run had nothing to do, and the end state was
+the first run's line for line. Saved as run46/sequence_pg62.txt and
+sequence_pg63_prune_first.txt in the session's scratch space. The Neon
+run goes in §33.10.
+
+### 33.10 The holds round on Neon (18 Oct)
+
+Code: 4d382eb (§33.9's rule alone, pushed first) and e1f1fb1 (the code,
+the tests and the rest of §33.9), after all 21 test files passed on the
+Mac. Varad read the rule before the code ran anywhere, agreed with both
+rules and with leaving `yanked` out of rule B ("PyPI's statement about
+the release, not about our run, so a yanked release with rows should be
+a hold rather than an overwrite"), and checked the expected numbers his
+own way: 25,492 - 2 = 25,490 rows; analysed 1,396 + 1 = 1,397 with
+n_changes 25,487 + 3 = 25,490, "so the old 5-row gap was exactly the
+three holds"; 3,851 releases with only no_baseline down one; 4,038 + 2
+the 4,040 not-ours rows of §33.8.
+
+**The files, read only.** releases.csv: importlib-metadata 9.0.0
+analysed_clean, typedload 2.36 analysed_clean, pydantic-ai-slim 2.37.0
+no_baseline. changes.csv: importlib-metadata 9.0.0 only as the older
+side of 9.0.0 -> 9.0.1, pydantic-ai-slim 2.37.0 only as the older side
+of 2.37.0 -> 2.38.0 (17 rows), typedload 2.36 not at all. The shape both
+rules were written for.
+
+**The three dry runs**, sent to Varad before anything was applied. The
+repair step: 3,851 releases, nothing for rules 1 and 2, the three holds
+each with its rule: importlib-metadata 9.0.0 and typedload 2.36 "rule A:
+today's files re-analysed it, so db_prune removes these rows as
+superseded", pydantic-ai-slim 2.37.0 "rule B: the next load writes
+`analysed` with these rows as its count". db_prune: 0 un-importable, 2
+superseded, 4,038 aged out, 0 in §33.5's category, would delete 2
+(0.0%). The loader: the 15 Oct dry run plus the rule B line, 263
+not-compared releases in the plan (178 + 61 + 24). Varad: "All three
+match §33.9 on my side"; he made the Neon branch pre-holds-2026-10-18
+from production and gave the go-ahead in the agreed order.
+
+**db_prune --yes** (rule A): 2 prediction rows (lambdarank-label_scoped's,
+17,606 -> 17,604) and 2 breakage rows deleted; n_changes set from the
+table on the 2 releases that lost rows; both named as left with no row,
+importlib-metadata 9.0.0 and typedload 2.36, analysed_clean, status
+unchanged and now true.
+
+**The load** (rule B), `ml/db.py` without `--scores`: statuses written
+analysed 1,142 and no_baseline 177 against the dry run's 1,141 and 178,
+the one release the rule moves; the rule B line named it,
+"pydantic-ai-slim 2.37.0: no_baseline in the file; written analysed,
+n_changes 3 (3 row(s) in the table)", with "analysed_clean today with
+rows still in the table: 0" (db_prune had gone first) and 0 releases
+still reading `analysed` with 0 changes; 232 written as unknown as
+before; 21,452 sent, 25,490 in table.
+
+**The read-only checks.** The repair step's dry run: rule 1 0, rule 2 0,
+rule 3 holds 0, nothing to change, the first time since the table
+existed. db_model_check: 25,490 rows, path-length's 21,452 scores (12
+Oct), 0 version-string and 0 metadata rows in the whole table. db_extras:
+0 sent and missing, 4,038 not ours, all aged out, nothing to delete.
+Statuses: analysed 1,397 (n_changes summing to 25,490, the table's
+count), analysed_clean 1,756, analysis_failed 61, no_baseline 177,
+no_source 24, unknown 399, yanked 37; 3,851; 81,954 prediction rows
+(81,956 - 2); releases whose n_changes is not their rows: 0. Every number
+§33.9 and Varad wrote down in advance.
+
+**What this leaves.** Every release's n_changes is its rows in the table,
+every status beside rows is `analysed`, and no release holds a verdict a
+later load stamped over. Varad checked the three on the site the same
+afternoon: importlib-metadata 9.0.0 and typedload 2.36 read
+analysed_clean with "We analysed this release and found no breaking
+changes", pydantic-ai-slim 2.37.0 reads `analysed` with its three
+`_durability` rows hidden as private (the look he said in advance to
+expect, not a failed load), /health still names path-length, and his
+own counts matched: 25,490 rows, analysed 1,397 summing to 25,490, every
+other status unchanged, 0 holds. He then deleted pre-holds-2026-10-18.
+That closes the round, and with it the database work of §33.1 step 3,
+begun in §33.5. From here the loader keeps an earlier run's verdict on
+every load, so the no_baseline count stops growing by one per package
+each time a window rolls forward.
+
 ## 34. Path length alone: the baseline the ablation points to (10 Oct). The rule, fixed before the run
 
 **F41. No baseline ranks by path length alone, and the model leans on
@@ -5780,7 +6619,9 @@ sides (§35).
 **precision@10, which §34.1 set aside: path length is higher at all 7
 dates** (median 0.2952 against 0.2767). It stays out of the verdict, as
 §25.3's did, and is recorded because it points the same way. The report
-says it.
+says it. *[F44 (§36): this and the second verdict were measured on one
+fixed order of path length's ties; item 15's sweep measures both again
+over every order.]*
 
 **Read beside it, not ruled on.**
 
@@ -5922,9 +6763,15 @@ default changes, with intervals()', in item 15's code, the next to touch
 metrics.py, so that every number after it comes from one convention,
 PR-AUC's own interval and the line's PR-AUC included, and ablate.py
 measures on it when it next runs. Until then the report quotes PR-AUC
-without an interval.
+without an interval. *[Made precise the same night (§36.1): in the code
+that ships item 15's winner. Item 15's own code adds to metrics.py
+precision@10 and nDCG@20 averaged over tie orders (F44) and changes no
+default, so its sweep still writes every number §34.2 was ruled on, the
+same way.]*
 
 ### 35.2 What the report says now (10 Oct)
+
+*[Superseded 12 Oct: path length ships, and the wording is §36.5's.]*
 
 Replacing §32.3's paragraph, slide, site copy and demo, until item 15
 (F25) decides what ships. PR-AUC with ties averaged throughout (§35.1),
@@ -5932,9 +6779,10 @@ with two exceptions, each named as such where it appears: §32.3's
 ablation paragraph, which stands as measured until ablate.py runs again,
 since it already says what §34.2 confirms; and the refit example, which
 compares with a run that has only the old convention. precision@10 and
-nDCG@20 break ties by one fixed
-random order, as before. The paragraph on the line (§29.3, §30.3) is
-rewritten with item 15's result.
+nDCG@20 break ties by one fixed random order, as before. *[F44 (§36):
+they are restated from their average over tie orders once item 15's
+sweep has run.]* The paragraph on the line (§29.3, §30.3) is rewritten
+with item 15's result.
 
 **For the report:**
 
@@ -6020,3 +6868,4416 @@ most in its release, is ranked 27th of 30. Its path is deep, it is not
 exported and it has no shorter name, and the model trusts how short a
 name is above everything else. §31.2's coda stands: the label measures
 use, not breakage.
+
+## 36. Item 15 (F25): which ranker ships, now that path length alone matches the model (10 Oct). The rule, fixed before the run
+
+**F25, as it stands now.** F25 was "the classifier → ranker comparison
+was never made" (§21.6b), and item 15 was to ship whichever won. §34.2
+changed the question: the shipped model does not beat a rule with nothing
+learned, shortest import path first, on either of §34.1's measures. By
+§34.1, item 15 moves up and decides which ranker the site serves and the
+report presents, and it was decided on 10 Oct that a rule settles it.
+The verdict is §36.2: path length alone ships.
+
+What was known when §36.1 was written: P's and M's numbers at the seven
+dates (§34.2). What was not: R, as cross-validation chooses it at the
+seven dates, and both tie-broken orders. The ablation's two-feature
+model, on R's two features but with the full model's setting and size,
+was fitted on the real single split twice (§30.3, §32.3). §36.1 was
+written and pushed before any of the new rankers was scored on the real
+data. An independent review of its first draft, before the run, found
+F44 below, two flaws in the draft's rule and two in its checks, and gaps
+in its tests; a second review of the rework found one more gap in the
+rule and smaller ones in the checks. Each is fixed in what follows, and
+the draft's flaws are named where they were.
+
+**F44. precision@10 and nDCG@20 score a ranking with ties by one fixed
+order of them.** metrics.py breaks ties by a random order keyed to a
+row's position in its upgrade, the same keys in every upgrade (`_ranked`).
+For the model, which rarely ties, that is close to nothing. For path
+length, which ties on most rows, it is one draw of many: on the test
+fixture at one cut (2026-04-01, 89 upgrades rankable at 20), path
+length's nDCG@20 ran from 0.466 to 0.517 over 30 such orders; averaged
+exactly over every order it is 0.488, and the order the code uses gave
+0.496 (`scripts/test_ship.py` reproduces all four).
+The test halves at the seven dates are nested, so an
+upgrade is ranked by the same draw at every date, and "6 of 7" counts one
+draw several times. §34.1's second verdict and precision@10's 7 of 7
+(§34.2) were measured this way. *Fix:* `metrics._expected`, the average
+over every order of the ties, exact: a run of tied rows fills its places
+in every order equally often, so each of its places holds the run's mean
+gain. It is F42 for the within-upgrade measures. Found 10 Oct by the
+review of item 15's code, before the run.
+
+### 36.1 The rankers, the test, and what each outcome leads to
+
+**Three rankers, simplest first.**
+
+- **P, path length alone** (§34.1): minus public_depth, nothing fitted.
+- **R, the two reachability features**, public_depth and has_export_path,
+  ranked by LambdaRank chosen and fitted exactly as the shipped model is:
+  its setting and tree count chosen on the same CV folds and grid (§30.1),
+  then a refit on all of train. The ablation's two-feature model, now
+  choosing its own setting and size: the one learned ranker between the
+  other two.
+- **M, the shipped model**, 17 features (§30).
+
+**And the order inside ties.** P gives every change at one depth the same
+score, R ties about as much (with few trees it can merge depths, and the
+export flag can split one), and the site has to list tied changes in
+some order. **P→M** is path length's
+order with the model's order inside each tie, and **R→M** the same with R
+(`stability.then_by`). They answer one question, step 3 below: whether
+the model knows anything about changes that P or R cannot tell apart.
+
+**Where it is measured.** One `stability.py --at` sweep at the seven
+reference dates of §23.5. At each date it fits M and then R on the same
+training rows, and scores all five on the same test half: PR-AUC with
+ties averaged (F42), and nDCG@20 over the upgrades rankable at 20 and
+precision@10 averaged over every order of whatever still ties (F44).
+`scripts/ship_verdict.py` reads that file, checks it, and applies the
+rule. The sweep prints none of the new numbers (the draft's printed
+them), and its file is not opened before the verdict has run: the
+verdict reads them first, after its checks, so a refused sweep has put
+nothing in front of anyone to react to. The sweep also writes R's number of
+distinct scores, a fingerprint of each test half, and what it ran on
+(library versions, CPUs, the OpenMP thread setting, and the commit,
+marked if the working tree had changes).
+
+**It checks itself.** No verdict unless the sweep passes every check
+path_verdict.py makes (stamped as the shipped model is run, the seven
+dates, none skipped, F41's columns), has item 15's columns with no gap,
+and was measured on §34.2's data: at every date the same number of test
+rows and positives, and P's three numbers as §34.2 stored them (PR-AUC,
+and precision@10 and nDCG@20 in the fixed order), exactly. P is fitted
+on nothing, so on the same rows of the same file they cannot move. They
+cannot see has_export_path, which only R reads, so the file itself is
+pinned as well: features.csv's date and checksum are recorded before the
+run, and its date must be that of 10 Oct's build (§33.3). M is refitted, and a
+refit can come out differently on another machine or library (LightGBM
+chooses how it builds histograms by timing), so where M's numbers differ
+from §34.2's the verdict prints both and rules on the sweep's own (the
+draft refused a sweep whose M had moved by 0.001, which an innocent
+refit could do).
+
+**If the data check refuses**, nothing is ruled on, the check is never
+loosened, and NOTES records why the data moved before anything else is
+run. If it moved for a reason NOTES can name (a rebuild, a fix), §34.1
+is applied again to a new `--at` sweep of the new data and recorded;
+REFERENCE is then replaced by that sweep's numbers, in a commit of its
+own that says so, and item 15 is ruled on a sweep that reproduces them.
+
+**Where, and how often, it runs.** Once, on the Mac and in the venv
+§34.2 ran on, with nothing reinstalled in between, after 10 Oct's sweep
+file is copied aside (the run writes over it). The verdict prints what
+the sweep ran on, and NOTES records it. A second run, for any reason,
+gets a NOTES entry saying why before it starts.
+
+**One test, used throughout. X beats Y** when, at the seven dates, X wins
+on at least one of §34.1's two measures, by §34.1's rule
+(path_verdict.py's own functions), and Y wins on neither:
+
+- across releases, PR-AUC: X/Y above 1 at 6 or more dates and its median
+  1.25 or more (Y wins: below 1 at 6 or more, median 0.80 or less);
+- within an upgrade, nDCG@20 (averaged over tie orders): higher at 6 or
+  more.
+
+Values as the sweep stores them, to four places; a tie at four places is
+higher for neither; precision@10 is printed and not ruled on, as in §34.1.
+
+**The rule.**
+
+1. R and M are each set against P. One that does not beat P is out.
+2. If neither beats P, P stands. If only R does, R stands. If only M
+   does, M stands, unless R beats M, and then P stands. If both do, R
+   stands, unless M beats R.
+3. If P or R stands, the order inside its ties: the model's (P→M or R→M)
+   if its nDCG@20 is higher at 6 or more of the 7 dates; otherwise no
+   order is claimed inside a tie.
+
+What stands ships, with that order inside its ties.
+
+**Why these.** A ranker the evaluation cannot tell from a simpler one
+has nothing to defend it but its complexity. The simpler one is the
+honest answer in a viva; it has nothing to refit, so F43 cannot move it;
+and a user can be told why a change is near the top. So the burden is on
+the learned rankers, at §34.1's margins, for §29.1's reasons, and each
+is set against P directly: the draft set M against whichever ranker
+stood, which could have shipped M without its beating P; and M does not
+stand where the simpler R beats it, though R did not beat P either (the
+first rework let it). Step 3 is judged on nDCG@20 alone (the draft used
+both measures) because that is where a release's order shows: pooled
+PR-AUC would also count how P→M orders ties across upgrades, which no
+one sees, and which the model's package-level features (§30.3) would
+decide.
+
+**What each outcome leads to.** Fixed now, whatever the verdict.
+
+- **P ships, no order inside its ties.** The site serves P's scores under
+  a model name of their own (one API restart, §28.5, and Varad told), M's
+  scores staying in the database as the fallback; a change with no depth
+  scores as the deepest in its release. The site says changes at one
+  depth are in no particular order (Varad). The report presents P as
+  BreakRank's ranker: changes ordered by how short their public import
+  path is. M and R are reported as what was tried, with the rules that set
+  them aside (§34.2 and this one). The numbers the report quotes become
+  P's, its lift over popularity with the paired interval the model's has:
+  the single split, the thirteen dates (§34.2: 2.5x to 4.8x at the seven),
+  and the holdout when it is opened, where final_eval.py scores P with M
+  and popularity beside it. stories.py runs again on P's order under
+  §31.1's rules, counting a tied list by its average over tie orders, and
+  the demo follows it.
+- **P→M ships.** As for P, but the scores are P's with M's order inside
+  each depth, and the report says so: shortest path first, then the model
+  among changes equally short. Its PR-AUC across releases is P's, since
+  step 3 judged only the order inside an upgrade; its precision@10 and
+  nDCG@20 are P→M's. The model stays in the product, below path length,
+  and F43 reaches only the order inside a tie.
+- **R or R→M ships.** The site serves R (ranker.txt becomes the
+  two-feature model, by a train.py option for its features, and the loader
+  builds R→M's scores if that is the order), and the report says two
+  features do the work of 17, with the circularity has_export_path carries:
+  label_alias counts a use through the same export paths that set it
+  (labels.py), so it is tied to the label more directly than depth is.
+- **M ships.** Nothing on the site changes, and the report says the 17
+  features are kept because they beat path length, and the two features
+  too where those beat it, by this rule.
+
+Whatever ships, the code that ships it moves evaluate()'s and
+intervals()' defaults to ties averaged, PR-AUC (F42) and the
+within-upgrade measures (F44) alike, so every number the report quotes
+from then on comes from one convention.
+
+**What F44 does to §34.2.** §34.2 stands as ruled, on the fixed order.
+Step 1 measures M against P again with the averaged one. If M's numbers
+in this sweep are §34.2's exactly, the difference between the two
+rulings is F44's alone, and §34.1's list follows the new one, as the
+report moved to F42's convention whatever it showed. If they moved, the
+difference mixes F44 with the refit, and §34.1's list keeps §34.2's
+verdict, the new comparison recorded beside it. Either way the report's
+precision@10 sentence (§35.2) is restated from this sweep's averaged
+numbers, and says which sweep.
+
+**Not in the contest, by choice.** The classifier, F25 as first written:
+as complex as M, and measured against it for the record on 2 Oct (§29.2).
+The line: a learned ranker on all 17 features, which is not what item 15
+asks about (whether a simpler ranker should ship), and which path length
+alone was above at 5 of 7 dates (§34.2), a count read across two
+conventions. §35.2's paragraph on the line is rewritten after the verdict
+from §29.2's measurement, beside whatever ships.
+
+**Known, and left as it is.** R is chosen exactly as M is, so its folds
+stop and score on sklearn's PR-AUC (train.cv_tune), which F42 corrects for
+reporting. R ties far more than M, so the convention can sway its choice
+of setting more than M's; changing it for R alone would break "exactly as
+M", and for both would change the model §34.2 measured. The sweep records
+how many distinct scores R gives at each date.
+
+Tested by `scripts/test_ship.py`, seven cases: then_by(), the first
+score deciding however close its values and the second reordering only
+inside its ties; precision@10 and nDCG@20 averaged over tie orders,
+against every order of the ties on 40 small upgrades, binary and graded,
+against the fixed order where nothing ties, the same whatever order the
+rows arrive in, and through evaluate() on a tie across the 10th and 20th
+places worked by hand (precision@10 0.175); the test half's fingerprint
+and the run's stamps, and F44's four figures above; the sweep's row,
+where R is fitted after the model on the two features alone, tuned and
+on the same rows, every number of the five rankers is the one worked out
+in the test, and the model's numbers are the same with item 15 on or
+off, under `--stopping holdout` too; stability.py end to end, which
+writes item 15's columns in a sweep of the shipped model only and prints
+none of their numbers; the rule at its edges and on every branch, the
+two routes by which a draft would have shipped M among them; the verdict
+on files, with what it prints and each of its refusals; and REFERENCE
+against §34.2's table in this file. The fixture's export flag carries
+signal of its own: in test_holdout.py's fixture it is depth 1 exactly,
+so R would rank as P does there and a broken R would pass. Forty-four
+guards were broken on purpose, five in metrics.py, twenty in
+stability.py and nineteen in the verdict, and the test failed on each.
+One, evaluate() dropping the averaged precision@10, survived the first
+pass, because the test's top tie held exactly ten rows, which fill the
+top ten the same in any order; the test now has a tie across the 10th
+place.
+
+### 36.2 The verdict: path length alone ships (11 Oct)
+
+Run 11 Oct, about 23:00 India time, on the Mac and venv of §34.2, after
+§36.1 was pushed (cb73049). Before it: features.csv dated 10 Oct 20:20,
+§33.3's build (11,811,291 bytes, md5
+58c8070d739ee56beef9e5913a402557), and 10 Oct's sweep copied aside as
+`data/stability_label_alias_cv_tuned_at-20261010.csv`. Then
+`stability.py --at` at the seven dates, `ship_verdict.py` and
+`path_verdict.py`. `git status` was clean afterwards. This sweep is the
+record of the verdict. The next sweep writes over it, so it is copied
+aside first, as `data/stability_label_alias_cv_tuned_at-20261011.csv`.
+
+**It checked out.** The sweep's own table repeats §33.3's at every
+date: the same setting and tree count, PR-AUC, lift and nDCG@20. And
+path_verdict.py printed §34.2 again. The verdict's checks passed:
+path_verdict's stamps, item 15's columns with no gap, and §34.2's data,
+the same test rows and positives at every date and P's three numbers
+exactly. The model, refitted, came out with §34.2's numbers exactly, so
+step 1's M against P differs from §34.2's by F44's averaging alone. It
+ran on LightGBM 4.7.0, scikit-learn 1.9.0, pandas 3.0.5, numpy 2.5.2
+and Python 3.12.14, 10 CPUs, OMP_NUM_THREADS unset, commit cb73049 with
+no changes. Test halves d162e0be0045, 1039daf190a3, 805733c54146,
+c0afbe42b092, 1cb6763a713c, 0ad860d984c7, 38b1134b3eb6.
+
+**The five rankers.** PR-AUC with ties averaged:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.1880 | 0.2105 | 0.2298 | 0.2624 | 0.2527 |
+| 2025-10-06 | 0.1956 | 0.2125 | 0.2571 | 0.2918 | 0.2672 |
+| 2025-12-03 | 0.2232 | 0.2598 | 0.3054 | 0.3153 | 0.3331 |
+| 2026-01-18 | 0.2289 | 0.2662 | 0.2033 | 0.2809 | 0.2976 |
+| 2026-03-02 | 0.2088 | 0.1627 | 0.1698 | 0.1986 | 0.1637 |
+| 2026-04-02 | 0.2537 | 0.3171 | 0.2721 | 0.2984 | 0.3437 |
+| 2026-05-04 | 0.2928 | 0.3667 | 0.2446 | 0.2994 | 0.3629 |
+| **median** | 0.2232 | 0.2598 | 0.2446 | 0.2918 | 0.2976 |
+
+nDCG@20, averaged over every order of the ties:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.5970 | 0.5721 | 0.5543 | 0.5635 | 0.5478 |
+| 2025-10-06 | 0.5970 | 0.5450 | 0.5710 | 0.6016 | 0.5459 |
+| 2025-12-03 | 0.5859 | 0.6243 | 0.5766 | 0.5834 | 0.6050 |
+| 2026-01-18 | 0.5962 | 0.6425 | 0.5994 | 0.5975 | 0.6236 |
+| 2026-03-02 | 0.5779 | 0.5297 | 0.5277 | 0.5366 | 0.5298 |
+| 2026-04-02 | 0.5582 | 0.5639 | 0.6466 | 0.6082 | 0.6032 |
+| 2026-05-04 | 0.5789 | 0.5854 | 0.6377 | 0.6090 | 0.6096 |
+| **median** | 0.5859 | 0.5721 | 0.5766 | 0.5975 | 0.6032 |
+
+precision@10, the same way, not ruled on:
+
+| cut | P | R | M | P→M | R→M |
+|---|---|---|---|---|---|
+| 2025-08-07 | 0.2854 | 0.2771 | 0.2829 | 0.2794 | 0.2671 |
+| 2025-10-06 | 0.2880 | 0.2675 | 0.2618 | 0.2868 | 0.2580 |
+| 2025-12-03 | 0.2993 | 0.3029 | 0.2707 | 0.2833 | 0.2800 |
+| 2026-01-18 | 0.3083 | 0.3115 | 0.2881 | 0.2953 | 0.3072 |
+| 2026-03-02 | 0.2840 | 0.2628 | 0.2238 | 0.2348 | 0.2238 |
+| 2026-04-02 | 0.2873 | 0.2745 | 0.2760 | 0.2719 | 0.2719 |
+| 2026-05-04 | 0.3103 | 0.2957 | 0.3033 | 0.3033 | 0.2967 |
+| **median** | 0.2880 | 0.2771 | 0.2760 | 0.2833 | 0.2719 |
+
+R had 4 to 21 trees and gave 8 to 12 distinct scores; CV chose five
+settings across the seven dates (15/0.05/100, 15/0.05/30, 7/0.05/10,
+7/0.05/100, 7/0.05/30).
+
+**The rule, step by step.**
+
+1. R against P: PR-AUC ahead at 6 dates and behind at 1, a median of
+   1.1630x, short of 1.25x; nDCG@20 higher at 4 and P's at 3. R wins
+   neither measure, so it does not beat P. M against P: PR-AUC ahead at
+   4 and behind at 3, a median of 1.0725x; nDCG@20 higher at 3 and P's
+   at 4. M does not beat P.
+2. Neither beats P, so P stands.
+3. The order inside P's ties: P→M's nDCG@20 is higher than P's at 4
+   dates and lower at 3. No order is claimed inside a tie.
+
+**Path length alone ships**, with no order inside its ties.
+
+**What F44 did to §34.2** (§36.1). M's numbers are §34.2's, so the two
+rulings differ by F44 alone, and they agree. Averaged over tie orders,
+M's nDCG@20 is higher than P's at 3 dates and P's at 4, as in the fixed
+order; PR-AUC was F42's already. §34.1's list stands as it is.
+Averaged over tie orders, P's precision@10 is higher than M's at all
+seven dates again (median 0.2880 against 0.2760 in this sweep), so
+§35.2's sentence keeps its count and takes these numbers. The averaging
+moved M's nDCG@20 down at every date, by 0.005 to 0.031, and P's by
+-0.007 to +0.009; it moved P's precision@10 down at every date, by
+0.003 to 0.011. One fixed order of the ties is one draw, repeated at
+every date by the nested test halves (F44): it happened to favour M
+inside an upgrade and P in the top ten. The counts the rule reads did
+not move. F44 expected the model's numbers to move little, since the
+model "rarely ties" (§36); they moved more than P's. Its scores tie
+more often than that assumed.
+
+**Read beside it, not ruled on.**
+
+- Of the two the rule set against P, R came closer. Its PR-AUC was
+  ahead of P's at 6 dates, by a median of 1.16x (0.78x to 1.25x), and
+  its nDCG@20 higher at 4. What R adds to P is has_export_path, which
+  is tied to the label more directly than depth is (§36.1), so R's lead
+  is also the one most open to that circularity.
+- Ordering P's ties by the model raised pooled PR-AUC at 6 dates; the
+  median ratio over the seven is 1.23x (0.95x to 1.49x). Step 3 does
+  not read PR-AUC (§36.1), and judged on both measures, the draft's way,
+  P→M would still not have shipped: 1.23x is under 1.25x, and its
+  nDCG@20 is higher at 4 dates only. Its precision@10 is lower than P's
+  at all seven: inside a depth, the model's order put fewer used changes
+  in the top ten than the average order of the tie does.
+- R→M, which the rule reaches only where R stands, would beat P by the
+  one test if it were asked: PR-AUC ahead at 6 dates, by a median of
+  1.34x (0.78x to 1.49x), and nDCG@20 higher at 4. Its lead is on
+  pooled PR-AUC, which also counts how ties are ordered across
+  upgrades, where no one looks (§36.1's reason for judging step 3 on
+  nDCG@20 alone), and it rests on R's export flag. The rule did not ask,
+  and nothing ships on it.
+- R and M were not set against each other, since neither beat P. Read
+  here: R's PR-AUC is above M's at 3 dates, its nDCG@20 at 4.
+- P's precision@10 is the highest of the five at 5 dates, and R's at
+  the other 2.
+
+**F45. Under P's scores the site would order each depth by usage.**
+The API sorts a release's changes by score, then by `user_count`, then
+by symbol path and sub-target (api/routes/packages.py on main,
+c02ad2a). That user_count is usage_index's exact-path count: the count
+the strict `label` is made from, and one of the counts label_alias
+takes its maximum over (labels.py). Every change at one depth ties
+under P, so inside each depth the changes that scanned packages import
+by their own path would come first, by how many do, and the rest would
+follow by name. That is an order taken from the usage data, measured
+nowhere here, and not the "no particular order" §36.1 fixed for the
+site. The second key decides inside M's ties as well, which item 15's
+sweep showed are more common than F44 assumed. *Fix*, by §36.1:
+user_count stops ordering scored changes, so inside a depth the site
+lists them by name and says they are in no particular order. Unscored
+rows, and the fallback the site already labels "ranked by usage", keep
+their order by usage. It is Varad's code, and he is told with the
+load. Any other choice is a decision of its own, recorded with its
+reason, and the report describes what the site does. The report's
+numbers are P's, and they measure P's order with its ties averaged, not
+any order inside a tie. Found 11 Oct, reading the API before the load.
+
+**What follows: §36.1's list for P, in this order.**
+
+1. **The convention, everywhere** (F42, F44). evaluate()'s and
+   intervals()' defaults move to ties averaged, PR-AUC and the
+   within-upgrade measures alike, and every sweep row and model_run note
+   says which convention it was measured on, so no number is compared
+   across the two. A sweep on the new convention does not write §34.2's
+   fixed-order numbers, so ship_verdict.py and path_verdict.py run only
+   on the two sweeps kept aside.
+2. **P's numbers for the report**, with the intervals the model's have.
+   On the single split: P's PR-AUC, precision@10 and nDCG@20, and its
+   lift over popularity with the paired interval. At the thirteen dates:
+   both sweeps run again, writing P's lift over popularity and its
+   interval at each date. On the holdout, when it is opened:
+   final_eval.py reports P, with M and popularity beside it.
+3. **The site serves P.** Its scores are loaded under a name of their
+   own, with a model_run row of its single-split numbers; M's scores
+   stay as the fallback, and a change with no depth scores as the
+   deepest in its release. Then one API restart (§28.5), and Varad is
+   told the name, the restart, and F45's fix.
+4. **The stories.** stories.py runs again on P's order under §31.1's
+   rules, a tied list counted by its average over tie orders, and the
+   demo follows it.
+5. **The report and deck.** P is BreakRank's ranker: changes ordered by
+   how short their public import path is. M and R are what was tried,
+   with the rules that set them aside (§34.2 and this one). P's numbers
+   replace the model's, §35.2's paragraph on the line is rewritten from
+   §29.2, and the precision@10 sentence takes this sweep's numbers.
+
+### 36.3 Shipping path length: what the code does now, fixed before the runs (12 Oct)
+
+§36.2's list, items 1 to 4, as code, written and tested before anything
+below ran on the real data. What each run should print is set down
+here first; §36.4 records what it printed.
+
+**One convention** (item 1). `metrics.CONVENTION` is "ties-averaged":
+evaluate(), precision_at_k(), ndcg_at_k() and intervals() average every
+number over every order of tied scores unless told otherwise (`ties=False`
+for scikit-learn's PR-AUC, `expected=False` for one fixed order of the
+ties), so the old way can still be asked for, and fold_effect.py and
+label_blindspot.py ask for it, since they re-measure results recorded
+on it (§11.5, §11.6), as they keep binary relevance. Every sweep row
+carries `convention`, and model_run's notes say `convention=`. A sweep
+without the stamp was measured the old way, and train.py does not quote
+it; compare_sweeps.py does not set it beside a stamped one; and
+path_verdict.py and ship_verdict.py refuse a stamped one, since their
+rules were applied to the old convention and are not applied again.
+Each now reads by default the sweep its verdict was made on, kept aside
+(10 Oct's for §34.2, 11 Oct's for §36.2), and every refusal names the
+two. The F42 columns (`pr_auc_ties` and the rest) stay in a sweep row
+and now repeat the plain ones; the report does not show them twice.
+ablate.py and baselines.py move to the convention, say so, and stamp
+the files they write; §30.3's and §32.3's tables stand as measured.
+Item 15's fits run only with `stability.py --contest`, and only in a
+sweep run as the shipped model is, as §36.1 had it; the file they write
+is stamped, so ship_verdict.py does not rule on it: the verdict is in,
+and `--contest` is for reading and for the tests.
+
+**Path length's numbers** (item 2). `ml/model/ship.py` is the one place
+that says what ships: `path_scores` (minus public_depth; a change with
+no depth scores as the deepest of the frame it is measured on, or, for
+the site, of its own release), the name of its model_run row
+(`path-length` for label_alias, the label's name added for any other),
+the file that row goes to (`artifacts/path_metrics.json`), and the seven
+reference dates, which a test keeps equal to path_verdict.py's.
+baselines.py's `path` column is path_scores. Each sweep row carries
+`path_lift_vs_pop`, its paired interval `path_lift_lo` to
+`path_lift_hi` (both PR-AUCs on the same resamples, so the ratio's
+interval is one number's), and `path_beats_pop`, and the report prints
+the count, the count clear of its interval, the median and the range,
+as it prints the model's. train.py prints path length's four numbers on
+the test half with their intervals and the model's lift over it, writes
+path_metrics.json with them and, in its notes, path length's range
+across both sweeps' dates, a date the two share counted once (thirteen,
+not fourteen); the `--at` file, which every `--at` run writes over, is
+quoted only when it holds exactly the seven reference dates. Path
+length's row is the same whatever that run fitted (`model=` in its
+notes names the run it was written beside). The model's row keeps its
+numbers, now on the new convention, says `convention=`, and drops the
+three F42 fields that repeated its own. final_eval.py leads with path
+length and puts its four numbers and the convention in the ledger, in
+columns added before the holdout was ever opened; a ledger with other
+columns stops it before any number is shown.
+
+**The site** (item 3). `ml/db.py --scores` loads path length's scores
+for every row of features.csv and holdout.csv under path_metrics.json's
+row, and says how many rows had no depth (0 is expected: public_depth
+is missing only where module_depth is); `--ranker model` loads the
+model's under metrics.json's, as before. db_model_check.py asks after
+the row that ships, and `--ranker model` after the fallback, which it
+says is not meant to be served. The order inside a tie on the site is
+F45's fix, Varad's.
+
+**The stories** (item 4). stories.py ranks by path length unless told
+`--ranker model`, lists a release as the site will once F45's fix is in
+(by score, then by name), and counts a list by its average over every
+order of its ties: hits@10 and the users they carry by
+`metrics._expected`, and a tied change's place as the middle of the
+places its tie spans, printed as a span. One rule is added, since path
+length ties a release's changes far more than the model did: a used
+change tied with the whole of its list sits at exactly the half, and
+counts as not ranked rather than as buried, so it is never the failure
+story; a release the ranker made no order in is a random order, and
+the success rule already scores it so. §31.1's rules otherwise stand.
+
+**What the runs should show.** `python ml/model/train.py` prints the
+model's table with every number tie-averaged (its PR-AUC the report's
+0.289, §35.2, not the 0.2938 model_run holds from §33.4, which was
+scikit-learn's convention; a refit can move it a little), then path
+length's block, then two model_run rows; path_metrics.json's `pr_auc`
+should be the 0.265 of §34.2's single split, which nothing fitted can
+move, and its notes end with the clause beginning "across 13 cut
+dates" once both sweeps are rerun. `stability.py` and `stability.py
+--at` at the seven dates each print the model's table as before, with a
+`convention` column in the file and a line for path length's lift. At
+the seven reference dates path length's lift over popularity should be
+2.5x to 4.8x (§34.2), with its intervals beside it for the first time.
+`ml/db.py --scores` should write 21,452 scores under `path-length`,
+replacing nothing, and leave `lambdarank-label_alias-tuned`'s 21,452 in
+place; db_model_check.py then says a restarted API would serve
+`path-length`, and /health names the old model until the restart.
+stories.py prints its two stories from the test half; which releases
+they are is recorded in §36.4, not guessed here.
+
+Tested by `scripts/test_path_ships.py`, eight cases: the convention in
+every function, and the old way still there to ask for; ship.py's score
+on a frame and inside a release, its names and its dates; the sweep's
+columns, stamp and report, and a sweep from before the stamp still read
+as before; train.py's two rows on the fixture, path length's numbers and
+intervals recomputed from features.csv alone, its range over thirteen
+dates with the shared one counted once, an `--at` sweep at other dates
+left out, and the rows that are not quoted; the loader's scores for
+every row, a missing depth scored inside its release, the row they go
+under, which ranker each option loads, and db_model_check.py's answer
+for both; stories.py's tie spans, averaged counts and the whole-list
+tie; what refuses; and final_eval.py's order, ledger row, second opening
+and refusals. Fifty guards were broken on purpose, ten in metrics.py,
+six in ship.py and baselines.py, nine in stability.py, eight in
+train.py, six in the loader and db_model_check.py, five in stories.py,
+two in the verdict scripts and compare_sweeps.py, and four in
+final_eval.py, and the test failed on each; five survived the first pass
+and the test was strengthened for each (a fixture with no missing depth,
+a tie that nothing could break, a release that was the frame's deepest,
+a story the two rules agreed on, and a flag read only on the command
+line). An independent review of the code and of this section before
+the runs found the `--at` quoting gap, the whole-list tie, and ten
+smaller things, all closed, among them the ablation and baseline files
+now carrying the stamp, and the verdict scripts' advice to run a sweep
+again, which a stamped sweep would make a dead end. test_ship.py and
+test_path_baseline.py were brought to the new defaults, and the sweeps
+that test_holdout.py, test_intervals.py, test_relevance.py and
+test_tuning.py hand train.py now carry the stamp.
+
+### 36.4 The runs (12 Oct)
+
+Run 12 Oct, 12:30 to 12:50 India time, on the Mac and venv of §36.2,
+after §36.3 was pushed (4119f81). The code of 4119f81 passed all 19 test
+files first (test_path_ships.py the new one). Everything §36.3 said a run
+should show, it showed, with one exception, the overwritten record,
+below.
+
+**The model, refitted, is the same model.** `train.py` wrote
+artifacts/ranker.txt with the md5 it had before (dff4eb9c…), so the
+fallback the site holds and the file in the repo are still one model.
+Its numbers on the new convention: PR-AUC 0.2893 (0.225 to 0.426),
+2.79x popularity (1.73x to 5.41x), the report's 0.289 and 2.8x of §35.2;
+precision@10 0.281 (0.188 to 0.379) over 17 upgrades and nDCG@20 0.569
+(0.428 to 0.696) over 11, from 0.282 and 0.595 in the fixed order; 1.60x
+the line (1.26x to 2.08x). Its model_run notes say `convention=
+ties-averaged`; the row in the database keeps §33.4's 0.2938, the old
+convention, since the fallback was not reloaded.
+
+**Path length's numbers**, the report's from here on.
+
+- The single split (1,954 test rows, 190 upgrades, floor 0.0793):
+  PR-AUC 0.265 (0.186 to 0.375), **2.56x popularity (1.69x to 3.88x)**,
+  precision@10 0.287 (0.187 to 0.407) over 17 upgrades, nDCG@20 0.558
+  (0.404 to 0.707) over 11. The model's PR-AUC is 1.09x path length's
+  (0.78x to 1.74x), as §34.2 had it.
+- The seven reference dates (`--at`): path length's lift over
+  popularity 3.96x, 4.09x, 4.82x, 4.71x, 4.05x, 4.41x, 2.53x, median
+  **4.09x**, and the lower end of its interval above 1.0x at every date
+  (1.62x at the lowest, 2026-03-02). The model's columns repeated §34.2
+  and §35.1 to the digit, averaged where F44 averages them; the line's
+  PR-AUC moved a little, now on the same convention as everything else.
+- The sweep's own dates (2025-08-07, 10-10, 12-05, 2026-01-21, 03-05,
+  04-05, 05-06): path length 3.96x, 4.81x, 4.81x, 3.09x, 3.73x, 2.56x,
+  2.64x, median 3.73x, above 1.0x at every date; the model 2.34x to
+  6.37x, median 3.80x, §35.1's tie-averaged figures. There the model's
+  PR-AUC is above path length's at 5 of 7 (median 1.10x, 0.85x to
+  1.33x) and its nDCG@20 at 3 of 7: read, not ruled on, as in §34.2.
+- **Across the thirteen dates**, path_metrics.json's notes: beats
+  popularity 13/13, lift median 4.05x, 2.53x to 4.82x, its interval
+  above 1.0x at 13/13. The report's sentence is this one.
+
+**The site.** `ml/db.py --scores` scored 21,453 rows (features.csv and
+holdout.csv; 0 with no depth) and wrote 21,452 predictions under
+`path-length`, one row fewer for the same duplicate key the model's load
+had (§33.4: 21,452); nothing replaced, and `lambdarank-label_alias-
+tuned`'s 21,452 stay as the fallback. model_run `path-length`:
+trained_at 2026-10-12 07:18:28 UTC, pr_auc 0.2651, positive_rate
+0.079324. db_model_check.py: a restarted API serves `path-length`; its
+scores come from one day; version-string and metadata rows with a score,
+0 and 0. The API picks the newest row when it starts (§28.5), and on
+Render's free tier every wake from sleep is a start, so the switch
+happens on its own, before F45's fix is in; Varad is told the same day,
+with F45's fix and the choice of pinning the model meanwhile
+(MODEL_VERSION=lambdarank-label_alias-tuned).
+
+**The stories**, under §31.1's rules and §36.3's addition, on path
+length's order. Of the 9 candidate releases, path length's top 10 holds
+more used changes than a random order would at 7, fewer at 2; 30.0 of
+85 used changes found where a random order expects 13.1 (the model: 9 of
+9 and 28, §35.2). The success story moves to **redis 7.4.1 → 8.0.0**
+(28 May 2026): 134 changes, 50 used; the 57 shortest-path changes tie
+at the top, 50 of them used, so the top 10 holds 8.8 used changes on
+average against a random order's 3.7. Told with it: 49 of the 57 are
+parameters of one constructor, `redis.Redis(...)`, moved or given new
+defaults, used because 2 scanned packages import `Redis`; whether either
+passes those arguments, the label cannot see. The failure story stays
+**cryptography 46.0.7 → 47.0.0**: `PBKDF2HMAC`, used by 10 packages, the
+most in its release, sits at places 13 to 30 of 30, tied with every
+other change at depth 5. Its path is deep and it has no shorter name,
+which is now the rule itself, not a feature the model leaned on.
+
+**The verdicts.** `path_verdict.py`, with no argument, printed §34.2
+from the 10 Oct sweep. `ship_verdict.py` found no 11 Oct sweep: **the
+record of §36.2 had been written over.** §36.2 said the next sweep
+writes over it and it is copied aside first; the copy was a condition in
+the run's instructions, the first `ls` showed it had not been made, and
+the runs went ahead. The verdict itself was never in doubt: every number
+is in §36.2's tables and in the saved terminal output. The file was
+remade the same afternoon from the code that wrote it: a clone of the
+repository at cb73049, the same venv, the same features.csv (md5
+58c8070d…), `stability.py --at` at the seven dates. Its printed table
+and every line `ship_verdict.py` prints from it, the 105 numbers of the
+five rankers, their medians, the seven test-half fingerprints, the
+environment, R's trees, settings and distinct scores, and the rule's
+steps, are the 11 Oct output line for line, which is also the second
+time a refit on this Mac has reproduced the first to the digit (§36.2
+was the first). The remade file is kept under the 11 Oct name,
+`data/stability_label_alias_cv_tuned_at-20261011.csv`, and this
+paragraph is its provenance. git status was clean after the runs.
+
+**Varad's reply, the same evening.** F45 is in, on main and live, and
+/health names `path-length`. BREAKAGES_SQL and /analyze's per-release
+order are now `p.score DESC NULLS LAST`, then `CASE WHEN p.score IS NULL
+THEN COALESCE(u.user_count, 0) END DESC`, then symbol_path and
+sub_target: a scored tie is listed by name, and unscored rows and the
+usage fallback keep their order by usage; the two endpoints return the
+same order, and the test that compares them passes. /analyze's packages,
+once sorted by their highest user_count, another order nobody measured,
+are in name order. pytest.ini with `testpaths = tests` is in, so a plain
+pytest runs his tests and not scripts/test_*.py. On the site the badge
+reads "shortest import path first", with "Changes at one depth are in no
+particular order." under it, in place of "ranked by model" (a rule is
+not a model); unscored releases read "ranked by usage (no score)"; the
+footer carries the paragraph in §36.5, in place of the 2.2x to 6.0x
+text. The API's `ranking` field still says "model" wherever a score
+exists; renaming it is offered, and answered in §36.5. And the preset,
+cryptography 47.0.0, now starts with `cryptography.utils.DeprecatedIn46`,
+the shortest path, not `RevokedCertificate`, so its line on the site is
+rewritten (§36.5).
+
+**What follows.** Item 5 of §36.2's list: the report and deck present
+path length as the ranker, with the numbers above; §35.2's paragraphs
+are rewritten (§36.5). The 'unknown' status, the deletion step and
+db_prune follow, now that migration 007 is on Neon.
+
+### 36.5 What the report says now (12 Oct)
+
+Replacing §35.2's paragraph, slide, site copy and demo, and §29.3's and
+§30.3's paragraphs on the line. Every number averages over the order of
+tied scores (§36.3); the numbers are §36.4's. §32.3's ablation paragraph
+stands as measured, on the old convention and named as such, until
+ablate.py runs again; §30.3's reachability result pointed at what
+ships, one of its two features, alone.
+
+**For the report:**
+
+> BreakRank lists a release's changes by how short their public import
+> path is, shortest first: the number of dots in the shortest name a
+> user can write for the symbol, taken from the package's own alias
+> graph. Nothing is fitted. The rule was not the first idea: it came out
+> of the learned model, whose gain table put a third of its weight on
+> that one feature and whose ablation found the two reachability
+> features alone matching all seventeen, and it was then measured
+> against the model by a test fixed in advance. On the test half of the
+> development data, releases before 28 July 2026 (1,954 rows: 1,510
+> distinct changes in 190 upgrades), the rule reaches PR-AUC 0.265
+> against a floor of 0.079, 2.6 times the popularity baseline (95%
+> interval 1.7–3.9). Across thirteen cut dates, seven fixed in advance
+> and six more placed by the same procedure on the current data, it
+> beats popularity at every one, by 2.5x to 4.8x with the date (median
+> 4.05x), and at every date the lower end of its own 95% interval stays
+> above 1.0x; the lowest is 1.3x. One release can move the lift: when
+> sglang 0.5.10, whose 2,296 changes no scanned package uses, leaves the
+> test half, the popularity baseline recovers and the rule's lift falls
+> from 4.4x to 2.6x. Inside an upgrade, the rule's precision@10 is 0.287
+> (0.187–0.407) over 17 upgrades and its nDCG@20 0.558 (0.404–0.707)
+> over 11.
+>
+> Two learned rankers were set against it: a LambdaRank model on 17
+> features, and a model fitted the same way on the two reachability
+> features alone. The measures and their margins were fixed before the
+> 17-feature model was scored against the rule, and the rule for what
+> ships before the two-feature model was fitted. To ship, a model had to
+> win on at least one of two measures at the seven dates fixed in
+> advance and lose on neither: across releases, a higher PR-AUC at six
+> of seven by a median factor of at least 1.25; inside an upgrade, a
+> higher nDCG@20 at six of seven. The 17-feature model's PR-AUC is
+> higher at four dates and lower at three, a median factor of 1.07 (0.81
+> to 1.37); its nDCG@20 is higher at three. The two-feature model is
+> ahead on PR-AUC at six dates by a median factor of 1.16, short of the
+> bar, and higher on nDCG@20 at four. Letting the model order the
+> changes the rule cannot tell apart raised nDCG@20 at four dates of
+> seven. The rule's precision@10 is higher than the 17-feature model's
+> at all seven dates (medians 0.288 and 0.276). So the rule ships, and we
+> do not claim that a learned ranker orders a release's changes better
+> than the shortest public path first. What the project adds is the
+> pipeline around that ordering: the API diff, a label checked against
+> real downstream imports, the all-clear for releases with nothing to
+> fix, and the fixer.
+>
+> The 17-feature model, kept as the fallback, scores 0.289 on the same
+> test half (0.225–0.426), 2.8 times popularity (1.7–5.4) and 1.09 times
+> the rule (0.78–1.74); across the thirteen dates its lift over
+> popularity runs from 2.1x to 6.6x (median 4.2x), and sglang 0.5.10
+> moves it the same way, from 4.7x to 2.8x. A logistic regression on the
+> same 17 features beats popularity at every date too; the rule's PR-AUC
+> is above the regression's at six of the seven reference dates (medians
+> 0.223 and 0.182), and the shipped model's is above it at all seven, by
+> a median factor of 1.32. Whether boosted trees capture structure a
+> linear model cannot was tested once, in advance, on a tree classifier
+> against the regression: ahead at six of seven dates by a median factor
+> of 1.2499, under the 1.25 we had fixed, by scikit-learn's convention,
+> the only one that run has. No such claim was made, and a later model's
+> 1.32 on another convention does not reopen a verdict given once; since
+> neither learned ranker beats the rule, nothing in the result rests on
+> it.
+>
+> PR-AUC is the average precision expected over every order of tied
+> scores (McSherry and Najork, 2008), and precision@10 and nDCG@20 are
+> averaged over every order of the ties the same way; a rule that scores
+> every change at one depth alike has no order inside a depth, and these
+> conventions score it as such. scikit-learn's convention, which counts
+> a run of ties as one threshold, read popularity 1% to 10% higher and
+> the model under 4% higher. Intervals come from 2,000 resamples of
+> whole upgrades with nothing refitted, so they leave out how far a
+> refit moves a learned model's result; the rule has nothing to refit.
+
+For a slide:
+
+- Ships: shortest public import path first. Nothing fitted.
+- Beats popularity at all 13 cut dates, 2.5x–4.8x (median 4.05x);
+  every date's interval above 1.0x.
+- Two learned rankers set against it, the test fixed before the
+  scoring. 17 features: PR-AUC higher at 4 of 7 dates (median 1.07x),
+  nDCG@20 higher at 3 of 7. Two reachability features: ahead at 6 of 7
+  by 1.16x, under the 1.25x bar. Neither ships.
+- PR-AUC 0.265, floor 0.079; precision@10 0.287 (17 upgrades), nDCG@20
+  0.558 (11).
+- What the project adds: the API diff, the usage-checked label, the
+  all-clear, the fixer.
+
+**For the site** (in place since 12 Oct, Varad, §36.4: the badge
+reads "shortest import path first", with "Changes at one depth are in
+no particular order." under it, and the footer carries this):
+
+> BreakRank lists a release's changes by how short their public import
+> path is, shortest first. On releases published before 28 July 2026
+> that rule beats a popularity baseline at every evaluation date, by
+> 2.5x to 4.8x, and at every date the lower end of its 95% interval
+> stays above 1x. A learned ranker did not beat the rule, so the rule
+> ships. Later releases are held back, unseen, for the final evaluation.
+
+The API's `ranking` field still reads "model" wherever a score exists.
+Answered: rename its value to "scored" when convenient, beside the
+existing "usage_fallback", since the scores are whatever model_version
+names; a contract change, not urgent, and the site's own wording is
+what people read.
+
+The preset on the site is cryptography 46.0.7 → 47.0.0, the failure
+story, which under the rule lists `cryptography.utils.DeprecatedIn46`
+first (ties are listed by name, F45). Its line, replacing the model's:
+
+> Shortest import path first. The two changes at depth 2 lead, one of
+> them used downstream; `PBKDF2HMAC`, the change 10 packages use, is at
+> depth 5 and sits in the last tie, places 13 to 30 of 30. The rule's
+> failure case: a deep path with no shorter public name.
+
+If a second preset is wanted, redis 7.4.1 → 8.0.0 is the success story,
+with: "134 changes, 50 of them used downstream. The 57 shortest-path
+changes lead, tied, and 50 of them are the used ones: a random order
+would put 3.7 used changes in the first 10, this order puts 8.8 on
+average."
+
+**For the demo**, replacing §35.2's:
+
+> redis 7.4.1 → 8.0.0 made 134 changes to its public names, and
+> downstream code uses 50 of them. Shortest import path first puts 57
+> changes at the top, tied, 49 of them parameters of `redis.Redis(...)`
+> moved or given new defaults, and the used changes are 50 of those 57.
+> A random order would put 3.7 of the used changes in the first 10; this
+> order puts 8.8 there on average. Across the 9 test-half releases with
+> a used change and 20 or more changes, the rule's top 10 beats a random
+> order at 7, finding 30 used changes where a random order would find
+> 13.1.
+
+Told with it, before anyone asks: 49 of the 50 count as used because 2
+scanned packages import `Redis`; whether either passes those arguments,
+the label cannot see; the 50th, `URL_QUERY_ARGUMENT_PARSERS`, is used by
+one. The order inside the 57 is no order: the site lists them by name
+and says so. And the failure, from cryptography 46.0.7 → 47.0.0:
+`PBKDF2HMAC`, used by 10 packages, the most in its release, sits at
+depth 5 in the last tie, places 13 to 30 of 30, below two depth-2
+changes and a tie of ten on a shorter path, eight of them removed
+elliptic curves. The rule cannot rank it higher, because the rule is its
+path. §31.2's coda
+stands: the label measures use, not breakage.
+
+**What changed against §35.2.** The ranker is the rule; the model's
+paragraph is what was tried. The lift the report leads with is the
+rule's (2.6x on the single split, 2.5x to 4.8x at the dates) where it
+was the model's (2.8x, 2.1x to 6.6x). The model's precision@10 and
+nDCG@20 are restated from their average over tie orders (0.281 and
+0.569 on the single split; §35.2 had 0.282 and 0.595 in the fixed
+order), and the "rule's precision@10 is higher at all seven" sentence
+is restated from 11 Oct's sweep, where it holds with the averaged
+numbers (§36.2). The line's paragraph is rewritten on one convention.
+The demo moves from redis 7.3.0 → 7.3.1 to redis 7.4.1 → 8.0.0; the
+failure story is unchanged in kind and now explained by the rule
+itself.
+
+## 37. The guide's three asks at the mid-semester review (22 Sep), and where each stands (12 Oct)
+
+Recorded on 12 Oct, from Vaibhav's account. The review deck and report
+of 22 Sep are §20.4's. The guide was impressed and asked for three
+changes. None was written down here at the time, and the plan to 20 Nov
+grew around them without naming them, so this section does.
+
+**Ask 1. The tool should change the code, not only rank the changes.**
+Her words, as remembered: rank first, then change the codebase, in real
+time, or change the whole codebase and hand it over. *Where it stands:*
+this is the fixer, the second half of the plan to 20 Nov (the plan doc's
+table of change kinds and what the fixer does with each). The design
+answer is a reviewable diff, never a silent edit: the tool locates every
+line of the user's project that uses a changed name, rewrites the
+mechanical kinds (a parameter moved or made keyword-only, a changed
+default, a moved import) and flags the rest with the exact lines, and
+the output is a diff or a pull request the user applies, with the
+project's own tests run on it. That is the form every serious tool of
+this kind takes (ruff's NumPy 2 rule, bump-pydantic, MLCatchUp), and it
+is what the panel should be shown: a tool that edits a codebase without
+a review step is one nobody would run on their own code. The fixer's
+design goes into NOTES this week (§38), before any code; the count of
+how many of today's changes each kind of fix covers sizes it. Nothing of
+it exists yet beyond the design in the plan doc, and it is the item on
+the plan that cannot slip. (18 Oct: §38 is that design. Two things said
+here are corrected there: "a moved import" is not a kind griffe
+reports, so it is not rewritten, §38.1; and the tests run only when the
+user asks, §38.4.)
+
+**Ask 2. Why LambdaRank? What else was tried, and where are the other
+models' metrics?** *Where it stands:* answered more fully than she
+asked, and not in LambdaRank's favour. Every comparison was made under a
+rule fixed before the run, at seven cut dates, with PR-AUC, precision@10
+and nDCG@20 and their intervals; each has its section and its script:
+
+| compared | result | where |
+|---|---|---|
+| three labels for "used downstream" | `label_alias` ships: worst-case lift 2.30x against 1.91x | §24 |
+| LambdaRank taught binary vs graded relevance | binary stays; graded won nothing clearly | §25 |
+| six baselines: every change alike, semver, popularity, kind prior, a logistic regression on the same 17 features, path length | popularity and the regression are the ones that matter; the regression carries 90% of the ranker's lift | §5.2, §29.2, §30.3 |
+| LambdaRank vs a LightGBM classifier (the book's own sequence) | classifier median lift 4.14x, worst 2.03x; ranker 4.08x, worst 2.30x; neither clearly ahead | §29.2 |
+| boosted trees vs the logistic regression | the classifier ahead at 6 of 7 dates by 1.2499x, a hair under the 1.25x fixed; no claim that trees capture structure a line cannot | §29.2 |
+| trees sized by the data (CV tuning) vs fixed | tuned ships: median lift 5.20x against 4.08x | §30 |
+| the 17-feature model vs path length alone, a rule with nothing fitted | no difference the rule can see on either measure | §34 |
+| what ships: path length, a two-feature LambdaRank, the 17-feature model, and the model's order inside the rule's ties | **path length alone ships**; the model is the fallback | §36 |
+
+So the honest answer to "why LambdaRank" is now: it was the right tool
+for the question as the book posed it (order one upgrade's changes, not
+classify them one at a time), it was measured against a classifier, a
+regression and a rule under tests fixed in advance, and the rule won.
+What the learned model contributed was the finding: its gain table and
+ablation pointed at path length, and the comparison then confirmed that
+one feature was the model. The report presents it that way (§36.5), and
+the table above is the "proof" she asked for, in one place. A panel will
+ask the follow-up, "then why machine learning at all?", and the answer
+is in three parts: the label (whether real downstream code imports a
+change, measured over 39,154 used symbols, is what makes any ranking
+checkable), the pipeline that produces the changes, and the fixer, which
+is where the work goes from here. A rule that beats the model is a
+result; it is told as one.
+
+**Ask 3. Does it run locally, with or without internet, or in a browser
+with internet?** *Where it stands:* today, in a browser with internet.
+The site (Vercel) calls the API (Render), which reads the database
+(Neon); nothing runs on the user's machine. The fixer changes that,
+because it has to run where the code is: a command-line tool on the
+user's project, and a GitHub Action on a pull request. Decided today,
+for the design (§38): the tool runs offline for every release already
+analysed. The data it needs is small, every analysed change with its
+score and usage count, about 28,000 rows, and ships inside the tool, so
+rank, locate and fix work with no network at all for the 351 packages
+and 3,204 releases the database holds today (§36.4's load). (18 Oct:
+the figures §38.7 fixes are 21,452 changes, 3,204 releases, 351
+packages, today's dataset after §33.5's deletions; the table's union is
+larger and is not the bundle's source, for the reason given there.) Internet is needed only for a package or
+version the bundle does not have (the source distributions have to be
+downloaded to diff them), and the tool says so and stops rather than
+guessing. The web site stays as the online face. This also protects the
+demo: the book's own warning is that the backend sleeps and the hall's
+Wi-Fi fails, and a command-line run on a laptop does neither.
+
+**What this changes in the plan.** The fixer design (§38) is written
+this week with the offline bundle as a requirement, not a nicety; the
+"models compared" table above goes into the report and deck as its own
+page, since it is a direct answer to the guide; and the guide is told
+the result before the next review, as a finding, with the table. The
+question for her that is still open is the plan doc's: whether 20 Nov
+is the final evaluation, which decides whether the holdout is opened on
+16 Nov.
+
+## 38. The fixer. The design, fixed before the code (18 Oct)
+
+The guide's first ask (§37) is that the tool changes the code, not only
+ranks the changes; her third is that it runs where the code is, offline.
+This section is the whole design, written before any of it exists, sized
+by today's data, read once by an independent reviewer whose findings are
+folded in (the first draft overclaimed in six places and had two
+unsound cases in each rewrite rule; §38.12 lists them), and it is what
+the code of weeks 2 to 5 of the plan is checked against. The one
+sentence: **for one upgrade of one package, the fixer lists the lines of
+a project that each changed name touches, in the site's order, rewrites
+the lines whose fix is mechanical, and prints a diff to review; it never
+edits without showing the diff, never runs the project's code or the
+package's unless told to run the tests, and never guesses a
+replacement.** That is the shape every serious tool of this kind has
+(ruff's NumPy 2 rule, bump-pydantic, MLCatchUp), and the reason is the
+one §37 gives: a tool that edits a codebase without a review step is one
+nobody would run on their own code.
+
+### 38.1 What it does with each kind of change, sized by today's data
+
+Counted on 18 Oct over the 21,453 rows the loader writes (changes.csv
+less §33.5's version-string and metadata rows; the table holds 21,452,
+one duplicate key dropped before insert, §8), and over the dev set's
+16,580 rows for "used downstream" (`label_alias`, §24: a real downstream
+package imports the changed name). The unit of every count here is a
+ROW, which is a parameter for the parameter kinds: F12's convention,
+under which `redis.Redis.__init__` with 49 moved parameters is 49 rows
+and one function, and one call site.
+
+| kind, as griffe reports it | rows | share | used downstream (dev set) | the fixer's action |
+|---|---|---|---|---|
+| PARAMETER_MOVED, same name, new position | 6,906 | 32.2% | 86 of 5,619 (1.5%) | **rewrite R1**: pass the argument by name |
+| OBJECT_REMOVED | 5,556 | 25.9% | 74 of 4,036 (1.8%) | flag the lines; no replacement is guessed |
+| ATTRIBUTE_CHANGED_VALUE, a constant's value | 4,355 | 20.3% | 117 of 3,029 (3.9%) | list the lines that read it, with old and new value; nothing to rewrite |
+| PARAMETER_REMOVED | 1,613 | 7.5% | 81 of 1,125 (7.2%) | flag the lines that pass it |
+| PARAMETER_CHANGED_DEFAULT | 912 | 4.3% | 84 of 859 (9.8%) | **rewrite R2** where the old default is a plain literal (at most 621 of the 912, §38.4): pin it in calls that leave the parameter out; the 291 sentinels, module constants and lambdas are flagged |
+| PARAMETER_CHANGED_KIND | 596 | 2.8% | 17 of 575 (3.0%) | **rewrite R1** for the 457 that became keyword-only, where the old kind allows a keyword; flag the 139 that became positional-only |
+| PARAMETER_ADDED_REQUIRED | 562 | 2.6% | 15 of 462 (3.2%) | flag: the user must supply a value |
+| OBJECT_CHANGED_KIND | 375 | 1.7% | 39 of 332 (11.7%) | flag |
+| CLASS_REMOVED_BASE | 367 | 1.7% | 70 of 360 (19.4%) | flag the subclasses and isinstance checks |
+| RETURN_CHANGED_TYPE | 138 | 0.6% | 16 of 120 (13.3%) | flag the lines that use the result |
+| PARAMETER_CHANGED_REQUIRED | 73 | 0.3% | 6 of 63 (9.5%) | **rewrite R2** where the old default is a plain literal: the value must now be supplied, and the old default is the one the call relied on; else flag |
+
+Four things the counts say that the table does not. First, the ceiling
+for automatic rewrites is 6,906 + 457 + 621 = 7,984 rows, 37% of all
+rows, plus whatever part of the 73 has a literal old default; it is a
+ceiling because R1 fires only where a resolved call passes the
+parameter positionally and R2 only where a resolved call leaves it out,
+and because some of the 621 are cosmetic (§38.4). Second, of the 605
+rows the dev set says real code imports, 187 are of the three
+rewritable kinds (86 + 84 + 17), and they are 92 functions; counted
+directly on those rows (18 Oct, the same evening), 146 are rewritable
+as the rules stand: the 86 moved, 3 of the 17 kind changes that became
+keyword-only (the overall share, 457 of 596, does not hold among the
+used ones), and 57 of the 84 changed defaults with a literal old
+default; plus whatever of the 6 now-required parameters has one, which
+griffe's message for that kind does not carry (§38.4). So roughly a
+quarter of the ROWS that downstream code imports is of a rewritable
+kind, 146 to 152 of 605. That is a share of
+rows, not of call sites, and "imports" is what the label measures, not
+"breaks" (§36.5: whether the importer passes those arguments, the label
+cannot see). Third, the used-downstream rate runs the other way from the
+rewritable kinds: the two R1 kinds are among the least used (1.5% and
+3.0%) and the flag-only kinds the most (a removed base class 19.4%, a changed return
+type 13.3%, a changed object kind 11.7%). The fixer automates the kinds
+downstream code touches least, because those are the kinds whose fix
+is mechanical; mechanical is not the same as important, and the report
+says so before a panel does. Fourth, the moved parameters are
+concentrated: 594 functions in 167 releases, and sglang's six releases
+hold 4,467 of the 6,906 (0.5.10 alone 2,011), databricks-sdk 0.134.0
+794 and pandas 3.0.0 146; a generated signature that reorders fifty
+parameters is fifty rows and one call site, so counting rows overstates
+the work and understates the value, and the measure that matters is
+call sites in real code (§38.6). One row of the plan doc's table is
+dropped: "a name moved to another module and still exported, rewrite
+the import" has no kind behind it, since griffe's diff reports the old
+path as OBJECT_REMOVED and has no move detection (checked in griffe
+2.2.0's diff.py), so it is a flag like any removal until the ingest
+records the link (§38.11).
+
+### 38.2 Inputs
+
+A project directory (default: the current one), a package name, the
+version upgraded FROM and the version upgraded TO, and the bundle
+(§38.7). The tool is run with the project's own interpreter (`python -m
+fixer`, inside its environment), so the environment is that
+interpreter's site-packages, from `sysconfig`; `--env <path>` names
+another, and two environments are two runs. `--from` defaults to the
+version installed there, read from the package's `*.dist-info/METADATA`
+on disk (the directory name is the normalised distribution name,
+`databricks_sdk-0.134.0.dist-info`), never by importing; the
+distribution's import roots come from its `top_level.txt` or `RECORD`,
+since the two names differ (the `griffe` distribution is a shell whose
+code ships in `griffelib`; the ingest's `resolve_layout` does the same
+job for sdists). `--to` defaults to the newest release of the package
+the bundle holds. The changes in scope are every analysed change whose
+version_to lies in (from, to], as the site's /analyze walks a range (§8,
+`release_rows`), and the tool says for each release in the range what
+the bundle says of it: compared and changed, compared and clean, or not
+compared and why (§33.9's statuses), so an upgrade across a release
+nobody compared is reported as such, never shown as safe. A package or
+version the bundle does not have stops the tool with that sentence and
+the one way forward (run the ingest, which needs the network to fetch
+the source distributions); an empty range (the new version already
+installed, so `--from` reads it) says so and stops; a `--to` newer than
+the bundle's newest says the bundle was built on its manifest's date and
+stops. It does not guess.
+
+### 38.3 Locate: which lines use each changed name
+
+Static only. The fixer parses every `.py` under the project with libcst,
+one parser for locating and rewriting so positions agree, and imports
+nothing from the project or the package; §17's rule for the ingest
+(`scripts/test_no_execution.py`) is the fixer's too. libcst's qualified-
+name metadata resolves the project's imports (`import pkg`, `import
+pkg.mod as m`, `from pkg.mod import name as alias`) into the dotted path
+each name stands for; the project's own relative imports between its
+files are followed only if week 2 has time, and otherwise a name
+imported from the project's own module is reported as unverified. Every
+attribute chain, call, `isinstance` and base-class use is matched
+against the changed symbols' paths: the definition path
+(`redis.client.Redis`) and every export path the ingest recorded for it
+(`export_paths`, `redis.Redis`), since downstream code imports the
+short one. A call to a class is a call to its `__init__`, which is where
+redis 8.0.0's 49 moved or re-defaulted parameters live (§36.5). A method
+defined on a base or mixin and called on the subclass (redis's `set`
+lives on a commands mixin and is called on `Redis` instances; §10.2's
+fold records changes on the defining class) is matched through the
+class's bases, read with griffe from the installed old version, so a
+change on `CoreCommands.set` matches `Redis(...).set(...)`. A method
+called on an instance is resolved only when the instance was made in
+the same scope or module from a known class (`r = Redis(...)`, then
+`r.set(...)`); any other `.set(` is reported as "unverified: a method of
+this name on an object of unknown type", never dropped and never
+rewritten. A reference that is not a direct call (`functools.partial(f,
+1, 2)`, `map(f, ...)`, `super().__init__(host, port)` in a project
+subclass, a project class that subclasses the package's) is reported as
+"referenced, not called here"; project-side subclasses are not followed.
+`from pkg import *` is reported as a file the tool cannot see through;
+`getattr`, strings and `importlib` are invisible and the report says so
+once. Each hit carries the file, line and column, the source line, the
+change it matches, and its confidence: resolved, unverified or
+referenced.
+
+### 38.4 Rewrite: two rules, nothing else
+
+Rewrites are computed per CALL SITE from every row of that function in
+the range, never per row: a call to `Redis(...)` with 49 moved
+parameters is one transform, a parameter with a moved row and a changed-
+default row is handled once, and a call whose function also carries a
+flag (a removed parameter, a new required one, a parameter made
+positional-only) gets no rewrite, since R1 after a removal earlier in
+the signature mis-names every argument after it (old `f(a, b, c)`, new
+`f(a, c)`: `f(1, 2, c=3)` raises "multiple values for c"); the rewrite
+is printed under the flag as what it would be once the flag is dealt
+with. libcst makes the edits and keeps the file's formatting, comments
+and quotes, so a diff shows the change and only the change.
+
+**R1, pass by name.** For a resolved direct call passing positionally an
+argument whose parameter PARAMETER_MOVED or became keyword-only
+(PARAMETER_CHANGED_KIND), the positional arguments from that one to the
+last are rewritten as keywords, `make_zipfile(dst, root, True)` becoming
+`make_zipfile(dst, root, compress=True)`. The rule's premise, that
+passing by name is valid before the upgrade and after it, holds only
+under conditions the first draft left out, each read off the OLD
+signature, which the fixer reads statically with griffe
+(`allow_inspection=False`, as the ingest, §17; the same griffe version
+as the ingest, so kinds and messages agree) from the installed old
+version when it is installed, and otherwise flags: every parameter in
+the rewritten run was positional-or-keyword in the old version (griffe
+counts a positional-only parameter as positional too, so a MOVED row or
+a "became keyword-only" row can sit on one that never took a keyword);
+no parameter in the run became positional-only in the new version; the
+call passes no more positional arguments than the old signature has
+named ones (an overflow into `*args` has no name); the call has no `*`
+or `**` unpacking (positions unknown); and griffe's position counts
+`self`, so a method called on an instance or a class called as a
+constructor is offset by one and `Redis.set(r, k, v)` is not, which the
+fixture project tests both ways. A moved parameter that was also renamed
+is REMOVED plus ADDED_REQUIRED to griffe and is outside the rule; one
+already passed by name needs nothing and is listed as such. A function
+whose old signature griffe cannot read (a `functools.wraps` shell of
+`*args, **kwargs`, an `@overload` set, an attrs or pydantic class whose
+`__init__` is generated; griffe synthesises `dataclasses` only; an
+editable install griffe's finder does not see) is flagged with that as
+the reason, so the user sees why. [Added 22 Oct, from the review of R1:
+one premise the data cannot check. R1 assumes that no parameter BEFORE
+the first moved one vanished without a row. griffe 2.2.0 reports no row
+for a parameter removed when the new signature gains `*args` and
+`**kwargs` together (diff.py counts it as swallowed) and reports the
+parameters after it as moved, so `swallow(a, b, c)` -> `swallow(a, c,
+*args, **kwargs)` is one MOVED row on `c`, and R1's `swallow(1, 2, 3)`
+-> `swallow(1, 2, c=3)` raises "multiple values for c" on the new
+version. The bundle's one-line message carries no positions, so the
+fixer cannot see it; §38.6's hand check classes such a rewrite as unsafe,
+and §38.11's ingest change would carry griffe's `details` ("position:
+from 2 to 1"), which lets R1 withhold where the first moved parameter
+moved DOWN, the mark of an unreported removal before it.]
+
+**R2, pin the old default.** For a resolved direct call that does not
+pass a parameter whose default changed (PARAMETER_CHANGED_DEFAULT) or
+that is now required (PARAMETER_CHANGED_REQUIRED), and whose old
+default is a plain literal, the fixer adds `name=<old default>` to the
+call. griffe's message carries both values for a changed default and
+neither for a now-required parameter ("Parameter is now required"), so
+for the latter the old default is read from the old signature as R1
+reads it, and without the old version installed those are flagged. "Plain literal" means: griffe's printed default parses with
+`ast.literal_eval`, is not a mutable empty container (`[]`, `{}`,
+`set()`, since a shared default and a fresh one are different programs
+and a changed mutable default is usually the bug being fixed), and
+differs in value from the new default (griffe compares source text, so
+`'a'` to `"a"` and `1e3` to `1000.0` are rows; those are skipped, and
+the 621 is therefore "at most"). [26 Oct, from the review of R2: the
+parenthesis is wrong. griffe renders a constant default with `repr`, so
+`'a'` and `"a"`, `1e3` and `1000.0`, `0x10` and `16` print the same and
+produce no row (checked with griffe 2.4.1 on a two-version module, and
+on the bundle: 0 of the 601 CHANGED_DEFAULT rows with a plain old value
+are such a pair). The check stays in the code as a guard against a
+reader that compares text, and the 621 is "at most" for the other
+reasons only.] The conditions R1 has on kind and
+unpacking apply: a positional-only parameter takes no `name=`, and a
+call with `**` unpacking may already carry the name. What R2 claims is
+exactly this: the call now states the value it relied on, so the
+upgrade cannot change that value under it. Whether the new release
+still treats that value as the old one did is the library's business
+and sometimes it does not (a `None` that meant "the legacy path" and
+now raises; a default that moved because its meaning moved), which the
+signature cannot show and §38.6's hand check judges; so the report
+prints each R2 line with its second option, "delete this argument to
+accept the new default", and the old and new values side by side.
+Nothing else is rewritten.
+
+The output is a unified diff on stdout, or to a file with `--diff
+<path>`; `--apply` writes the files and still prints the diff; a second
+run after `--apply` finds nothing to rewrite, which is the test of
+idempotence; the project's tests run only with `--test "<command>"`,
+since that executes the user's code and the choice is theirs. Exit
+codes: 0 nothing in the project touched, 1 lines flagged or rewritten
+(this is information, not failure), 2 the tool could not run.
+
+### 38.5 The report, and the site's order
+
+Rank first, then fix, as the guide put it. The report has two parts. The
+first is every change the locate step found in the project, ordered as
+the site orders them, by path length, the ranker that ships (§36), with
+the usage count beside each, then by name inside a tie, as the site
+does; under each change its lines, and for each line the action:
+rewritten (in the diff), flagged (with griffe's words, the reason where
+a rewrite was withheld, and the old and new value where there is one),
+unverified, or referenced. One call with several rows prints once, with
+every row under it. The second part is the rest of the upgrade's
+changes, ranked, one line each, so the user sees what the upgrade
+changed that their code does not touch; it is cut at two hundred lines
+with the count of the rest, since sglang 0.5.10 alone has 2,011.
+Private names (`is_private`, hidden on the site) are reported when the
+project uses them, marked private, since a project that imports a
+private name breaks all the same. griffe is credited in the footer, as
+everywhere.
+
+The GitHub Action is not built before 20 Nov (§38.10). Its design, so
+the panel can ask: a composite action on `pull_request` (never
+`pull_request_target`: it must not check out a fork's code with write
+rights), reading `==` pins of the project's direct dependencies from the
+PR's diff of requirements and lock files, running the CLI once per
+changed pin, and posting the report's first part and the diff as one
+comment, cut to GitHub's limit; it never fails the check on flags, and a
+fork's PR gets no comment since its token cannot write. Applying the
+diff to the branch is a separate opt-in. The CLI alone meets the
+guide's third ask; the action wraps it.
+
+### 38.6 Measured by
+
+Two numbers, as the plan doc fixed them. The first is above: the share
+of rows each kind covers on today's data, 37% of rows rewritable as a
+ceiling, about a quarter of the rows downstream code imports. The second
+is the one that counts, in week 5, on real downstream code, with the
+sample fixed here before any run. The downstream packages are the
+usage scan's (`data/usage_pairs.csv`, one row per scanning package and
+symbol it uses, `ml/ingest/run_usage.py`), restricted to those that use
+a symbol with an R1 or R2 row in an upgrade of the dataset; the TEN with
+the most such symbols are the sample, listed in NOTES before the run,
+and the list is a convenience sample biased to large consumers, said as
+such. The scan kept no version and deleted the trees, so each package's
+latest release at a date stated in NOTES is resolved from PyPI's release
+history and downloaded once (the network use, named), and the old
+version of the changed package is installed from a wheel into a venv per
+package, so R1 has a signature to read (installing a wheel runs no
+package code; an sdist build would, and is not done). For each, the
+fixer runs for the upgrade that produced the change, and the report
+counts: hits, by confidence; rewrites proposed; then every proposed
+rewrite is read by hand and classed correct, wrong, unsafe (parses but
+changes meaning) or no-op (the code already passes by name or pins the
+value), and thirty flagged lines in total across the ten are read the
+same way. The number reported is the precision of the rewrites as a
+count over a count, never a percentage alone, with the hits and the
+unverified share beside it; if fewer than twenty rewrites are proposed
+in all, the counts are reported and no rate is claimed. Recall is not
+claimed, since nothing independent counts the call sites the tool
+missed, and the report says so. No model is fitted anywhere in this, so
+there is no split to protect, but the ten are named before the run for
+the same reason every rule here is fixed before its number.
+
+### 38.7 The offline bundle
+
+The guide's third ask, and the demo's insurance against a sleeping
+backend and the hall's Wi-Fi. The bundle is one SQLite file inside the
+tool (the standard library reads it; no dependency), built by
+`scripts/build_bundle.py` from today's CSV files through the loader's
+own functions (`not_a_change`, `release_plan`), so it holds exactly the
+rows the loader writes and the statuses the loader establishes, by the
+same rules as the site: 21,452 changes, 3,204 releases, 351 packages
+(§36.4's load, §33.6), a few megabytes. Not from the database, for one
+reason the review found: the breakage table has no `export_paths`
+column (migrations 001-004; `breakage_rows` writes symbol_path, kind,
+sub_target and the feature columns), and §38.3's matching of the short
+import path depends on it; so the table's 4,038 aged-out rows, which
+have no changes.csv behind them, are outside the bundle, and the bundle
+is today's dataset where the site is the union (§8). Putting
+`export_paths` into `detail` through the loader would let a later bundle
+be built from the table; it is a dataset change and waits (§38.11).
+Three tables: `release` (package, version, released_at, analysis_status,
+n_changes), `change` (package, version_to, symbol, export_paths, kind,
+griffe's message, old and new value where the message has them, which
+is the changed defaults and the changed values, not the now-required,
+is_private, user_count, and the path-length score the site serves), and
+`manifest` (built when, from which files, how many rows, the griffe
+version). The tool never touches the network: rank, locate and rewrite
+work for every release the bundle holds, and for anything else it stops
+and says so (§38.2), including a bundle older than the release asked
+about.
+
+### 38.8 Hard parts, stated up front
+
+Methods on objects need the object's type, which static analysis only
+sometimes has; §38.3's "unverified" is the honest answer and its share
+is reported. A behaviour change that leaves the signature alone is
+invisible to griffe and so to any fixer built on it, and R2's pinned
+value can be one (§38.4). R1 and the base-class matching depend on the
+old version being readable from the environment; a CI runner, a PR that
+has already bumped the version, or a project without the old version
+installed gets flags, not rewrites, until §38.11. Generated or very
+wide signatures (sglang's) produce many rows and few call sites.
+Dynamic imports, `getattr`, star imports and string references are not
+seen, and the report names the files where that could matter. The
+automated kinds are the ones downstream code uses least (§38.1).
+Anything the fixer cannot do, it says in the report rather than doing
+less quietly.
+
+### 38.9 What it never does
+
+Edit a file without printing the diff. Rewrite a line it could not
+resolve. Guess a replacement for a removed name or a value for a new
+required parameter. Run the project's code or the package's, except the
+project's tests when asked with `--test`. Change anything outside the
+lines the located changes touch. Claim recall.
+
+### 38.10 Where the code goes, and the order of work
+
+A new top-level package `fixer/` (`bundle.py` reads the SQLite file;
+`locate.py`; `rewrite.py`, the two rules; `report.py`; `cli.py`, run as
+`python -m fixer <package> --from <version> --to <version> [project]`,
+with a console script `breakrank-fix` once the repository has a
+`pyproject.toml`, which is Varad's and mine to agree on),
+`scripts/build_bundle.py`, and `scripts/test_fixer_*.py` against a small
+fixture project checked into `tests/fixtures/`, with the same discipline
+as every round since §33: expected results written first, guards broken
+on purpose, both pandas versions where pandas is involved. New
+dependency: libcst, for parsing and the rewrites. griffe is already the
+extractor and reads the old signatures too. The review's finding on
+feasibility is taken: the first draft's weeks held more than one person
+part-time can build beside the 30 Oct checkpoint, so the order is by
+value and the cuts are named. Week 2 (19 to 25 Oct): the bundle and
+direct-import locate, with method calls on unknown receivers reported
+as unverified and relative imports only if time remains. Week 3 (26 Oct
+to 1 Nov): R1 against the fixture project and against redis 7.4.1 ->
+8.0.0, the demo's upgrade, with its 49 parameters and its mixin
+methods. Week 4 (2 to 8 Nov): R2, the report, the evaluation's venvs.
+Week 5, 9 to 12 Nov: the evaluation of §38.6; 13 Nov the freeze, so a
+bug the evaluation finds on 12 Nov is fixed and one found later is
+recorded in the report, not fixed; 19 Nov the rehearsal. Cut in this
+order if the weeks run short: the GitHub Action (already out), relative
+imports and instance tracking in locate, R2, the evaluation's sample
+from ten packages to five. R1 is 7,363 of the 7,984-row ceiling and
+stays. The ranking work and this overlap until the 30 Oct checkpoint,
+as the plan has it.
+
+### 38.11 The ingest change this points at, not before 20 Nov
+
+Three things the fixer would do better with data the ingest does not
+yet keep: the old and new parameter lists of a changed function, with
+their kinds, which would free R1 from needing the old version installed
+and let the bundle carry the mapping; the link from a removed name to
+the name it moved to, when a release re-exports it elsewhere, which
+would make the plan doc's "rewrite the import" row real; and
+`export_paths` in the table's `detail`, so a bundle could be built from
+the union the site serves. All three are a `detail` field and a
+re-ingest on a Linux machine, and all wait until after the review, as
+every dataset change does. [22 Oct: a fourth, from the review of R1:
+griffe's `details` for a moved parameter ("position: from 2 to 1 (-1)"),
+which the one-line message the ingest keeps leaves out; with it R1 can
+withhold where the first moved parameter moved down, §38.4's unreported
+removal.]
+
+### 38.12 What the review of the first draft found
+
+Recorded as the rounds since §33 record theirs. Arithmetic: every count
+and share held; one trio did not (the first draft gave the bundle
+25,490 changes and 3,851 releases "of 351 packages", mixing the table's
+union with today's load), and two units were wrong (the quarter is of
+rows, by F12, and the label measures imports, not breaks). R1 had cases
+its premise does not cover: a positional-only parameter that moved, a
+parameter that moved and became positional-only, an overflow into
+`*args`, a call with unpacking, a removal earlier in the signature, the
+`self` offset, indirect calls, unreadable generated signatures; each is
+now a condition or a flag in §38.4. R2 claimed behaviour unchanged where
+it pins a value whose meaning may have moved; now it claims the pin,
+excludes mutable empty defaults and cosmetic changes, and the hand check
+judges the rest; PARAMETER_CHANGED_REQUIRED is R2's case too. The bundle
+could not be built from the database for want of `export_paths`. The
+evaluation could not recover the scanned sdists or give R1 a signature;
+both are fixed in §38.6. The weeks held too much; the action is out and
+the cuts are ordered. "All of it is located" and "by definition
+installed" overclaimed and are gone. Left open for Varad: the new
+directory and the `pyproject.toml` at the repository's root; whether
+the site should mark R1 and R2 kinds as "fixable by the tool", one rule
+on the kind and the message; and the Action, when it comes, with its
+permissions (`pull-requests: write` for the comment, `contents: write`
+only for the opt-in apply).
+
+**Varad's answers (19 Oct), which fix the open points.** He read §38.1 and
+§38.4 first, checked the sizing table (every share and the 7,984
+ceiling) and found §38.7 answered the question he had, since the bundle
+goes through the loader's own functions and so counts what the site
+counts. (1) `fixer/` and a root `pyproject.toml`: yes, with four
+conditions, each now part of §38.10. It packages only `fixer`, with the
+SQLite bundle listed as package data: without an explicit package list
+setuptools also finds `api/`, `db/` and `ml/` and refuses the build, and
+without the package data the installed tool has no bundle. No pytest
+settings in it, since `pytest.ini` takes precedence and anything under
+`[tool.pytest]` would be silently ignored. The fixture project goes
+under `scripts/fixtures/`, beside `scripts/test_fixer_*.py`, not
+`tests/fixtures/`: CI's pytest collects everything under `tests/`, so a
+`test_*.py` or `conftest.py` inside the fixture project would run in CI
+against packages CI does not have. And since `--env` exists, the install
+instructions say pipx plus `--env` pointing at the project's venv, so the
+pinned griffe and libcst never land in the user's environment. He checks
+Render and CI once it lands. (2) "Fixable by the tool" on the site: not
+before 20 Nov. The bundle holds 3,204 of the site's 3,851 releases, so a
+mark on the other 647 would send people to a tool that stops on them;
+and R1 and R2 depend on the call, which the site cannot see, so the most
+it could say is "may be rewritable". Revisited once `export_paths` is in
+`detail` and the bundle comes from the table (§38.11). (3) The Action
+waits, and the permissions split stands; two notes for when it is
+built: a commit pushed with the default `GITHUB_TOKEN` starts none of
+the repository's other workflows, so an opt-in apply would land without
+CI running on it unless that is handled; and on a pull request the old
+version is usually not installed, so until §38.11 it would mostly flag
+(§38.8). The plan doc was brought in line with §38 the same evening:
+the fixer table's rows, the weeks' items, "measured by", the decisions.
+Week 2 begins with the bundle and locate.
+
+### 38.13 Week 2, first half: the bundle and the rank step (19 Oct)
+
+Built the same evening Varad's answers came, with the test's expected
+numbers written before the code ran. `fixer/bundle.py` reads the bundle
+(§38.7's three tables and manifest; `Bundle.upgrade` is (from, to] in
+packaging's version order, with a release the bundle lacks, a package it
+lacks, a downgrade and the same version twice each refused with the
+newest it holds and when it was built; `Bundle.changes` is the site's
+order, score then name; `Release.describe` is the site's wording per
+status, §33.8's for unknown; `split_change` is the loader's rule for a
+value out of griffe's words, for defaults and attribute values both).
+`scripts/build_bundle.py` builds it from the CSV files through the
+loader's functions, `package_rows`, `release_plan` (`unknown` for what
+the files cannot establish), `not_a_change`, and `breakage_rows` as the
+oracle: the records it writes must equal the loader's rows and keys or
+it stops with REFUSING and writes nothing; public_depth as
+ml/features/labels.py computes it, user_count by the exact symbol as the
+site joins it, the score path length's within each release (ship.py).
+`fixer/cli.py`, `python -m fixer <package> --from X --to Y`, does the
+first of the three steps: the releases crossed with what the bundle says
+of each, a warning when any was not compared, the changes ranked, and a
+line saying locate and the rewrites are not in this version; exit 2 on
+any refusal; `--from` defaults to the one-step upgrade until the
+environment is read (§38.2). `pyproject.toml` under Varad's four
+conditions (`fixer` alone, the bundle as package data, no pytest
+settings, dependencies packaging, griffe <3 and libcst); a console
+script `breakrank-fix`; checked by an editable install into a fresh venv
+here, where `breakrank-fix --version` and `--list` ran. `.gitignore`
+gains `*.egg-info/`, `build/`, `dist/` and `fixer/data/*.sqlite`: the
+bundle is built where data/ is, and whether a copy is committed for
+`pipx install` from a clone is Varad's call (a few megabytes, rebuilt
+rarely).
+
+Tested by `scripts/test_fixer_bundle.py`, 48 checks on both pandas
+versions, over four small CSVs written to a temporary directory: a
+package whose releases.csv agrees, with a moved parameter, a changed
+default, a version string, a removed name twice under one key and a
+constant whose name sorts last and depth first; a package with 2.9 and
+2.10, so text order would be wrong; a package in changes.csv only, so one
+release is unknown; one in releases.csv and packages.csv only. The
+fixture is written by the test, since `*.csv` is ignored by git.
+Twenty-six guards broken on purpose (eleven in the builder, eleven in
+the reader, four in the command line): twenty-four turned a check to
+FAIL, and two were caught before any check ran, by the guards themselves
+(the builder that kept the duplicate key was refused by the oracle; the
+manifest with another schema version was refused by the reader); three
+survived at first (the site's order by name alone, since the fixture's
+name order matched; a split kept where two were valid; `compared`
+including no_baseline) and the fixture was strengthened until each was
+caught. Against the scratch dataset of §33.9 (60 packages, releases.csv
+with one disagreeing package): 7,812 changes, the number the loader sent
+in every scratch run, 490 releases, 62 rows not changes, 0 duplicates,
+and `python -m fixer pkg00 --from 1.3.1 --to 1.4.0` ranks its 40
+changes. Expected on the Mac, from the 18 Oct files: 21,452 changes,
+3,204 releases, 351 packages, 1,815 rows not changes, 1 duplicate key
+dropped, as §33.6 and §33.10 have them. Locate is the second half of the
+week.
+
+**20 Oct: the build on the Mac, Varad's checks, and the second schema.**
+The builder on the Mac wrote 351 packages, 3,204 releases (analysed_clean
+1,531, analysed 1,141, unknown 232, no_baseline 178, analysis_failed 61,
+yanked 37, no_source 24) and 21,452 changes, with 1,815 rows not changes
+and 1 duplicate key dropped: the loader's numbers to the row. `python -m
+fixer redis --from 7.4.1 --to 8.0.0` ranked the 134 changes §36.5's demo
+quotes, `Redis.__init__`'s six changed defaults first and its moved
+parameters after, and showed two things. The `retry` default is a
+`Retry(...)` expression, which is why R2 stops at plain literals. And
+every row read "used by 0", because the first bundle carried only the
+exact-symbol count the site's usage_index joins, under which nobody
+writes `redis.client.Redis.__init__`; the project's own notion of used
+is the label's (§24), the most over the symbol and its export paths, by
+which `redis.Redis.__init__` is reached. So the bundle moved to schema
+2 with `alias_user_count` computed as ml/features/labels.py computes
+it, beside the exact `user_count`; the report's "used by" is the label's
+count and says so; a schema-1 bundle is refused by the reader. Varad
+checked the branch against main the same afternoon: Render builds from
+the requirements file alone and copies pyproject.toml and `fixer/` as
+files, so no effect; CI runs nothing the branch touches and a trial merge
+is clean. He asked for one copy of the bundle to be committed, rebuilt
+only when the dataset changes, with the manifest's numbers in the commit
+message, and found that `data/` at the top of .gitignore already hid
+`fixer/data/`, so the line is now `!fixer/data/` (checked in a scratch
+repository: the bundle and `fixer/data/__init__.py` become committable,
+the top-level data/ and a stray .csv inside fixer/data stay ignored).
+His two setuptools notes are taken: `fixer.data` is a package of its own
+(an `__init__.py`, listed in `packages`, the bundle its package data), and
+the licence is `license = "MIT"` with `license-files`, on setuptools 77.
+Checked here by a non-editable install into a fresh venv from a tree
+holding a bundle: `breakrank-fix` ran from another directory with the
+bundle found inside the installed package. Three more guards broken on
+purpose for the second schema (the label's count without the export
+paths, as a sum, and the report showing the exact count); the last
+survived until the command-line check pinned the one symbol where the two
+counts differ. 50 checks now; 29 guards, 27 caught by a check and 2 by
+the builder's and the reader's own refusals. The fresh-clone test Varad
+named (`pipx install .`, one run with the network off) is the 30 Oct
+checkpoint's.
+
+**20 Oct, late, into 21 Oct: the locate step, week 2's second half.**
+Built with the expected hits written before the first run: the test's
+docstring lists the 32 hits on 27 lines of the fixture project and, for
+each, the confidence, the use, the change ids and the path the code
+names. The first run found two defects against that table (an import
+line of a name whose PARAMETERS changed was listed as "referenced", where
+only a removed or re-kinded name's import is a hit; and the corner
+project's file count was miscounted by me, not the tool). Five modules.
+`fixer/env.py` reads the installed distribution from its `*.dist-info` on
+disk (§38.2): METADATA's Name and Version, the import roots from
+`top_level.txt` or else RECORD's first path components (not the
+dist-info itself, caches, scripts outside site-packages or compiled
+extension modules, which griffe cannot read), PEP 503 normalisation both
+ways (`Databricks-SDK` and `databricks_sdk-0.134.0.dist-info` are one
+name); `--env` is a venv root or any directory holding dist-info entries
+(a Debian `dist-packages` is not named site-packages); two dist-infos of
+one name, or none, stop the default with the sentence. `fixer/oldapi.py`
+reads the OLD version with griffe, `allow_inspection=False` as the ingest
+(§17; `scripts/test_no_execution.py` now greps `fixer/` for bare griffe
+calls too and spies the fixer's reading of a package carrying a compiled
+module: no import attempted, 7 checks): an export path to its defining
+path (`alphalib.Client` -> `alphalib.core.Client`), the MRO, which class
+defines a member (griffe resolves `Client.send` to `Base.send` itself), a
+function's parameters with kinds and defaults, a class's `__init__`'s
+with `self` kept, its own or the inherited one, and griffe's labels, so a
+classmethod is known as one; a path griffe cannot resolve (one passing
+through a module's import of another package, which `resolve_external=
+False` leaves unresolved) answers None, never an exception.
+`fixer/locate.py` is the step itself, `fixer/report.py` the two parts of
+§38.5, `fixer/cli.py` gains `--env`, `--from` read from the environment
+and `--rank-only` (the first week's output, the project unread; the
+bundle test's command-line case now asks for it), and an unexpected error
+is one line on stderr and exit 2, not a traceback and exit 1. The fixture
+project sits under `scripts/fixtures/alpha_app/` with the pretend
+installed package `alphalib` 1.0.0 and its dist-info under
+`scripts/fixtures/site/`, as Varad placed them in §38.12, not
+`tests/fixtures/` as §38.10 first wrote. The development venv needs
+`pip install -e .` once, which brings libcst in from `pyproject.toml`
+(`requirements.txt` is the pipeline's and stays so, §38.12); the 20 Oct
+tests passed without it only because `cli.py` did not import locate yet,
+and the first run on the Mac stopped on `ModuleNotFoundError` until it
+was done.
+
+Nine decisions §38.3 left open, each in the module's docstring and, where
+the user sees it, in the report:
+
+1. What a reference that is not a call settles. A removed or re-kinded
+   object, a removed base and a changed constant are settled by naming
+   the object (`partial(f)`, `isinstance(x, Client)`, `class Mine(Client)`,
+   a read of the constant): resolved. A change to parameters or to a
+   return type needs a call: the same reference is "referenced". One
+   line can be both, as `class MyClient(Client)` is for the base removed
+   (resolved) and for `__init__`'s moved parameters (referenced). An
+   import line is a hit only for a removed or re-kinded name or module,
+   since the import itself is what breaks; `from redis import Redis` is
+   not a hit for `Redis.__init__`'s 49 rows, the calls are. A removed
+   MODULE (griffe reports one row for it and does not descend) is a hit
+   in every path through it: `import pkg.gone`, `from pkg.gone import x`,
+   `pkg.gone.f()`, `x()`.
+2. Unverified hits are listed only in files that import the package.
+   §38.3's sentence was "any other `.set(` is reported as unverified,
+   never dropped"; taken literally over a Django project it lists every
+   `d.get(k)` in every file for redis's `get`. In a file that never names
+   the package, `d.get(k)` is a dict's, and the report's closing sentence
+   says "in the files that import the package". Inside such a file a
+   dict's `.get` on a parameter is still listed; the file is the
+   package's business.
+3. An object made by another package's call (`requests.Session()`,
+   `s = requests.get(...)`) or bound to a literal, a comprehension, a
+   string, a number, a lambda or a comparison is not the package's and is
+   not listed; a name bound to another name takes its binding. The
+   project's own modules, imported relatively (`from .other import x`)
+   or absolutely (`from myapp.factory import make_client`, `myapp` being
+   any directory under the project that holds a `.py` file, with or
+   without an `__init__.py`, under `src/` or `lib/` or anywhere, or a
+   module directly under the project), are not another package's: what
+   comes out of them is unknown, so `c = make_client(); c.send()` is
+   unverified, as §38.3 has it; a project directory named like a real
+   package errs towards unknown, never towards resolved. A project
+   module that RE-EXPORTS the package's names is not followed, the
+   week's named cut: a file that imports only project modules is not
+   read for the package's names, and the report counts those files (the
+   unparsed ones and the parsed ones that import none of the package)
+   and says so.
+4. Instances are tracked by binding, and a rebinding shadows what it
+   hid: `r = Redis(...)`, `with Redis(...) as r`, `pool: Pool = Pool()`,
+   in the function, an enclosing one or the module, and `self.x =
+   Redis(...)` anywhere in the class, `x = Redis()` in the class body
+   included; a pre-scan collects the module-level and `self.x` bindings
+   first, so a function may use an instance assigned below it and a
+   method one that `__init__` sets after it in the file. A parameter, a
+   loop or comprehension variable, `except ... as`, `with ... as`, a
+   lambda parameter, a local `def` or a name rebound to anything the
+   tool does not understand is unknown inside its scope, not the
+   module-level instance of the same name; a local `def Client` or
+   `class Pool` hides the imported name for the lines after it; a class
+   body's names are visible in the body alone, as in Python; a nested
+   class's `self` is its own; a walrus binds like an assignment. A
+   changed constant used as a receiver (`pkg.VERSION.split(".")`,
+   `LIMIT.bit_length()`) is a read of it, as §38.1 asks, through the
+   same prefix matching as a removed module's. `Client("h").send()` is
+   an instance call; `Base.send(c, ...)`
+   and `Client.__init__(self, ...)` are explicit-self calls, marked so for
+   R1, and `Client.from_url(...)` is not, since griffe labels it a
+   classmethod. The receiver recorded is the defining class
+   (`redis.commands.core.BasicKeyCommands` for `r.set`, `alphalib.core.
+   Client` for `Client(...)`) when the old version was read, the class as
+   written otherwise. `self.send()` in a project subclass is unverified,
+   and `super().send()` referenced, as §38.3 says: project classes are
+   not followed. The result of a factory, the package's own included
+   (`redis.from_url(...)`, `Redis.from_url(...)`), is unknown: return
+   types are not inferred.
+5. A file whose text never mentions one of the package's import roots
+   (the first component of the symbol AND of every export path, since
+   `_pytest.fixtures.fixture` is written `pytest.fixture`) is read but not
+   parsed: no hit is possible in it, since every hit needs an import of
+   the package in the file (decisions 2 and 3). libcst's scope and
+   position metadata cost about a second per 1,000 lines, and the
+   repository itself (101 files, 28,910 lines) took 29 s to scan for a
+   package it never names; it takes 0.3 s now, and a project that uses
+   redis in five of three hundred files parses five. Positions are
+   resolved only for files with a hit, the wrapper does not copy the
+   tree, and the report says "N file(s) read, M mention the import
+   root(s) ...".
+6. Columns are 1-based, as editors and flake8 print them.
+7. `--from` defaults to the installed version; when the package is not
+   installed in the environment the tool stops with the sentence (where
+   it looked, give `--from` or `--env`), except under `--rank-only`,
+   which keeps the first week's one-step default and says so in the
+   header. A version spelled otherwise than the bundle spells it (`2.0`
+   for `2.0.0`) is the bundle's by PEP 440. The old version is read only
+   when the installed version IS the one upgraded from; otherwise the
+   report says which version the environment has and that bases and
+   signatures were not read, and a method on an instance whose path the
+   bundle does not name is unverified instead of resolved (17 resolved
+   and 11 unverified on the fixture, against 25 and 3 with the old
+   version read); without the old version nothing is taken for a class
+   that the bundle does not show to be one, so `Base.send(c, ...)` is a
+   plain call then, with no self to offset. `--env` that is not a
+   directory, or holds no dist-info and is no venv, is exit 2.
+8. The report's first part is one entry per changed SYMBOL in the site's
+   order, every row of it under it, then the lines; so `Client(...)` with
+   three rows prints once with three rows and ten lines, as §38.5 asks
+   for the 49-row case. Counts are lines and hits both ("27 line(s) use
+   11 of the 12 change(s), 32 hit(s)"), since one line can carry two.
+   The second part is cut at 200, and a changed value longer than 72
+   characters is cut with an ellipsis in the one-line forms (redis's
+   `REDIS_ALLOWED_KEYS` is a 44-name tuple that ran to a thousand
+   characters on the first real run); the bundle holds the whole text,
+   and R2 reads it there.
+9. Environments and build output are not read: `.git`, `__pycache__`,
+   `.venv`, `venv`, `node_modules`, `.tox`, `site-packages` and the like
+   at any depth, `env`, `build` and `dist` only directly under the
+   project (a package may be called `build`), and any directory holding
+   a `pyvenv.cfg` whatever its name; the report names what it did not
+   enter, caches and `.git` apart. A file that does not parse, is not
+   UTF-8, or that libcst
+   cannot analyse (a 800-term expression overflows its recursion) is a
+   note, never the end of the run.
+
+The review of 20 Oct, by a reader who had not seen the code written,
+found nine things against the first version, and decisions 1, 3, 4, 5, 7
+and 9 carry the fixes: (1) a module-level instance leaked into every
+function that reused its name, so `def f(client): client.send()` was
+RESOLVED to the module's `client`, a parameter, a loop variable, a `with`
+or `except` name or a lambda parameter likewise, and a nested class saw
+the outer class's `self.c`; the home-made scope table forgot a name
+instead of shadowing it, and R1 would have rewritten those calls (fixed,
+and nine shadowing cases are in the test); (2) an export path under
+another root (`pytest.fixture` for `_pytest.fixtures.fixture`) was
+invisible, and the text pre-filter skipped the file before parsing it
+(fixed: every export path's root is the package's); (3) two uncaught
+exceptions killed the run with a traceback and exit 1, libcst's
+RecursionError on a long expression and griffe's AliasResolutionError on
+a path through another package's import (fixed: a note per file, None
+per lookup, exit 2 for anything unexpected); (4) the project's own
+modules imported absolutely were "another package's", so `c =
+make_client(); c.send()` was dropped where the relative spelling was
+unverified (fixed; the re-export cut is now stated where it bites); (5)
+a removed module was matched only by `from pkg import mod` (fixed, by
+prefix); (6) without the old version the capital-letter guess made
+`PIL.Image.open(...)` an explicit-self method call, which would have
+inverted R1's offset on a CI runner (fixed: the guess no longer shapes
+hits); (7) `Redis.from_url(...)` was an explicit-self call, griffe's
+classmethod label unread, and a class inheriting `__init__` had "no
+signature" (both fixed); `StrictRedis`, which redis defines as
+`StrictRedis = Redis` and griffe records as an attribute, is not
+recognised as the class, a limitation for the demo's project to remember;
+(8) the report counted hits as lines and named the distribution where
+it meant the import root (fixed), and a closing sentence promised "never
+dropped" where another package's objects are not listed (reworded to say
+exactly what is and is not); (9) `--from 2.0` was refused for a bundle
+spelling `2.0.0`, and a project package called `build` or `env` was
+skipped at any depth without a word (both fixed). The re-verification of
+the fixes found the project-module rule too narrow (a namespace package without
+`__init__.py`, or a package under `lib/`, was still "another package's"),
+a local `def Client` not hiding the import, and, pre-existing, a changed
+constant used as a receiver (`LIMIT.bit_length()`) giving no hit; all
+three fixed and pinned, with the walrus, the unexpected-error exit and
+the no-old-version shape of `Base().send()`. Checked on redis 7.4.1
+installed in a scratch venv here (a wheel, no code run): griffe reads it
+in 0.9 s; `Redis.__init__` has 50 parameters, `self` and the 49 of
+§36.5; `set` and `get` are defined on `redis.commands.core.
+BasicKeyCommands`, 22 classes in `Redis`'s MRO; on a small project,
+`Redis("localhost", 6379, 0, None, 5)` and `redis.ConnectionPool(host=
+..., port=..., db=0)` resolved through the old version's aliases without
+export paths, `self.plain.set(k, v, ex=60)` resolved to the mixin, `d =
+{}; d.get("a")` not listed, `redis.Redis.from_url(url)`'s result unknown
+so its `.set` unverified. Those rows were mine; the first run against the
+REAL bundle, on the Mac the same evening (21 Oct, redis 7.4.1 installed
+from a wheel into `/tmp/redis741`, the ten-line project of
+`redis_demo_cache.py` under `/tmp/redisdemo`): "2 line(s) use 49 of the
+134 change(s), 2 hit(s): 2 resolved", the two `Redis(...)` calls under
+`redis.client.Redis.__init__`, used by 2, with its six changed defaults
+and forty-three moved parameters printed once under the one function,
+§36.5's case to the row; the demo's `.set`, `.get`, `.delete`,
+`from_url` and `ConnectionPool(...)` got no hit because 8.0.0 has no row
+on them, so nothing was unverified either: the tool said neither more
+nor less than the data holds. The 85 untouched changes followed in
+PART 2.
+
+Tested by `scripts/test_fixer_locate.py`, 75 checks on both pandas
+venvs (it needs neither pandas), eight cases: the environment (a venv
+root, a site-packages directory, RECORD without top_level.txt, a
+dist-info whose directory name says one thing and METADATA another, two
+installs); the old API (aliases, MRO, defining class, parameters, the
+inherited `__init__`, labels, an unresolvable path); the fixture with and
+without the old version; a corner project (skipped directories, a file
+not in UTF-8, one that does not parse, a file mentioning the package
+only in a comment, a package alias, star-arguments, a constant as
+argument, a rebinding, another package's objects, `getattr`, annotations,
+a closure, `self.x` set after its use, `Class.__init__(self)`, an
+attribute base class, `super().send`, a literal's method, a name bound to
+a name, the package's own factory's result, `with` inside a function, a
+class attribute as `self.x`); the review's corners (the shadowing cases,
+the project's modules under both spellings and a file reaching the
+package only through them, under `myapp/`, `lib/myapp2/` without an
+`__init__.py` and a file naming the package in a comment alone, the
+other root, the removed module under seven spellings, the classmethod,
+the 800-term expression, `build/` at the top against `myapp/build/`, a
+`pyvenv.cfg` directory, a walrus, a constant as receiver, a local def
+hiding an import); the report; the command line (exit codes 0, 1 and 2
+as §38.4 has them, `--from 1.0 --to 2.0`, an unexpected error as one
+line and exit 2). Seventy-five guards broken on purpose in a second
+pass (forty-two in locate, five in env, eight in oldapi, eleven in
+report, eight in cli, one in the fixture): seventy-three caught by a
+check, two equivalent under the data (the usage count is per symbol, so
+the least and the most over a symbol's rows agree; hits are per callee, so a
+symbol's rows share them and any-of equals all-of). Three guards that
+survived the first pass had no fixture to catch them (a rebinding that
+pops instead of shadowing, an export path's root, a class body's names
+leaking into its methods) and the review's project now catches each;
+two others were found redundant by the first pass and removed rather
+than kept dead. Still not followed, and said in the report: project
+modules that re-export the package's names, return types, tuple
+unpacking, `StrictRedis`-style assignment aliases.
+
+### 38.14 Week 3: R1, pass by name (22 Oct)
+
+Built the day after locate, the expected rewrite of every case written
+before the first run: `scripts/fixtures/rewrite_app/cases.py` has one
+call per line, twenty-seven of them after the review, and
+`scripts/test_fixer_rewrite.py`'s docstring says for each whether it is
+rewritten (and into what), withheld (and why) or needs nothing. The
+first run got every decision of the first twenty right and two report
+checks wrong (where the decision prints when one call meets two entries,
+below). `fixer/rewrite.py` holds R1 as §38.4
+has it, decided per CALL SITE from every row of the called function in
+the range; `fixer/report.py` prints the decision under the call's line
+("-> rewritten: ...", "-> withheld: <reason> | would be: ...", "-> needs
+nothing from R1: <reason>") and counts them in the footer; `fixer/cli.py`
+prints the unified diff after the report, writes it with `--diff <path>`,
+writes the files with `--apply` and still prints the diff; `fixer/
+locate.py` gains one thing R1 needed, a call to a class that inherits
+its `__init__` meeting the rows on the class that defines it (`Child("h",
+1, 2)` for rows on `Client.__init__`, through griffe's MRO).
+
+What §38.4 fixed and the code does: the run is the positional arguments
+from the first one whose parameter MOVED or became keyword-only to the
+last, each named from the OLD signature (`Client("localhost", 6380, 2)`
+-> `Client("localhost", port=6380, db=2)`), a parameter of another kind
+of row included when it sits in the run (`retries`, R2's, in `Client("h",
+1, 2, 3)` -> `Client("h", port=1, db=2, retries=3)`); withheld with the
+reason when the old signature could not be read, when the call unpacks
+`*` or `**`, when it passes more positional arguments than the signature
+has named ones (the rest went to `*args`, or the call was already wrong),
+when a parameter in the run was positional-only in the old version
+(`helper(1, 2, 3)` with `b` moved: `b` has no name to pass), when the
+function also carries a flag (a removed parameter, one added as required,
+one made positional-only: `connect("h", 2, timeout=9)` is withheld with
+both reasons and "would be `connect("h", port=2, timeout=9)`"), and when
+the run would name a parameter the call also passes by keyword
+(`Client("h", 1, port=2)`: already wrong, nothing guessed). The self
+offset is griffe's: one for a constructor, an instance call and a
+classmethod called on the class (`Client.from_url("u", 5)` ->
+`Client.from_url("u", retries=5)`, the label read from the old version),
+none for a function, an explicit-self call (`Base.send(a, b"x", 5)` ->
+`Base.send(a, b"x", timeout=5)`) or a staticmethod (`Client.parse("u",
+True)` -> `Client.parse("u", strict=True)`). Decisions beyond §38.4,
+each in the module's docstring:
+
+1. The kinds of a PARAMETER_CHANGED_KIND row are read from griffe's
+   message ("Parameter kind was changed: positional or keyword ->
+   keyword-only"), since the bundle's value columns hold only values
+   that parse as expressions (§38.13) and kinds do not. "-> keyword-only"
+   is R1's; "-> positional-only" is a flag; any other change of kind is
+   a flag too, named as not a case R1 covers.
+2. Two decisions need no signature and are made without the old version:
+   every moved parameter already passed by name, and no positional
+   argument at all. Everything else without the old version is withheld
+   as "the old signature could not be read", with the environment's
+   sentence.
+3. A withheld rewrite is still computed where it can be, and printed as
+   what it would be, so the user sees the fix once the flag is dealt
+   with; a flag that stops the computation (unpacking, overflow, the
+   signature unread, a positional-only name) prints the reason alone.
+4. libcst makes the edit: the keyword goes in as `name=value` with no
+   spaces, as PEP 8 writes keyword arguments, and everything else in the
+   file, the comment inside a multi-line call, the line endings and a
+   byte-order mark included, stays as it was. A call and the call made
+   on its result at the same column (`Client("h", 1).send(b"t", 5)`) are
+   told apart by the node's end, which the hit now carries; both are
+   named, and the outer one's text shows the inner one already named. A
+   call made on a call's result (`Client("h", 1)("x")`, `deco(3, 2)(g)`)
+   is a call on an object the tool does not know: the inner call is the
+   hit and is rewritten, the outer is not resolved by name, although
+   libcst would name it after the inner callee; what calling an instance
+   returns is unknown too, so `Client("h", 1)("x").send(...)` and `r =
+   Client("h", 1)("x"); r.send(...)` are unverified, not the class's.
+5. A reason that would list the 43 moved parameters of `Redis.__init__`
+   lists six and says how many more; a call spanning lines prints on one
+   line under its hit.
+6. One call, one decision, from the parameter rows of EVERY function the
+   call meets: an export path can name two defining paths inside the
+   range (a class that moved modules), and a parameter removed under one
+   withholds the rewrite found under the other; the signature is read
+   from the first of them the old version has. The decision prints under
+   each of those functions' entries in PART 1, and not under the class's
+   own entry (`CLASS_REMOVED_BASE`) that the same call also meets: a
+   rewrite of the arguments is not an answer to a removed base.
+7. The diff is one `patch -p1` and `git apply` accept: every line
+   terminated, and the "No newline at end of file" marker where a file's
+   last line has none (difflib leaves that line open, and the next
+   file's header glued to it). `--diff <path>` writes the file even when
+   there is nothing to rewrite, empty, and says so, so a script that
+   applies it finds it.
+8. `--test "<command>"` of §38.4 is not built this week: it runs the
+   user's code, and whether the fixer should offer that at all is for
+   the evaluation's week to decide; nothing runs that the user did not
+   start. Not followed, and said: a call on an instance (`w(1, 2)`) for
+   a change on `__call__`; and §38.4's unreported removal, the premise
+   the data cannot check.
+
+The redis demo, corrected: the morning's claim that `Redis("localhost",
+6379, 0, None, 5)` would get its arguments named was wrong, and the
+expected results written before the run caught it. The 43 parameters
+8.0.0 moved are `connection_pool`, `decode_responses`, `encoding` and
+the rest of the keyword tail; `host`, `port`, `db`, `password` and
+`socket_timeout`, the five that call passes by position, did not move,
+so R1 says "needs nothing: the moved parameter(s) are not passed here".
+What that call needs is R2: `socket_timeout=None` is one of the six
+defaults 8.0.0 changed. With a mock row that moves `port` and `db`, the
+same call is rewritten to `Redis("localhost", port=6379, db=0,
+password=None, socket_timeout=5)`, the two last names griffe's reading of
+the installed 7.4.1 and not the mock's, which is what the week was for.
+
+The review of 22 Oct, by a reader who had not seen the code written,
+found one soundness defect and four lesser ones against the first
+version, and decisions 4 to 7 above carry the fixes: a call made on a
+call's result (`f2(1, 2)(3, 4)`) was renamed at the OUTER call with the
+outer call's shape, since libcst names a call after its callee through
+an inner call, so `Widget("w", 2)(5, 6)` became `Widget("w", 2)(5,
+size=6)`, a TypeError on the new version, and the moved argument stayed
+positional (fixed: the outer call is not resolved by name, and after the
+re-verification found the same root one level deeper, neither is a
+method on what calling an instance returned, nor a name bound to it);
+the diff was
+malformed where a rewritten line was a file's last and had no newline,
+and `patch` rejected it (fixed, and the test now applies the diff with
+`patch`); one call meeting two defining paths got two decisions, a
+rewrite in the diff and a withheld one in the report (fixed: one
+decision from both); a byte-order mark was dropped by the rewrite, a
+change outside the located lines (fixed); and a multi-line call broke
+the report's line (fixed). It also named the premise now in §38.4, the
+unreported removal, which no code can fix from this data; `__call__` as
+a call site locate misses; and six guards the test could not catch (a
+new-required row never meeting a plan, a kind change R1 does not cover,
+a diff joined wrongly, a duplicate of a non-moved name in the run, the
+long list's cut, keyword-only parameters counted as named), each now a
+case. Nothing it tried in the offsets, the syntactic forms, idempotence
+or the redis snippets came out wrong: `redis.Redis("h", 6380, 2, "pw")`
+-> `password="pw"`, `r.set("k", "v", 10, 5, True)` -> `ex=10, px=5,
+nx=True` under a mock row, with 7.4.1's names.
+
+Tested by `scripts/test_fixer_rewrite.py`, 36 checks on both pandas
+venvs: griffe's words and the offset; the twenty-seven cases with the
+old version read (29 hits on 27 lines, 15 rewrites on 15 source lines, 9
+withheld, 3 need nothing, two calls on what an instance returned
+unverified, the diff's exact lines, the files unwritten by a plain run);
+the same without the old version (the two calls on the instance `a` and
+the `.send` of line 30 unverified and so not R1's, `Child(...)` no hit,
+22 withheld, the all-by-name case decided without the signature, an
+empty diff); apply to a copy and run again (idempotence: the same 29
+hits, no rewrite, the fifteen "already passed by name", the nine
+withheld as before, the original untouched); the
+edges (a file without a final newline followed by another, `patch -p1`
+accepting the diff, the byte-order mark through `--apply`, one call
+meeting two defining paths, the long list, the one-line call); the
+command line (the decisions under the lines, under the function's entry;
+`--diff` and `patch` accepting what it wrote; `--apply`; the run after
+it; `--diff` with nothing to rewrite; the run without the old version).
+Forty guards broken on purpose (twenty-six in rewrite, six in report,
+three in cli, four in locate, one in the fixture): thirty-nine caught,
+one equivalent (keyword arguments counted in the run's index,
+which cannot matter since Python puts every keyword after every
+positional). The redundant second guard on unresolved hits in
+`r1_plans`, found by the pass, was removed rather than kept dead.
+
+### 38.15 Week 4: R2, pin the old default. The rule, fixed before the code (26 Oct)
+
+For the record, since §38.13 and §38.14 were written before their pushes:
+the bundle is 964eb85, locate 3e0c566 (22 Oct) and R1 d0d6a14 (24 Oct),
+all on ml/db-writer. R1 landed a week ahead of §38.10's plan, so R2
+starts 26 Oct. What follows was written and pushed before any of it ran.
+
+**What R2 does**, as §38.4 fixed it, decided per CALL SITE from every
+row of every function the call meets, in the same pass as R1, so a call
+to `Redis(...)` gets ONE decision from its 43 moved parameters and its
+six changed defaults, and one edit. For each PARAMETER_CHANGED_DEFAULT
+row (its old and new value are the bundle's, griffe's "Parameter default
+was changed: OLD -> NEW" split as the loader splits it) and each
+PARAMETER_CHANGED_REQUIRED row (griffe says only "Parameter is now
+required"; the old default is read from the old signature, as R1 reads
+the names), a call that does not pass the parameter gets
+`name=<old default>` appended, when the old default is a plain literal:
+it parses with `ast.literal_eval`; it is not a mutable container (`[]`,
+`{}`, `[1]`: a shared default and a fresh one are different programs,
+§38.4's reason, which holds for a full container as for an empty one;
+`set()` does not parse and is caught by the first test); and
+where the new default is a literal too, the two differ in value or in
+type (`'fast' -> "fast"` and `1e3 -> 1000.0` are rows because griffe
+compares text; they are listed as "changed only in spelling" and nothing
+is pinned). What R2 claims is §38.4's: the call now states the value it
+relied on. Whether the new release treats that value as the old one did
+is printed beside every pin as the user's second option, "delete this
+argument to accept the new default", with the old and new value.
+
+**Decisions**, each in the module's docstring:
+
+1. Passed or not. A parameter is passed when the call names it, or when
+   it sits among the positional arguments by the OLD signature, with
+   R1's offset (one for a constructor, an instance call and a classmethod
+   called on the class; none for a function, an explicit-self call and a
+   staticmethod). Without the old signature, a parameter the call names
+   is passed and needs nothing; every other pin is withheld as "the old
+   signature could not be read", since whether a positional argument
+   already fills the parameter, and whether it takes a keyword at all,
+   is unknown. R1 decides "no positional argument" without the signature
+   because that outcome is nothing; R2's outcome is an edit, and an edit
+   is never made on a guess.
+2. `*` or `**` unpacking withholds every pin: the call may already pass
+   the name.
+3. A positional-only parameter is never pinned: it has no name to pass.
+   Its row is listed with the old and new value, for the user.
+4. A call that is already wrong is withheld, as R1 withholds it: more
+   positional arguments than the old signature has named ones with no
+   `*args` to take them, or a parameter passed by position and by
+   keyword. The tool does not edit a call the old version would have
+   rejected.
+5. The function's flags withhold R2 as they withhold R1 (§38.4: a
+   parameter removed, one added as required, one made positional-only),
+   and the pins are printed as what they would be. [26 Oct, from the
+   review: two more flags, found by R2 and honoured by R1 as well. A
+   parameter now required whose old default cannot be pinned (positional-
+   only, or not a plain literal): the call will not run on the new
+   version whatever else is done, so it is a flag like a parameter added
+   as required, not a row listed beside the pins. And one name resolving
+   to two functions the old version has with different signatures (a
+   compatibility shim, `try: from alphalib import Client / except
+   ImportError: from alphalib.opts import Session as Client`): the edit
+   computed on one may be wrong for the other, so both rules are
+   withheld with that as the reason.]
+6. The pins go after the last argument, in the order of the old
+   signature, as `name=value` with no spaces. When the call ends with a
+   trailing comma on its own line, each pin takes a line of its own with
+   the arguments' indentation and the trailing comma stays last;
+   otherwise the pins join the line. After `--apply` every pinned
+   parameter is passed by name and R2 pins nothing: the idempotence test
+   covers both rules. [26 Oct, from the review and the probes: a call
+   spanning lines without a trailing comma keeps `)` where it was; a
+   same-line trailing comma (`f(a,)`) takes one space after each comma;
+   a comment on an earlier argument's line is not copied to each pin
+   line, and a comment on the last argument's own comma stays on that
+   argument; a bare generator argument (`f(x for x in y)`) takes its
+   parentheses once it is named or another argument follows, by either
+   rule, since it is legal only alone; and the diff splits the file on
+   `\n` alone, since `str.splitlines` also breaks at a form feed and a
+   few other characters Python keeps inside a line, which put the
+   no-newline marker in the middle of a hunk.]
+7. What is not pinned is said, with the old and new value, so the user
+   can set it: a default whose old value is not a plain literal (redis's
+   `retry=Retry(...)`, the fixture's `limit=DEFAULT_LIMIT`), a mutable
+   container, a positional-only parameter. A call with pins and
+   such rows is rewritten with the rows listed beside the pins; a call
+   with such rows and nothing to pin is withheld, with them as the
+   reason; a cosmetic row alone is "changed only in spelling", nothing.
+   [26 Oct, from the review: "withheld" was carrying two meanings, the
+   tool refusing an edit and the tool having nothing it can do, and
+   after `--apply` every pinned call fell into the second, so the footer
+   read "0 pinned, 18 withheld" for a project the tool had just
+   rewritten. The second is now a third outcome, "left to you": the
+   call's headline reads `-> left to you`, the R2 line `R2 left to you:
+   limit (...), hooks (...)`, and the footer counts it apart: `R2, pin
+   the old default: N pinned, M withheld, K left to you, J need nothing`.
+   Also: a mutable container inside a tuple (`([1],)`) is a mutable
+   container; a row on a name the old signature read does not have is
+   never pinned on the row's word alone; and a row whose message carries
+   no values is "left to you" with that said.]
+8. One decision per call in the report, three lines at most:
+   `-> rewritten: <the call as it will read>`, `-> withheld` or
+   `-> needs nothing`; then one line per rule that has rows on the
+   function: `R1, pass by name: port, db`; `R2, pin the old default:
+   retries=3 (now 5 in 2.0.0); delete an argument to accept its new
+   default`; `R1 withheld: <reason> | would be: <the call>`; `R2:
+   already passed: retries`. A withheld rule's "would be" is the call
+   with that rule's edit alone: a rule keeps an edit it withholds only
+   under the function's flags (decision 5), which withhold both rules,
+   so there is never another rule's edit to add. The footer counts each
+   rule: `R1, pass by name:
+   N call(s) rewritten, M withheld, K need nothing. R2, pin the old
+   default: N call(s) pinned, M withheld, K need nothing; the diff
+   follows.`
+9. Not built, as §38.14's item 8: `--test`. [26 Oct: and the review's
+   outside-the-rule idea, pinning a positional-only now-required
+   parameter by position when every positional-only one before it is
+   passed, stays outside: the rule names parameters, and a positional
+   pin would have to be read against the whole run.]
+
+**Expected, written before the first run.** Three parts.
+
+(a) `cases.py`, R1's 27 lines against the same rows: R1's own decisions
+do not move (15 rewritten, 9 withheld, 3 need nothing). R2 has rows on
+two of their functions, `retries` 3 -> 5 on Client.__init__ and `d` 1 ->
+2 on helper, so every Client call that does not pass `retries` and is
+not withheld gains `retries=3`, and `helper(1, 2, 3)`, whose R1 is
+withheld (b positional-only), gains `d=1`: of the 19 calls R2 meets [20
+once the pass that broke the guards gave `spread`'s `flag` a row, the
+twentieth withheld by spread's flag], 13 pinned (lines 9, 10, 11, 12,
+15, 20, 22, 24, 25, the constructor of 30, 33, 34, 35), 4 withheld (14
+unpacking; 16 and 29 already wrong; 32
+already wrong, and like R1 the tool prints no would-be for a call that
+was wrong before the upgrade), 2 need nothing (13 and 31, `retries`
+passed). The file's decisions become 18 rewritten, 8
+withheld (31 counts as withheld, since R1 is), 1 needs nothing, 27 as
+before; line 9 reads `Client("localhost",
+port=6380, db=2, retries=3)`, line 11 `Client("localhost", port=6380,
+db=2, retries=3)` under a nothing from R1, line 12 `Client("localhost",
+retries=3)`, line 20 `helper(1, 2, 3, d=1)` with R1's reason beside it,
+line 25 keeps its comment, `Client("h", port=1,  # the port` / `db=2,
+retries=3)`, and line 30 reads `Client("h", port=1,
+retries=3).send(b"t", timeout=5)`.
+
+(b) `defaults.py`, R2's own cases against `alphalib.opts` (1.0.0:
+`fetch(url, timeout=None, retries=3, verify=True, mode='fast',
+limit=DEFAULT_LIMIT, hooks=[], pool=None, tags=())`; `shape(a, b=1, /,
+c=2, *, d=1e3)`; `ship(path, compress=False)`; `Session.__init__(self,
+host, port=6379, *, protocol=2, keepalive=None)`; `Session.get(self,
+key, default=None)`) and sixteen rows for 2.0.0: fetch's timeout `None
+-> DEFAULT_TIMEOUT`, retries `3 -> 5`, verify `True -> False`, mode
+`'fast' -> "fast"`, limit `DEFAULT_LIMIT -> 20`, hooks `[] -> None`,
+pool `None -> Pool()`, tags `() -> None`; shape's b `1 -> 2`, d `1e3 ->
+1000.0`, c now required; Session's protocol `2 -> None`, keepalive
+`None -> True`; get's default `None -> SENTINEL`; ship's compress
+`False -> True` and `dest` added as required.
+
+|   | call | R2 |
+|---|---|---|
+| 7 | `fetch("u")` | pinned: `fetch("u", timeout=None, retries=3, verify=True, pool=None, tags=())`; not pinned: limit (old default not a plain value), hooks (mutable container); mode changed only in spelling |
+| 8 | `fetch("u", 5, 9)` | pinned `verify=True, pool=None, tags=()`: timeout and retries are passed by position |
+| 9 | `fetch("u", retries=1, verify=False, pool=None, timeout=1, tags=(1,))` | withheld: every pinnable parameter is passed; limit and hooks are the reason, listed with their values |
+| 10 | `fetch("u", **kw)` | withheld: unpacking |
+| 11 | `fetch(*args)` | withheld: unpacking |
+| 12 | `shape(1)` | pinned `shape(1, c=2)`: c now required, its old default from the signature; b not pinned, positional-only; d changed only in spelling |
+| 13 | `shape(1, 2, 3)` | needs nothing: b and c passed by position; d changed only in spelling |
+| 14 | `Session("h")` | pinned `Session("h", protocol=2, keepalive=None)`, keyword-only parameters, in the signature's order |
+| 15 | `Session("h", 1, protocol=3)` | pinned `keepalive=None` |
+| 16 | `h.get("k")` | pinned `h.get("k", default=None)`: self offset |
+| 17 | `Session.get(h, "k")` | pinned `Session.get(h, "k", default=None)`: no offset |
+| 18 | `ship("p")` | withheld: dest added as required; would be `ship("p", compress=False)` |
+| 19 | `alphalib.opts.fetch("u", timeout=2)` | pinned `retries=3, verify=True, pool=None, tags=()` |
+| 20 | `fetch("u", 1, 2, 3, 4, 5, 6, 7, 8, 9)` | withheld: 10 positional, 9 named, already wrong |
+| 21–24 | `fetch(` / `"u",` / `retries=1,` / `)` | pinned, one pin per line: `"u",` / `retries=1,` / `timeout=None,` / `verify=True,` / `pool=None,` / `tags=(),` / `)` |
+
+Nine pinned, five withheld, one needs nothing, fifteen calls; no R1 row
+on these functions, so no R1 line under them. The project's footer then
+reads: R1 15 rewritten, 9 withheld, 3 need nothing, as before; R2 22
+pinned, 9 withheld, 3 need nothing; and after `--apply`, R1 0, 9, 18 and
+R2 0, 9, 25. [What the file holds after the two rounds below: twenty-two
+calls, with 25 (a comment on the first argument), 29 (a comment on the
+last argument's comma), 33 (`wrap(1)`, y positional-only and now
+required), 34 (`emit(x for x in y)`, R1 alone on a generator), 35
+(`fetch()`), 36 (a blank line between the arguments) and a `ghost` row
+on `Session.get`; the project's footer reads R1 16 rewritten, 9
+withheld, 4 need nothing; R2 26 pinned, 10 withheld, 2 left to you, 3
+need nothing; after `--apply` R1 0, 9, 20 and R2 0 pinned, 10 withheld,
+13 left to you, 18 need nothing; without the old version R1 0, 24, 1 and
+R2 0, 37, 2, 1. The test's docstring is the table of record.] Without the old version:
+the two unpacking cases and the three calls that name every pinnable
+parameter are decided (10, 11 withheld; 9 withheld for its flags; 13
+withheld, since whether b and c are passed by position is unknown
+without the signature, and so is 8), and every other call is withheld
+with "the old signature could not be read"; the instance call on line
+16 is unverified without the version, as §38.14 has it. Over both files
+that is R2 0 pinned, 31 withheld, 1 need nothing (line 31 of cases.py,
+`retries=9` by name).
+
+(c) The demo, against the REAL bundle with redis 7.4.1 installed from a
+wheel: 8.0.0 changed six defaults of `redis.client.Redis.__init__`:
+socket_timeout `None -> DEFAULT_SOCKET_TIMEOUT`, socket_connect_timeout
+`None -> DEFAULT_SOCKET_CONNECT_TIMEOUT`, socket_keepalive `None ->
+True`, socket_keepalive_options `None -> SENTINEL`, retry
+`Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3)
+-> Retry(...DEFAULT_RETRY_BASE...)`, protocol `2 -> None`. 7.4.1's
+signature has them at positions 5, 6, 7, 8, 15 and 44 of 50. So
+`Redis("localhost", 6379, 0, None, 5)` passes socket_timeout by
+position (the fifth), and R2 pins the other four plain ones in signature
+order: `Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None,
+socket_keepalive=None, socket_keepalive_options=None, protocol=2)`, with
+retry listed as not pinned (old default not a plain value) and R1's
+"needs nothing" beside it. `Redis(connection_pool=pool)` passes none of
+the six, so it gets all five plain ones, `socket_timeout=None` first.
+Said before the evaluation says it: with a connection pool the socket
+settings are the pool's, so those pins are needless in the sense of
+§38.6, correct and harmless; the tool cannot know, and the report's
+"delete this argument" line is the answer. The `.set`, `.get`, `.delete`
+and `ConnectionPool(...)` calls have no row and get nothing.
+
+**Measured by** the same three things as the weeks before: the test's
+checks, every guard broken on purpose afterwards, and an independent
+review of the code with its fixes re-verified.
+
+**The first run (26 Oct), and what it corrected.** `fixer/rewrite.py`
+decides both rules in one pass (`decide`, one `Plan` per call with a
+`Rule` for R1 and one for R2); `fixer/report.py` prints the three lines
+and the two-rule footer; `fixer/cli.py` calls `decide`. The first run
+got every decision of the forty-three calls right against the table
+above, and two of the expectations written before it wrong, both kept
+on record here: `h.get("k")` resolves WITHOUT the old version, since
+`Session` is imported by its defining path and `get` is defined on
+`Session` itself (it is `a.send(...)`, defined on a base class, that
+needs the MRO the old version gives), so the count without the version
+was off by one; and after `--apply` the calls whose unpinnable rows
+remain were counted as "need nothing" where decision 7 said withheld,
+the contradiction the review then named and decision 7's bracket
+resolves. Three cases were added during the first pass that broke the
+guards, each with its expected result first: a changed default on
+`spread`'s `flag`, behind a call that overflows into `*rest`, which R2
+must not read as "already wrong"; a row on a name (`ghost`) that
+`Session.get` does not have in the old version the tool reads, never
+pinned on the row's word alone; and a multi-line call with a comment on
+an earlier argument, whose comment must not be copied onto each new
+line.
+
+**The review (26 Oct)**, by a reader who had not seen the code written,
+with the fixes checked again afterwards. No pin was found that changes
+a program's meaning: the pins are literals, so they capture no name,
+and position, keyword, unpacking, `**kwargs`, positional-only, the
+inherited `__init__`, the three offsets, a call on a call's result, two
+calls at one column, a dataclass's synthesised `__init__`, a byte-order
+mark, CRLF endings and a file without a final newline all held under
+its probes. It found, most serious first: (1) a malformed diff when the
+file holds a form feed or another character `str.splitlines` breaks at
+and Python does not (`\x0b`, `\x0c`, `\x1c`-`\x1e`, `\x85`), present
+since week 3: the marker landed inside the hunk and `patch` refused it;
+fixed by splitting on `\n` alone, pinned by a test with a form feed and
+a file separator. (2) R1 alone on a bare generator argument wrote
+`spread(first=x for x in y)`, a SyntaxError, since the parentheses were
+added only on R2's path; fixed in the one place both rules go through,
+pinned by `emit(x for x in y)`. (3) A comment on the last argument's own
+comma was moved onto the last pin; fixed, pinned by line 29. (4) A name
+resolving to two functions the old version has, with different
+signatures, took the first signature silently; now a flag for both
+rules, pinned by the shim case. (5) A parameter now required whose old
+default cannot be pinned left the call "rewritten" though it will not
+run on the new version; now a flag, as a parameter added as required
+is, and the flag reaches R1's line too. (6) A list inside a tuple
+default passed the mutable-container check; closed, one level at any
+depth. (7) The claim that griffe reports spelling-only rows is false
+(§38.4's bracket); the cosmetic check stays as a guard and the claim is
+withdrawn. (8) §38.15's counts had gone stale against the fixture as the
+rounds grew it; the brackets above say what the file holds, and the
+test's docstring is the table of record. (9) "Withheld" meant two
+things; decision 7's bracket, "left to you". Two wording slips in the
+module docstring, and a stray space in a folded one-line call, fixed.
+Test gaps it named, each a case now: an empty call, a blank line
+between arguments, the now-required row without the signature, a row
+whose message carries no values. Nothing the review tried in the pins'
+values (`"it's"`, `b'x'`, `...`, `-1`, `'a\nb'`, `'é'`, `(1, 2)`) came
+out wrong, and `10 ** 6`, `frozenset()`, `1 if X else 2` and a bare
+name were "not a plain value" each.
+
+**Guards broken on purpose**, 56 over the two rounds (45 in rewrite, 7
+in report, 1 in cli, 3 in the fixture rows): 51 caught by a check; 2
+stopped the run before any check printed (libcst refusing pins placed
+before the positional arguments, "Cannot have positional argument after
+keyword argument"; an IndexError on the empty call `fetch()` once its
+guard was gone, which is the fixture reaching the guard); 3 equivalent
+(griffe never reports a row whose old and new text are identical, so a
+text comparison for non-literal values changes nothing; it reports "now
+required" only for a parameter that had a default, so the guard for one
+that had none has no input; a now-required row without the signature is
+withheld by the same guard that withholds every other pin). Three
+guards survived the first pass for want of a case (the `*args`
+overflow, the ghost row, the comment on a pin line) and one the second
+(R2's flag reaching R1, until `wrap`'s `z` moved), and the fixture now
+holds each. One dead branch found by the pass was removed rather than
+kept: a withheld rule's would-be rendered "with the other rule's edit",
+which never applies, since a rule keeps an edit it withholds only under
+the function's flags, which withhold both.
+
+**The real run**, the redis demo against the committed bundle with
+7.4.1 installed from a wheel into a scratch venv here, on a project
+with the two calls of §38.14's demo: "2 line(s) use 49 of the 134
+change(s), 2 hit(s): 2 resolved"; `Redis("localhost", 6379, 0, None,
+5)` -> rewritten `Redis("localhost", 6379, 0, None, 5,
+socket_connect_timeout=None, socket_keepalive=None,
+socket_keepalive_options=None, protocol=2)`, R1 "the moved parameter(s)
+are not passed here" and R2's line naming the four pins with their new
+values and `retry` as not pinned (old default `Retry(...)` is not a
+plain value); `Redis(connection_pool=pool)` -> all five, `socket_timeout
+=None` first; the footer "R1, pass by name: 0 call(s) rewritten, 0
+withheld, 2 need nothing. R2, pin the old default: 2 call(s) pinned, 0
+withheld, 0 left to you, 0 need nothing; the diff follows." Applied to
+a copy, the file parses, and run again: 0 pinned, both calls "left to
+you" for the unpinnable `retry`, and no diff. Exactly (c) above, to the
+argument. Read on the way: the bundle's manifest records griffe 2.3.0,
+the version installed on the Mac when the bundle was built on 20 Oct
+(`build_bundle.py` writes `importlib.metadata.version("griffe")`), which
+says nothing about the ingest's version behind the CSV files; the kinds
+and messages R1 and R2 read are the same across 2.2 to 2.4.
+
+Tests: 53 checks in `scripts/test_fixer_rewrite.py` (36 in week 3),
+locate's 75 (its footer check reads the new footer) and the bundle's 50
+unchanged, on Python 3.13 here with libcst 1.9.0 and griffe 2.4.1.
+
+### 38.16 Week 5's sample: the ten downstream packages. The rule, fixed before the count (26 Oct)
+
+Week 4's commit is 78e837a (26 Oct, R2). R1 and R2 are in, so §38.6's
+second number is next: the fixer's precision on real downstream code,
+read by hand, on a sample named here before any run. The sample is
+chosen by `scripts/eval_sample.py` from two files, with the rule below
+written before the script ran on the real data [26 Oct, corrected: the
+rule and the script were written and delivered together; the run came
+first, its output sent at 10:48, and the push, a02c2df "wip", at 10:53,
+with this section as it then stood]. The script downloads nothing;
+the run itself is week 5's.
+
+**The sources.** `data/usage_pairs.csv`, the usage scan's record of
+(scanning package, symbol it uses) for the 1,500 most-downloaded
+packages, latest releases as of the September scan, self-use excluded
+(`ml/ingest/run_usage.py`; the file is on the Mac, as every CSV under
+data/ is); and `fixer/data/breakrank.sqlite`, the committed bundle,
+for the rows and their paths.
+
+**A rewritable function** is one the bundle holds a row on of a kind
+the two rules act on: R1's, a parameter moved (PARAMETER_MOVED) or made
+keyword-only (PARAMETER_CHANGED_KIND whose message ends "-> keyword-
+only"); R2's, a default changed from a plain literal (PARAMETER_CHANGED_
+DEFAULT whose old value is plain and not spelling-only, by
+fixer/rewrite.py's `plain` and `cosmetic`) or a parameter made required
+(PARAMETER_CHANGED_REQUIRED). A function counts once however many rows
+or upgrades carry it. A function the fixer would withhold on (a removal
+beside the moved parameter, `connect` in the fixture) still counts: the
+evaluation reads withheld lines as well as rewrites (§38.6). On the
+bundle: 8,487 rows of the four kinds on 1,331 functions, before the
+plain-literal and spelling tests, which the script applies.
+
+**A scanning package uses a function** when one of its pairs names the
+function's defining path or an export path (the label's matching, §24),
+or, for a constructor, the class's path by either spelling: the scan
+records `from redis import Redis` as `redis.Redis`, and locate takes a
+`Redis(...)` call to `Redis.__init__`'s rows (§38.13). What the scan
+cannot record, a method called on an instance (`r.set(...)`), is not
+counted, so the sample leans to constructors, module-level functions
+and class attributes written in full; it is the convenience sample
+§38.6 calls it, biased to large consumers, and the report says so. [26
+Oct, from the review: a pair names a path, not a call. The scan records
+a path for any mention, so a class imported as a base or an annotation
+counts here as its constructor; the count is an upper bound on the call
+sites the fixer will meet.] A pair whose scanner is the changed package
+itself, by PEP 503 name, is dropped (the scan excludes self-use
+already; the script checks again).
+
+**The ranking** is by the number of distinct rewritable functions a
+package uses, ties by name. The first TEN are the sample [amended 26
+Oct, below: one entry per source repository]. The next
+FIVE are reserves, taken in order only when a sample package's latest
+release cannot be downloaded as source, or the old version of the
+changed package it uses cannot be installed from a wheel; each
+substitution is recorded here with its reason. The script prints the
+top 25 with each package's count of functions, of changed packages and
+of upgrades; the ten's detail (each changed package with its upgrades
+and up to eight function names, marked R1, R2 or both); and the pairs
+file's row count and sha256. That output goes into this section, as
+printed, before the fixer touches any of the ten; the evaluation's
+venvs and the fixer's runs follow in week 5.
+
+**Not decided here, on purpose:** which upgrade the fixer runs for when
+a sample package uses rewritable functions from several changed
+packages or several of one package's releases. §38.6 says "the upgrade
+that produced the change"; where a package meets more than one, every
+such upgrade is run and counted, since the unit the evaluation counts
+is a proposed rewrite read by hand, and the counts are reported per
+upgrade with the totals. Said before the list exists, so the list does
+not decide it.
+
+Tested by `scripts/test_eval_sample.py`, 15 checks on the fixture's
+forty-five rows and twenty-one hand-written pairs [26 Oct, later: 30
+checks and twenty-six pairs after the amendment and the review, below],
+the expected ranking written first: fourteen rewritable functions in the fixture (a
+parameter added as required alone, a removed parameter, the constants,
+the removed objects and the class rows are not); the class path reaches
+the constructor; self-use dropped; a package that uses nothing
+rewritable absent; ties by name, with a short name listed first in the
+file and ranked by name (`aa` among `appa`, `appd`, `appe`); the sample
+and the reserves marked; the detail's lines; the csv; a missing pairs
+file refused with where it comes from. Ten guards broken on purpose
+(self-use kept, the class path dropped, a spelling-only or non-plain
+default counted, a kind change to positional-only counted, ties not by
+name, the reserves unmarked, export paths ignored, a now-required row
+not counted, functions counted per row): all ten caught, the last by
+the run failing before a check could print; the tie guard survived the
+first fixture (every tied name had the same length) until the short
+name was added.
+
+**26 Oct, the count: the first run, as printed from the Mac.** The
+test first, 15 ok. Then the script on the real files; the whole output,
+unedited:
+
+```
+data/usage_pairs.csv: 85,561 pairs, sha256 1f1535089b8a; fixer/data/breakrank.sqlite: 1,071 rewritable function(s) in 120 package(s)
+339 scanning package(s) use at least one; 880 (package, function) uses in all
+
+rank  functions  packages  upgrades  scanning package
+   1         16         3         6  imbalanced-learn  <- sample
+   2         14         6        13  litellm  <- sample
+   3         14         7        12  mlflow  <- sample
+   4         14         7        12  mlflow-skinny  <- sample
+   5         13         8        13  prefect  <- sample
+   6         13         3         5  statsmodels  <- sample
+   7         13         5         6  wandb  <- sample
+   8         12         2         2  dask  <- sample
+   9         12         9        15  langchain-community  <- sample
+  10         12         6        12  sentry-sdk  <- sample
+  11         12         2         2  snowflake-snowpark-python  <- reserve
+  12         10         1         5  apache-airflow-providers-cncf-kubernetes  <- reserve
+  13         10         5        10  ddtrace  <- reserve
+  14         10         7        15  google-adk  <- reserve
+  15         10         1         2  grpclib  <- reserve
+  16         10         5         6  scikit-learn
+  17         10         3         6  shap
+  18          9         5         8  fastmcp
+  19          9         2         2  geopandas
+  20          9         8        11  logfire
+  21          9         8        15  sglang
+  22          9         2         5  skops
+  23          8         4         7  fastmcp-slim
+  24          8         7         8  google-cloud-aiplatform
+  25          8         1         2  gunicorn
+
+the sample, the 10 with the most rewritable functions (ties by name):
+
+   1. imbalanced-learn: 16 function(s)
+      joblib: 1 function(s) in 1 upgrade(s): 1.4.2 -> 1.5.0
+          joblib.memory.Memory.__init__   [R1]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 14 function(s) in 4 upgrade(s): 1.5.2 -> 1.6.0, 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.compose._column_transformer.ColumnTransformer.__init__   [R2]
+          sklearn.compose._column_transformer.make_column_transformer   [R2]
+          sklearn.ensemble._bagging.BaggingClassifier.__init__   [R2]
+          sklearn.ensemble._gb.GradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._weight_boosting.AdaBoostClassifier.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+          sklearn.metrics._classification.brier_score_loss   [R2]
+          ... and 6 more
+
+   2. litellm: 14 function(s)
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      mcp: 3 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.client.sse.sse_client   [R2]
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 6 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.asyncio.connection.Connection.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+          redis.connection.Connection.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+
+   3. mlflow: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   4. mlflow-skinny: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   5. prefect: 13 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      pydantic-settings: 3 function(s) in 3 upgrade(s): 2.12.0 -> 2.13.0, 2.13.1 -> 2.14.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+          pydantic_settings.sources.providers.dotenv.DotEnvSettingsSource.__init__   [R1]
+          pydantic_settings.sources.providers.env.EnvSettingsSource.__init__   [R1]
+      redis: 2 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+      websockets: 1 function(s) in 1 upgrade(s): 17.0 -> 17.0.1
+          websockets.asyncio.server.Server.__init__   [R1]
+
+   6. statsmodels: 13 function(s)
+      pandas: 5 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parsers.readers.read_table   [R2]
+      scikit-learn: 1 function(s) in 1 upgrade(s): 1.7.2 -> 1.8.0
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      scipy: 7 function(s) in 3 upgrade(s): 1.15.3 -> 1.16.0, 1.16.3 -> 1.17.0, 1.17.1 -> 1.18.0
+          scipy.io.matlab._mio.loadmat   [R2]
+          scipy.linalg._decomp_qr.qr   [R2]
+          scipy.linalg.lapack.get_lapack_funcs   [R2]
+          scipy.optimize._minpack_py.fsolve   [R2]
+          scipy.sparse._construct.diags   [R2]
+          scipy.sparse._construct.diags_array   [R2]
+          scipy.stats._stats_py.linregress   [R2]
+
+   7. wandb: 13 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 2 function(s) in 2 upgrade(s): 1.5.2 -> 1.6.0, 1.7.2 -> 1.8.0
+          sklearn.calibration.CalibratedClassifierCV.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      watchdog: 7 function(s) in 1 upgrade(s): 4.0.2 -> 5.0.0
+          watchdog.observers.fsevents.FSEventsObserver.__init__   [R1]
+          watchdog.observers.inotify.InotifyObserver.__init__   [R1]
+          watchdog.observers.kqueue.KqueueObserver.__init__   [R1]
+          watchdog.observers.polling.PollingObserver.__init__   [R1]
+          watchdog.observers.read_directory_changes.WindowsApiObserver.__init__   [R1]
+          watchdog.tricks.AutoRestartTrick.__init__   [R1]
+          watchdog.tricks.ShellCommandTrick.__init__   [R1+R2]
+
+   8. dask: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.arrays.period.PeriodArray.__init__   [R1]
+          pandas.core.groupby.groupby.GroupBy.__init__   [R1]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          ... and 3 more
+      pyarrow: 1 function(s) in 1 upgrade(s): 24.0.0 -> 25.0.0
+          pyarrow.parquet.core.ParquetFile.__init__   [R2]
+
+   9. langchain-community: 12 function(s)
+      datasets: 1 function(s) in 1 upgrade(s): 4.8.4 -> 4.8.5
+          datasets.download.download_manager.DownloadManager.__init__   [R2]
+      httpx-sse: 2 function(s) in 1 upgrade(s): 0.1.0 -> 0.2.0
+          httpx_sse._api.aconnect_sse   [R1]
+          httpx_sse._api.connect_sse   [R1]
+      networkx: 1 function(s) in 2 upgrade(s): 3.3 -> 3.4, 3.5 -> 3.6
+          networkx.readwrite.json_graph.node_link.node_link_data   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.json_format.MessageToJson   [R1]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 3 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      tqdm: 1 function(s) in 2 upgrade(s): 4.67.3 -> 4.68.0, 4.68.1 -> 4.68.2
+          tqdm.std.tqdm.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+  10. sentry-sdk: 12 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      mcp: 2 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      redis: 4 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.ClusterPipeline.__init__   [R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+data/eval_sample.csv: 339 row(s) written
+```
+
+**The correction, 26 Oct, after the ranking and before any fixer run:
+one entry per source repository.** Rank 4, mlflow-skinny, lists the
+same fourteen functions as rank 3, mlflow, changed package for changed
+package. PyPI's project_urls name one repository for both,
+github.com/mlflow/mlflow, both at 3.17.2 on 26 Oct, and skinny's own
+description calls it "a lightweight MLflow package without SQL storage,
+server, UI, or data science dependencies": one source tree under two
+names. The same pair sits at ranks 18 and 23: fastmcp and fastmcp-slim,
+github.com/PrefectHQ/fastmcp, both 4.1.3, "The dependency-slim FastMCP
+package." The rule above did not foresee a repository shipping twice;
+taken as written it would put the same call sites in the sample twice
+and count nine codebases as ten. Amended, before the fixer has run on
+any package: ONE ENTRY PER SOURCE REPOSITORY. A second distribution is
+named in the script's `SAME_SOURCE` table with the evidence (the
+repository PyPI names, the version), marked in the table as "same source
+as mlflow, skipped", and the positions close up over it, so the sample
+is still ten and the reserves five. The data must agree with the table
+or the run stops and writes nothing: a second distribution can only use
+what the first does (its functions a subset of the first's), and the
+first must be ranked [amended after the review, below: when the first
+is not ranked, the second stands, with a note]. The change is to the
+sample's validity, not to
+any result, since there is none yet; the first run's output stays above
+as printed, and the amended run's follows below. Said before the
+re-run, from the table above: the sample becomes imbalanced-learn,
+litellm, mlflow, prefect, statsmodels, wandb, dask, langchain-community,
+sentry-sdk and snowflake-snowpark-python (ranks 1 to 3 and 5 to 11); the
+reserves apache-airflow-providers-cncf-kubernetes, ddtrace, google-adk,
+grpclib and scikit-learn (ranks 12 to 16); fastmcp-slim at 23 is marked
+and skipped though neither it nor fastmcp is in the fifteen. Nine of
+the ten are the first run's, with the detail printed above; the one new
+entry, snowflake-snowpark-python with 12 functions in 2 changed
+packages and 2 upgrades, gets its detail from the re-run.
+
+The test grew first to 19 checks, the expectations written before
+the code: a hand-written second distribution of appb (appb-slim, two of
+appb's five functions, spelled AppB_Slim in the test's table so that
+PEP 503 matching is exercised) is marked and skipped; with three
+reserves the positions close up (appe the third reserve, appf nothing);
+a table the data contradicts is refused with the functions named (appg
+listed as appb's second distribution: it uses Client.from_url and
+Client.parse, which appb does not); with --top 5 the fifth sampled is
+appd at rank 6, the skipped row inside the sample's span; the csv
+carries a role column; the command line exits 2 on a wrong table and
+writes no csv. Twelve guards broken on purpose on the new code: 10
+caught by a check, 2 stopped the run, 0 survived; the first pass had one
+survivor, the detail numbered by rank, because no skipped row fell
+inside the fixture's sample span with --top 3, and the --top 5 check was
+added for it. One harness correction on record: the harness rewrote the
+source in place and restored it within the same second as a same-size
+mutant, and Python's timestamp check then ran one test from the
+mutant's cached bytecode; the harness now clears the cache and runs
+with -B. Week 4's harness copied the tree per mutant and was not
+exposed.
+
+**The independent review (26 Oct), fourteen findings, all taken.**
+A fresh reader of the two files, given the rule and not the author's
+account, found: (1) the same-source table was checked against the data
+but not for its shape, so a name on both sides (a pair both ways, a
+self-pair, a chain) skipped a repository silently; now refused. (2) A
+first distribution absent from the ranking was refused as "the table is
+wrong", the least likely cause: the scan has a 120 s alarm and failures
+go to data/usage_failures.csv, and in that case the second distribution
+is the repository's only entry; now the second stands, with a note
+naming the two causes to check, and the subset refusal names its two
+causes too (the scan read the two sdists at different versions; a wrong
+table). (3) The header printed twelve hex digits of the digest and
+called the row count "pairs", though the scan appends across resumed
+runs and duplicates are expected; now the full sha256, the row count
+and the distinct count. The first run's record above therefore carries
+`sha256 1f1535089b8a` as printed; the re-run carries the whole digest.
+(4) "Uses" is an upper bound: the scan records a path for any mention,
+so a class imported as a base or an annotation counts as its
+constructor, and `typing_extensions.TypedDict [R2]` in five of the
+ten's details is almost always `class X(TypedDict)`, which R2 has no
+call to pin; the docstring says so and so does the rule above, by this
+bracket. (5) A function is identified by its defining path, so one that
+moved modules between upgrades counts once per module through the
+shared export path; the header now counts the paths that reach more
+than one defining path, and the docstring says what identity is. On the
+committed bundle the count is 2, one function: sglang's
+`BenchArgs.__init__`, defined in `bench_one_batch_server` for 0.5.5.post3
+-> 0.5.6 and in `test.bench_one_batch_server_internal` for 0.5.8.post1
+-> 0.5.9 and 0.5.9 -> 0.5.10, reached by the first module's paths; it
+touches no entry of the fifteen. (6)
+Spellings were handled three ways (raw in the ranking, PEP 503 in the
+table, the dist-info spelling in the mark); now stripped and normalised
+once in the ranking, the first spelling kept for display, the mark in
+the first distribution's own spelling. (7) The detail's upgrades were
+sorted as text (2.10.0 before 2.8.0); now by `fixer.bundle.version_key`.
+(8) The docstring said "to or from a plain literal"; the rule is "from".
+(9) With --top above the ranking the header claimed the larger number;
+with --show below the last reserve the reserves fell off the table; now
+the header counts the sampled and the table runs through the last
+reserve. (10) A short row in the pairs file died in `re.sub`; now
+refused with its line number, exit 2. (11) A tie at either cut, where
+"by name" decides, was not said: in the first run sentry-sdk and
+snowflake-snowpark-python tie on 12 at the sample's cut and grpclib and
+scikit-learn on 10 at the reserves'; in the amended ranking the
+sample's cut falls between 12 and 10 and the reserves' cut ties scikit-
+learn with shap on 10; the run now says so under the table. (12) The tie-break guard was pinned by appb-slim's position in
+the file, not by aa as the docstring claimed; aa's rows are now last in
+the file. (13) Self-use was dropped only for identical spellings; a
+case variant (AlphaLib) is now dropped by PEP 503 name. The reviewer's
+suggested row, Alpha_Lib, is not alphalib's name under PEP 503 (the
+underscore makes alpha-lib), and the first run of the reworked test
+failed seven checks through that one fixture row before the spelling
+was corrected; the expectations were right. (14) Nothing pinned a
+doubled row, a name on both sides, --top beyond the ranking, or the
+mark's spelling; now pinned.
+
+After the review: 29 checks, 26 guards broken on purpose (the twelve
+re-aimed at the reworked text and fourteen for the findings: the shape
+check dropped; the absent first skipped silently; the refusal without
+its causes; the mark in the normalised name; upgrades sorted as text;
+shared paths unreported; distinct pairs by raw spelling, which survived
+until the doubled row was made a case variant, APPF; names unstripped;
+scanners grouped by raw spelling; the tie unsaid; the table cut before
+the last reserve; the header counting --top; a short row skipped; the
+tie read from a skipped row): 24 caught by a check, 2 stopped the run
+(main not catching its two errors), 0 survived.
+
+The reviewer re-read the reworked files and confirmed the fourteen
+fixed, agreeing on the Alpha_Lib correction, and found four more, all
+taken: the amended-rule paragraph above still said "the first must be
+ranked" with no pointer to the change (bracketed now); the tie sentence
+in (11) named the amended ranking's reserve tie as the first run's
+(corrected above: the first run's was grpclib and scikit-learn); the
+standing note was printed for a second distribution at any rank and
+spelled the first in its normalised form, and it reached only stdout,
+so the csv called a standing entry a plain "sample"; now the note
+spells the first as the table writes it, says "outside the sample and
+the reserves" when that is where the entry falls, and goes into a note
+column of the csv beside the role. Three guards for these (the note in
+the normalised name; the csv's note column empty; the note the same
+inside and outside the fifteen), all caught: 30 checks, 29 guards
+broken, 27 caught by a check, 2 stopped the run, 0 survived. The
+printed form changes with this: three header lines, "note:" lines and
+tie lines under the table, the detail header counting the sampled,
+"rank N" on each sampled entry, a note column in the csv.
+
+**The amended run, 26 Oct, as printed from the Mac.** The test first,
+30 ok; then the script on the same two files. The ten and the five are
+the ones said above before the re-run; the pairs file has no doubled
+row (85,561 rows, 85,561 distinct); fastmcp-slim's eight functions are
+among fastmcp's nine, so the subset check passed for both pairs; the one
+tie at a cut, scikit-learn with shap on 10 at the reserves', is said
+under the table. The whole output, unedited:
+
+```
+data/usage_pairs.csv: 85,561 row(s), 85,561 distinct pair(s), sha256 1f1535089b8a435aafba4337ac70e08e63a05fad657188305577b503311586fe
+fixer/data/breakrank.sqlite: 1,071 rewritable function(s) in 120 package(s); 2 path(s) reach more than one defining path
+339 scanning package(s) use at least one; 880 (package, function) uses in all
+
+rank  functions  packages  upgrades  scanning package
+   1         16         3         6  imbalanced-learn  <- sample
+   2         14         6        13  litellm  <- sample
+   3         14         7        12  mlflow  <- sample
+   4         14         7        12  mlflow-skinny  <- same source as mlflow, skipped
+   5         13         8        13  prefect  <- sample
+   6         13         3         5  statsmodels  <- sample
+   7         13         5         6  wandb  <- sample
+   8         12         2         2  dask  <- sample
+   9         12         9        15  langchain-community  <- sample
+  10         12         6        12  sentry-sdk  <- sample
+  11         12         2         2  snowflake-snowpark-python  <- sample
+  12         10         1         5  apache-airflow-providers-cncf-kubernetes  <- reserve
+  13         10         5        10  ddtrace  <- reserve
+  14         10         7        15  google-adk  <- reserve
+  15         10         1         2  grpclib  <- reserve
+  16         10         5         6  scikit-learn  <- reserve
+  17         10         3         6  shap
+  18          9         5         8  fastmcp
+  19          9         2         2  geopandas
+  20          9         8        11  logfire
+  21          9         8        15  sglang
+  22          9         2         5  skops
+  23          8         4         7  fastmcp-slim  <- same source as fastmcp, skipped
+  24          8         7         8  google-cloud-aiplatform
+  25          8         1         2  gunicorn
+the last reserve, scikit-learn, ties on 10 with shap, the first left out: by name
+
+the sample, the 10 with the most rewritable functions (ties by name; one entry per repository):
+
+   1. imbalanced-learn, rank 1: 16 function(s)
+      joblib: 1 function(s) in 1 upgrade(s): 1.4.2 -> 1.5.0
+          joblib.memory.Memory.__init__   [R1]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 14 function(s) in 4 upgrade(s): 1.5.2 -> 1.6.0, 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.compose._column_transformer.ColumnTransformer.__init__   [R2]
+          sklearn.compose._column_transformer.make_column_transformer   [R2]
+          sklearn.ensemble._bagging.BaggingClassifier.__init__   [R2]
+          sklearn.ensemble._gb.GradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier.__init__   [R2]
+          sklearn.ensemble._weight_boosting.AdaBoostClassifier.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+          sklearn.metrics._classification.brier_score_loss   [R2]
+          ... and 6 more
+
+   2. litellm, rank 2: 14 function(s)
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      mcp: 3 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.client.sse.sse_client   [R2]
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 6 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.asyncio.connection.Connection.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+          redis.connection.Connection.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+
+   3. mlflow, rank 3: 14 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      kubernetes: 1 function(s) in 1 upgrade(s): 31.0.0 -> 32.0.0
+          kubernetes.client.models.v1_delete_options.V1DeleteOptions.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      pandas: 3 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parquet.read_parquet   [R1]
+      pyyaml: 1 function(s) in 1 upgrade(s): 5.4.1 -> 6.0
+          yaml.load   [R2]
+      redis: 1 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.client.Redis.__init__   [R1+R2]
+      scikit-learn: 4 function(s) in 3 upgrade(s): 1.6.1 -> 1.7.0, 1.7.2 -> 1.8.0, 1.8.0 -> 1.9.0
+          sklearn.metrics._classification.log_loss   [R1]
+          sklearn.metrics._plot.precision_recall_curve.PrecisionRecallDisplay.__init__   [R2]
+          sklearn.metrics._plot.roc_curve.RocCurveDisplay.__init__   [R2]
+          sklearn.metrics._ranking.precision_recall_curve   [R2]
+
+   4. prefect, rank 5: 13 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      httpx: 2 function(s) in 1 upgrade(s): 0.27.2 -> 0.28.0
+          httpx._transports.default.AsyncHTTPTransport.__init__   [R1]
+          httpx._transports.default.HTTPTransport.__init__   [R1]
+      pydantic-settings: 3 function(s) in 3 upgrade(s): 2.12.0 -> 2.13.0, 2.13.1 -> 2.14.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+          pydantic_settings.sources.providers.dotenv.DotEnvSettingsSource.__init__   [R1]
+          pydantic_settings.sources.providers.env.EnvSettingsSource.__init__   [R1]
+      redis: 2 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      uvicorn: 1 function(s) in 1 upgrade(s): 0.52.4 -> 0.53.0
+          uvicorn.config.Config.__init__   [R1]
+      websockets: 1 function(s) in 1 upgrade(s): 17.0 -> 17.0.1
+          websockets.asyncio.server.Server.__init__   [R1]
+
+   5. statsmodels, rank 6: 13 function(s)
+      pandas: 5 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          pandas.io.parsers.readers.read_table   [R2]
+      scikit-learn: 1 function(s) in 1 upgrade(s): 1.7.2 -> 1.8.0
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      scipy: 7 function(s) in 3 upgrade(s): 1.15.3 -> 1.16.0, 1.16.3 -> 1.17.0, 1.17.1 -> 1.18.0
+          scipy.io.matlab._mio.loadmat   [R2]
+          scipy.linalg._decomp_qr.qr   [R2]
+          scipy.linalg.lapack.get_lapack_funcs   [R2]
+          scipy.optimize._minpack_py.fsolve   [R2]
+          scipy.sparse._construct.diags   [R2]
+          scipy.sparse._construct.diags_array   [R2]
+          scipy.stats._stats_py.linregress   [R2]
+
+   6. wandb, rank 7: 13 function(s)
+      click: 2 function(s) in 1 upgrade(s): 8.2.1 -> 8.3.0
+          click.core.Option.__init__   [R2]
+          click.core.Parameter.__init__   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      scikit-learn: 2 function(s) in 2 upgrade(s): 1.5.2 -> 1.6.0, 1.7.2 -> 1.8.0
+          sklearn.calibration.CalibratedClassifierCV.__init__   [R2]
+          sklearn.linear_model._logistic.LogisticRegression.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+      watchdog: 7 function(s) in 1 upgrade(s): 4.0.2 -> 5.0.0
+          watchdog.observers.fsevents.FSEventsObserver.__init__   [R1]
+          watchdog.observers.inotify.InotifyObserver.__init__   [R1]
+          watchdog.observers.kqueue.KqueueObserver.__init__   [R1]
+          watchdog.observers.polling.PollingObserver.__init__   [R1]
+          watchdog.observers.read_directory_changes.WindowsApiObserver.__init__   [R1]
+          watchdog.tricks.AutoRestartTrick.__init__   [R1]
+          watchdog.tricks.ShellCommandTrick.__init__   [R1+R2]
+
+   7. dask, rank 8: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas._testing.asserters.assert_index_equal   [R2]
+          pandas.core.arrays.categorical.Categorical.__init__   [R1]
+          pandas.core.arrays.period.PeriodArray.__init__   [R1]
+          pandas.core.groupby.groupby.GroupBy.__init__   [R1]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          ... and 3 more
+      pyarrow: 1 function(s) in 1 upgrade(s): 24.0.0 -> 25.0.0
+          pyarrow.parquet.core.ParquetFile.__init__   [R2]
+
+   8. langchain-community, rank 9: 12 function(s)
+      datasets: 1 function(s) in 1 upgrade(s): 4.8.4 -> 4.8.5
+          datasets.download.download_manager.DownloadManager.__init__   [R2]
+      httpx-sse: 2 function(s) in 1 upgrade(s): 0.1.0 -> 0.2.0
+          httpx_sse._api.aconnect_sse   [R1]
+          httpx_sse._api.connect_sse   [R1]
+      networkx: 1 function(s) in 2 upgrade(s): 3.3 -> 3.4, 3.5 -> 3.6
+          networkx.readwrite.json_graph.node_link.node_link_data   [R2]
+      pandas: 1 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.reshape.concat.concat   [R2]
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.json_format.MessageToJson   [R1]
+      pydantic-settings: 1 function(s) in 2 upgrade(s): 2.12.0 -> 2.13.0, 2.14.2 -> 2.15.0
+          pydantic_settings.main.BaseSettings.__init__   [R1]
+      redis: 3 function(s) in 4 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.client.Redis.__init__   [R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      tqdm: 1 function(s) in 2 upgrade(s): 4.67.3 -> 4.68.0, 4.68.1 -> 4.68.2
+          tqdm.std.tqdm.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+   9. sentry-sdk, rank 10: 12 function(s)
+      asyncpg: 1 function(s) in 1 upgrade(s): 0.29.0 -> 0.30.0
+          asyncpg.connection.connect   [R2]
+      httpcore: 2 function(s) in 1 upgrade(s): 1.0.6 -> 1.0.7
+          httpcore._async.connection_pool.AsyncConnectionPool.__init__   [R1]
+          httpcore._sync.connection_pool.ConnectionPool.__init__   [R1]
+      litellm: 2 function(s) in 1 upgrade(s): 1.98.0 -> 1.99.0
+          litellm.main.acompletion   [R1]
+          litellm.main.completion   [R1]
+      mcp: 2 function(s) in 3 upgrade(s): 1.29.1 -> 1.30.0, 1.30.0 -> 2.0.0, 2.1.1 -> 2.2.0
+          mcp.server.lowlevel.server.Server.__init__   [R1+R2]
+          mcp.server.streamable_http_manager.StreamableHTTPSessionManager.__init__   [R2]
+      redis: 4 function(s) in 5 upgrade(s): 7.2.1 -> 7.2.2, 7.3.0 -> 7.3.1, 7.3.1 -> 7.4.0, 7.4.0 -> 7.4.1, 7.4.1 -> 8.0.0
+          redis.asyncio.cluster.RedisCluster.__init__   [R1+R2]
+          redis.client.Redis.__init__   [R1+R2]
+          redis.cluster.ClusterPipeline.__init__   [R2]
+          redis.cluster.RedisCluster.__init__   [R2]
+      typing-extensions: 1 function(s) in 1 upgrade(s): 4.12.2 -> 4.13.0
+          typing_extensions.TypedDict   [R2]
+
+  10. snowflake-snowpark-python, rank 11: 12 function(s)
+      pandas: 11 function(s) in 1 upgrade(s): 2.3.3 -> 3.0.0
+          pandas.core.frame.DataFrame.groupby   [R1]
+          pandas.core.frame.DataFrame.transpose   [R2]
+          pandas.core.groupby.grouper.Grouper.__init__   [R1]
+          pandas.core.resample.Resampler.__init__   [R2]
+          pandas.core.resample.TimeGrouper.__init__   [R1]
+          pandas.core.reshape.concat.concat   [R2]
+          pandas.core.reshape.merge.merge   [R2]
+          pandas.core.tools.datetimes.to_datetime   [R1]
+          ... and 3 more
+      protobuf: 1 function(s) in 1 upgrade(s): 6.33.6 -> 7.34.0
+          google.protobuf.text_format.MessageToString   [R1]
+
+data/eval_sample.csv: 339 row(s) written
+```
+
+This is the sample. The fixer has not run on any of the ten; week 5's
+venvs and runs start from here, each substitution from the reserves, if
+one is needed, recorded in this section with its reason.
+
+**Commits.** a02c2df (26 Oct, 10:53, "wip: eval_sample script with
+tests, notes") holds the first script, its 15-check test and this
+section as first written, and a .gitignore line meant to add `logs/`
+that landed on the end of `Thumbs.db`, which had no final newline, so
+the file read `Thumbs.dblogs/`; the next commit puts the two on their
+own lines. 0448be5 (26 Oct, 14:35) is that commit: the amended script,
+the 30-check test, this section through the amended run, and the
+.gitignore fix.
+
+### 38.17 The 30 Oct checkpoint, done on 28 Oct: a fresh clone, `pipx install`, one run with the network off
+
+Varad's fresh-clone test (§38.10, §38.13): install the tool from a
+clone of the public repository with nothing of the development tree on
+the path, then run it with the network off, so that the bundle inside
+the installed package and the old version read from the project's venv
+are all it has. Done on the Mac on 28 Oct, two days before the date,
+in a new terminal window with no venv active:
+
+```
+cd ~/Projects
+git clone --branch ml/db-writer https://github.com/breakrank-dev/BreakRank.git breakrank-fresh
+git -C ~/Projects/breakrank-fresh log --oneline -1
+pipx install ~/Projects/breakrank-fresh
+which breakrank-fix
+breakrank-fix --version
+networksetup -listallhardwareports | grep -A 1 Wi-Fi
+networksetup -setairportpower en0 off
+networksetup -getairportpower en0
+ping -c 1 pypi.org
+cd ~/Projects/redisdemo
+breakrank-fix redis --to 8.0.0 --env ~/Projects/redis741
+networksetup -setairportpower en0 on
+```
+
+What it showed, as printed (pipx 1.17.2):
+
+```
+Cloning into 'breakrank-fresh'...
+remote: Enumerating objects: 1146, done.
+remote: Counting objects: 100% (273/273), done.
+remote: Compressing objects: 100% (189/189), done.
+remote: Total 1146 (delta 140), reused 181 (delta 77), pack-reused 873 (from 1)
+Receiving objects: 100% (1146/1146), 4.60 MiB | 4.26 MiB/s, done.
+Resolving deltas: 100% (672/672), done.
+0448be5 (HEAD -> ml/db-writer, origin/ml/db-writer) eval sample: one entry per source repository, the review's eighteen points taken, the first and the amended run recorded in NOTES 38.16; .gitignore: logs/ on its own line
+determining package name from '/Users/vaibhav/Projects/breakrank-fresh'...
+Using Python 3.14.7 environment at: .
+Resolved 1 package in 1.28s
+      Built breakrank-fix @ file:///Users/vaibhav/Projects/breakrank-fresh
+Prepared 1 package in 789ms
+Installed 1 package in 3ms
+ + breakrank-fix==0.1.0 (from file:///Users/vaibhav/Projects/breakrank-fresh)
+installing breakrank-fix from spec '/Users/vaibhav/Projects/breakrank-fresh'...
+Using Python 3.14.7 environment at: .
+Resolved 8 packages in 1.30s
+      Built breakrank-fix @ file:///Users/vaibhav/Projects/breakrank-fresh
+Prepared 8 packages in 760ms
+Installed 8 packages in 10ms
+ + breakrank-fix==0.1.0 (from file:///Users/vaibhav/Projects/breakrank-fresh)
+ + colorama==0.4.6
+ + griffe==2.4.1
+ + griffecli==2.4.1
+ + griffelib==2.4.1
+ + libcst==1.9.0
+ + packaging==26.3
+ + pyyaml==6.0.3
+  installed package breakrank-fix 0.1.0, installed using Python 3.14.7
+  These apps are now available
+    - breakrank-fix
+done! ✨ 🌟 ✨
+/Users/vaibhav/.local/bin/breakrank-fix
+breakrank-fix 0.1.0
+Hardware Port: Wi-Fi
+Device: en0
+Wi-Fi Power (en0): Off
+PING pypi.org (151.101.64.223): 56 data bytes
+
+--- pypi.org ping statistics ---
+1 packets transmitted, 0 packets received, 100.0% packet loss
+redis 7.4.1 -> 8.0.0: 1 release(s) crossed, 134 change(s); bundle built 2026-10-20T17:03:32Z
+  8.0.0          compared with the one before it: 134 change(s)
+
+project /Users/vaibhav/Projects/redisdemo: 1 file(s) read, 1 mention the import root(s) redis
+  old version redis 7.4.1 read from /Users/vaibhav/Projects/redis741/lib/python3.12/site-packages (import roots: redis): its classes' bases and signatures are known.
+  2 line(s) use 49 of the 134 change(s), 2 hit(s): 2 resolved, 0 referenced, 0 unverified.
+
+PART 1  changes your code uses, in the site's order (shortest public path first, then by name):
+
+    1  redis.client.Redis.__init__   used by 2   (2 line(s))
+         PARAMETER_CHANGED_DEFAULT (protocol)   2 -> None
+         PARAMETER_CHANGED_DEFAULT (retry)   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…
+         PARAMETER_CHANGED_DEFAULT (socket_connect_timeout)   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT
+         PARAMETER_CHANGED_DEFAULT (socket_keepalive)   None -> True
+         PARAMETER_CHANGED_DEFAULT (socket_keepalive_options)   None -> SENTINEL
+         PARAMETER_CHANGED_DEFAULT (socket_timeout)   None -> DEFAULT_SOCKET_TIMEOUT
+         PARAMETER_MOVED (cache)
+         PARAMETER_MOVED (cache_config)
+         PARAMETER_MOVED (client_name)
+         PARAMETER_MOVED (connection_pool)
+         PARAMETER_MOVED (credential_provider)
+         PARAMETER_MOVED (decode_responses)
+         PARAMETER_MOVED (driver_info)
+         PARAMETER_MOVED (encoding)
+         PARAMETER_MOVED (encoding_errors)
+         PARAMETER_MOVED (event_dispatcher)
+         PARAMETER_MOVED (health_check_interval)
+         PARAMETER_MOVED (lib_name)
+         PARAMETER_MOVED (lib_version)
+         PARAMETER_MOVED (maint_notifications_config)
+         PARAMETER_MOVED (max_connections)
+         PARAMETER_MOVED (oss_cluster_maint_notifications_handler)
+         PARAMETER_MOVED (protocol)
+         PARAMETER_MOVED (redis_connect_func)
+         PARAMETER_MOVED (retry)
+         PARAMETER_MOVED (retry_on_error)
+         PARAMETER_MOVED (retry_on_timeout)
+         PARAMETER_MOVED (single_connection_client)
+         PARAMETER_MOVED (socket_keepalive)
+         PARAMETER_MOVED (socket_keepalive_options)
+         PARAMETER_MOVED (ssl)
+         PARAMETER_MOVED (ssl_ca_certs)
+         PARAMETER_MOVED (ssl_ca_data)
+         PARAMETER_MOVED (ssl_ca_path)
+         PARAMETER_MOVED (ssl_cert_reqs)
+         PARAMETER_MOVED (ssl_certfile)
+         PARAMETER_MOVED (ssl_check_hostname)
+         PARAMETER_MOVED (ssl_ciphers)
+         PARAMETER_MOVED (ssl_exclude_verify_flags)
+         PARAMETER_MOVED (ssl_include_verify_flags)
+         PARAMETER_MOVED (ssl_keyfile)
+         PARAMETER_MOVED (ssl_min_version)
+         PARAMETER_MOVED (ssl_ocsp_context)
+         PARAMETER_MOVED (ssl_ocsp_expected_cert)
+         PARAMETER_MOVED (ssl_password)
+         PARAMETER_MOVED (ssl_validate_ocsp)
+         PARAMETER_MOVED (ssl_validate_ocsp_stapled)
+         PARAMETER_MOVED (unix_socket_path)
+         PARAMETER_MOVED (username)
+       app/cache.py:9:5             resolved    call      r = Redis("localhost", 6379, 0, None, 5)
+                                    -> rewritten: Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+                                       R1: the moved parameter(s) are not passed here: cache, cache_config, client_name, connection_pool, credential_provider, decode_responses and 37 more
+                                       R2, pin the old default: socket_connect_timeout=None (now DEFAULT_SOCKET_CONNECT_TIMEOUT), socket_keepalive=None (now True), socket_keepalive_options=None (now SENTINEL), protocol=2 (now None); not pinned: retry (old default Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) is not a plain value; now Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…); already passed: socket_timeout; delete an argument to accept its new default
+       app/cache.py:16:22           resolved    call      self.plain = Redis("h", connection_pool=pool)
+                                    -> rewritten: Redis("h", connection_pool=pool, socket_timeout=None, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+                                       R1: already passed by name: connection_pool
+                                       R2, pin the old default: socket_timeout=None (now DEFAULT_SOCKET_TIMEOUT), socket_connect_timeout=None (now DEFAULT_SOCKET_CONNECT_TIMEOUT), socket_keepalive=None (now True), socket_keepalive_options=None (now SENTINEL), protocol=2 (now None); not pinned: retry (old default Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) is not a plain value; now Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…); delete an argument to accept its new default
+
+PART 2  the upgrade's other 85 change(s), ranked, which your code does not name:
+       redis.client.Redis.response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(_RedisCallbacks) -> CaseInsensitiveDict(get_response_callbacks(user_protocol=connection_kwa…   used by 0
+       redis.cluster.REDIS_ALLOWED_KEYS   ATTRIBUTE_CHANGED_VALUE   ('connection_class', 'connection_pool', 'connection_pool_class', 'clien… -> ('connection_class', 'connection_pool', 'connection_pool_class', 'clien…   used by 0
+       redis.cluster.RedisCluster.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.cluster.RedisCluster.cluster_response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(self.__class__.CLUSTER_COMMANDS_RESPONSE_CALLBACKS) -> CaseInsensitiveDict(cluster_response_callbacks)   used by 0
+       redis.connection.Connection.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.connection.Connection.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.connection.URL_QUERY_ARGUMENT_PARSERS   ATTRIBUTE_CHANGED_VALUE   {'db': int, 'socket_timeout': float, 'socket_connect_timeout': float, '… -> {'db': int, 'socket_timeout': float, 'socket_connect_timeout': float, '…   used by 1
+       redis.connection.UnixDomainSocketConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.client.Redis.__init__ (retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   None -> True   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.client.Redis.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.client.Redis.response_callbacks   ATTRIBUTE_CHANGED_VALUE   CaseInsensitiveDict(_RedisCallbacks) -> CaseInsensitiveDict(get_response_callbacks(user_protocol=connection_kwa…   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (max_connections)   PARAMETER_CHANGED_DEFAULT   2 ** 31 -> 100   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (address_remap)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (event_dispatcher)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (policy_resolver)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (protocol)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_connect_timeout)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_keepalive_options)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (socket_timeout)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ca_certs)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ca_data)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_cert_reqs)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_certfile)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_check_hostname)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_ciphers)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_exclude_verify_flags)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_include_verify_flags)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_keyfile)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.RedisCluster.__init__ (ssl_min_version)   PARAMETER_MOVED   used by 0
+       redis.asyncio.connection.Connection.__init__ (socket_keepalive)   PARAMETER_CHANGED_DEFAULT   False -> True   used by 0
+       redis.asyncio.connection.Connection.__init__ (socket_keepalive_options)   PARAMETER_CHANGED_DEFAULT   None -> SENTINEL   used by 0
+       redis.asyncio.connection.URL_QUERY_ARGUMENT_PARSERS   ATTRIBUTE_CHANGED_VALUE   MappingProxyType({'db': int, 'socket_timeout': float, 'socket_connect_t… -> MappingProxyType({'db': int, 'socket_timeout': float, 'socket_connect_t…   used by 0
+       redis.cluster.ClusterPipeline.__init__ (cluster_error_retry_attempts)   PARAMETER_CHANGED_DEFAULT   3 -> DEFAULT_RETRY_COUNT   used by 0
+       redis.commands.bf.BFBloom (BFCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.CFBloom (CFCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.CMSBloom (CMSCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.TDigestBloom (TDigestCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.commands.bf.TOPKBloom (TOPKCommands,AbstractBloom)   CLASS_REMOVED_BASE   used by 0
+       redis.connection.AbstractConnection.__init__ (driver_info)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (lib_name)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (lib_version)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.connection.AbstractConnection.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_read_size)   PARAMETER_CHANGED_DEFAULT   65536 -> DEFAULT_SOCKET_READ_SIZE   used by 0
+       redis.connection.AbstractConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.connection.AbstractConnection.__init__ (command_packer)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (event_dispatcher)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maint_notifications_config)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maint_notifications_pool_handler)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maintenance_notification_hash)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (maintenance_state)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_host_address)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_socket_connect_timeout)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (orig_socket_timeout)   PARAMETER_MOVED   used by 0
+       redis.connection.AbstractConnection.__init__ (oss_cluster_maint_notifications_handler)   PARAMETER_MOVED   used by 0
+       redis.asyncio.cluster.ClusterNode.__init__ (max_connections)   PARAMETER_CHANGED_DEFAULT   2 ** 31 -> 100   used by 0
+       redis.asyncio.cluster.ClusterNode.__slots__   ATTRIBUTE_CHANGED_VALUE   ('_connections', '_free', '_lock', '_event_dispatcher', 'connection_cla… -> ('_background_tasks', '_connections', '_free', '_lock', '_event_dispatc…   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (driver_info)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (lib_name)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (lib_version)   PARAMETER_CHANGED_DEFAULT   DEFAULT_SENTINEL -> SENTINEL   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (protocol)   PARAMETER_CHANGED_DEFAULT   2 -> None   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_connect_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_CONNECT_TIMEOUT   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_read_size)   PARAMETER_CHANGED_DEFAULT   65536 -> DEFAULT_SOCKET_READ_SIZE   used by 0
+       redis.asyncio.connection.AbstractConnection.__init__ (socket_timeout)   PARAMETER_CHANGED_DEFAULT   None -> DEFAULT_SOCKET_TIMEOUT   used by 0
+       redis.commands.search.AsyncPipeline.client   OBJECT_CHANGED_KIND   used by 0
+       redis.commands.timeseries.info.TSInfo.labels   ATTRIBUTE_CHANGED_VALUE   list_to_dict(response.get('labels')) -> []   used by 0
+       redis.commands.timeseries.info.TSInfo.rules   ATTRIBUTE_CHANGED_VALUE   response.get('rules') -> []   used by 0
+       redis.commands.vectorset.commands.VSimResult   ATTRIBUTE_CHANGED_VALUE   Optional[List[Union[List[EncodableT], Dict[EncodableT, Number], Dict[En… -> list[list[EncodableT] | dict[EncodableT, Number] | dict[EncodableT, dic…   used by 0
+       redis.http.http_client.HttpClient.__init__ (retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.multidb.config.MultiDbConfig.__init__ (command_retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.multidb.config.MultiDbConfig.command_retry   ATTRIBUTE_CHANGED_VALUE   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.multidb.config.MultiDbConfig.__init__ (command_retry)   PARAMETER_CHANGED_DEFAULT   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+       redis.asyncio.multidb.config.MultiDbConfig.command_retry   ATTRIBUTE_CHANGED_VALUE   Retry(backoff=ExponentialWithJitterBackoff(base=1, cap=10), retries=3) -> Retry(backoff=ExponentialWithJitterBackoff(base=DEFAULT_RETRY_BASE, cap…   used by 0
+
+getattr, strings and importlib are invisible to this tool. In the files that import the package, a method called on an object whose class the tool does not know is listed as unverified; an object made by another package's call or bound to a literal is not the package's and is not listed; a project module that re-exports the package's names is not followed.
+R1, pass by name: 0 call(s) rewritten, 0 withheld, 2 need nothing. R2, pin the old default: 2 call(s) pinned, 0 withheld, 0 left to you, 0 need nothing; the diff follows.
+changes found with griffe.
+
+--- a/app/cache.py
++++ b/app/cache.py
+@@ -6,14 +6,14 @@
+ from redis import Redis
+ 
+ pool = redis.ConnectionPool(host="localhost", port=6379, db=0)
+-r = Redis("localhost", 6379, 0, None, 5)
++r = Redis("localhost", 6379, 0, None, 5, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+ client = redis.from_url("redis://localhost")
+ 
+ 
+ class Cache:
+     def __init__(self, url):
+         self.r = redis.Redis.from_url(url)
+-        self.plain = Redis("h", connection_pool=pool)
++        self.plain = Redis("h", connection_pool=pool, socket_timeout=None, socket_connect_timeout=None, socket_keepalive=None, socket_keepalive_options=None, protocol=2)
+ 
+     def put(self, key, value):
+         self.r.set(key, value, 60)
+```
+
+Read against what was expected: the clone's head is 0448be5; pipx
+built the wheel from the clone and installed it with its three
+dependencies (griffe 2.4.1, now split into griffelib and griffecli;
+libcst 1.9.0; packaging 26.3) under Python 3.14.7, pipx's default
+interpreter on that Mac, which is neither the project venv's nor the
+demo venv's (3.12); `which` names `~/.local/bin/breakrank-fix`, so the
+development tree is not on the path; the Wi-Fi was off and the one
+packet to pypi.org was lost (the name resolved from the Mac's cache,
+the packet went nowhere); the report is the one of §38.15(c) to the
+character, two calls pinned, the diff printed, the old version read
+from the 3.12 venv's site-packages by a 3.14 interpreter, griffe
+2.4.1 reading what griffe 2.3.0 read on 26 Oct with the same result.
+The checkpoint is met: the installed tool carries its bundle, reads the
+old version from a venv it was not installed in, and needs no network.
+On the 30th the lines from the Wi-Fi off to the Wi-Fi on are repeated
+as the demo; nothing else is needed. The clone stays at ~/Projects/breakrank-fresh for that and
+is deleted after, as is the pipx install (`pipx uninstall
+breakrank-fix`) once the development venv's `pip install -e .` is the
+only `breakrank-fix` on the Mac again, so that the two are never
+confused.
+
+
+### 38.18 Week 5: the evaluation of §38.6 on the ten. The rule, fixed before any download (28 Oct)
+
+§38.17's commit is 689895b (28 Oct). The sample is §38.16's ten, the
+measure is §38.6's second number, and what follows fixes everything
+§38.6 left open, before a byte is downloaded. Where this section and
+§38.6 differ in a word, §38.6 is the promise and this is how it is kept.
+
+**Where it runs.** On the Linux machine, as every heavy run has since
+§20 (the Mac's rule); the tool is `breakrank-fix` installed from the
+repository at 689895b into a venv there (`pip install -e .`), its
+griffe and libcst versions recorded by the harness. The fixer package
+has not changed since 78e837a.
+
+**The ten trees.** On the day the harness runs (stated in the manifest
+and here after), PyPI's JSON record of each sample package
+(`/pypi/<name>/json`) is read once and the newest release that is
+final (no pre-, dev- or yanked release) by PEP 440 order is taken; its
+sdist is downloaded once into a directory of its own, unpacked, and
+never built, installed or imported. Its filename, size, sha256 and
+upload time go into `data/eval/manifest.json`. A newest release
+without an sdist gives its pure-Python wheel (`py3-none-any`) as the
+source, unpacked the same way; a release with neither falls to the
+reserve rule (§38.16), the substitution recorded here. The tree given
+to the fixer is the whole unpacked tree, tests and examples included:
+they are downstream code too, and the report says the trees were read
+whole. The network use is this: ten JSON records, ten archives, and
+the old and new versions below.
+
+**The old versions.** 86 runs over 39 distinct (changed package, old
+version) pairs, counted from §38.16's detail (every upgrade a sample
+package meets is run, as §38.16 decided before the list existed). Each
+old version is installed from its wheel with Python 3.12, `pip install
+--only-binary=:all: --no-deps --target data/eval/old/<package>-<version>
+<package>==<version>`: a flat directory holding the package and its
+dist-info, which is a site-packages directory to `--env` (fixer/env.py)
+[§38.6 said "a venv per package"; a target directory is the same thing
+to the tool and runs the same code, none]. `--no-deps` because the
+reading is static: griffe reads the sources and imports nothing, so
+pandas 2.3.3 needs no numpy beside it. Where no wheel exists for 3.12
+(expected: pyyaml 5.4.1, whose wheels stop at 3.9) the sdist is
+unpacked, not built, and its package directory is placed in a bare
+directory with a hand-written dist-info (METADATA naming the
+distribution and version; top_level.txt naming the package), which is
+recorded in the manifest; nothing of any old version is executed. The
+new version of each changed package is fetched the same way into
+`data/eval/new/`, for the reader's eyes only: the verdicts below need
+the new signature beside the old.
+
+**The runs.** For each (sample package, changed package, from, to), one
+command, no `--apply`:
+
+    breakrank-fix <changed> <tree> --from <from> --to <to> --env data/eval/old/<changed>-<from> --diff data/eval/<sample>/<changed>-<from>-<to>.diff
+
+stdout and stderr to `data/eval/<sample>/<changed>-<from>-<to>.txt`,
+exit code and wall time to the manifest. A run that exits 2 is recorded
+with its message and not retried with other flags; a tree the tool
+cannot read in ten minutes is recorded as such. The harness,
+`scripts/eval_run.py`, has the stages resolve, fetch, old, run and
+count, each re-runnable alone; its test runs the last two on the fixture
+(§38.13's project against §38.15's bundle) with the counts of
+scripts/test_fixer_rewrite.py as the expected values, and nothing of it
+touches the network.
+
+**What is counted, per run, by the harness from the report**: files
+read and files mentioning the import root; lines using the upgrade's
+changes; hits by confidence (resolved, referenced, unverified); R1's
+rewritten / withheld / need nothing; R2's pinned / withheld / left to
+you / need nothing; rewritten calls (a line the report shows as
+`-> rewritten`, which may carry R1 and R2 at once); withheld calls
+(`-> withheld`). Totals per sample package, per changed package and
+overall, with the unverified share beside the hits as §38.6 asks.
+
+**The reading.** The unit is one rewritten call. It gets one of the
+four verdicts of §38.6: CORRECT, the rewritten call does under the new
+version what the original did under the old, and the original would
+not have (the upgrade broke it or silently changed it); NO-OP, the
+rewritten call behaves as the original would under the new version
+too, so the change is harmless and needless (the pinned value is what
+the new default does for this call; the name was already in effect);
+UNSAFE, it parses and runs but means something else than the original
+did under the old version (a pin of an old default that was contextual,
+a sentinel pinned as a value); WRONG, it fails under the new version
+(a name that does not exist there, a value it refuses) or changes a
+call the upgrade did not touch. A call carrying both rules takes the
+worse verdict of its two parts, and counts in both rules' tallies, said
+so. If the rewritten calls number 200 or fewer in all, every one is
+read. If more, 200 are read: the list sorted by (sample package,
+changed package, from, to, file, line), the 200 drawn by Python's
+`random.Random(20261028)` as a proportional allocation over the runs
+with at least three from every run that has three, all from a run with
+fewer; the rest are counted and said unread. Thirty withheld calls are
+drawn the same way (seed 20261029) and read as JUSTIFIED (the tool was
+right to hold back), NOT JUSTIFIED (the call could have been rewritten
+safely), or NOTHING NEEDED (the line needed no change, so the flag only
+cost a look). The author reads every drawn call with a prepared sheet
+beside it: the call before and after, the old and new signatures from
+the two directories above, the rule's printed reason, and a suggested
+verdict; the author's verdict is the one recorded, and every case
+where it differs from the sheet's suggestion is recorded with the
+reason. The verdicts are a table, one row per read call (sample
+package, changed package, from, to, file, line, rules, verdict, note),
+committed as `docs/eval/verdicts.csv` with a one-line exception in
+.gitignore for that path, since it is the evaluation's record and not
+data; the raw reports stay under `data/eval/` and are not committed.
+
+**What is reported.** Counts over counts, never a percentage alone:
+rewritten calls read and total; correct, no-op, unsafe, wrong; the
+same per rule and per sample package; hits by confidence with the
+unverified share; the thirty withheld calls' three counts. Fewer than
+twenty rewritten calls in all: the counts and no rate. Recall is not
+claimed and the report says why (§38.6). The sample is the convenience
+sample §38.16 says it is and the upper-bound caveat of its "uses"
+holds: a package in the ten may meet an upgrade at no call site at all.
+
+**Bugs the evaluation finds.** Before the freeze of 13 Nov a bug in the
+fixer is fixed, the affected runs re-run and both results kept here;
+from 13 Nov a bug is recorded in the report and not fixed (§38.10).
+
+**The four choices in this, put to the author on 28 Oct with a
+recommendation each, and the recommendations taken.** (1) How much is
+read: 200 rewritten calls and 30 withheld ones. With the sheet beside
+each call the reading is a minute or two a call, four to six hours over
+the week; fewer would leave the per-rule and per-package splits too
+thin to say anything, and more would not be read with care. If the
+total is under 200, all of it. (2) Where the verdicts live: committed,
+`docs/eval/verdicts.csv`, with the one-line exception in .gitignore,
+because a reader of the report must be able to see every row the
+counts come from; the raw reports stay under `data/eval/`,
+uncommitted, as every run's output has. (3) Where it runs: on Linux,
+as every heavy run has (§20's rule for the Mac); the Mac does nothing
+in this step. (4) The trees whole: tests and examples are downstream
+code too, there is no principled line that leaves them out, and a line
+drawn after the counts are in would be drawn by the counts; the report
+says the trees were read whole.
+
+**Not decided here, on purpose:** nothing about the numbers. The
+expected values written before this run are the harness test's, on the
+fixture; the ten's counts are the result.
+
+**The harness, built 28 Oct, after edf076a.** Three scripts, each with
+its test on the fixture and its expectations written first.
+`scripts/eval_run.py`: the stages plan, resolve, fetch, old, new, run,
+count, draw, as above; `scripts/eval_sheet.py`: one numbered block per
+drawn call with the call before and after, the rule lines as printed,
+the symbol's signature in the old and the new version read statically
+with griffe from the two directories (fixer/oldapi.py's reading, "not
+read" when a version cannot answer), the three source lines around it,
+and the columns suggested, reason, verdict, note; `scripts/
+eval_verdicts.py`: the filled sheet read back (a rewritten call's
+verdict one of correct, no-op, unsafe, wrong; a withheld one's one of
+justified, not justified, nothing needed; anything else, or an empty
+one, refused with the call's id), the counts over counts overall, per
+rule and per sample package, the unread beside them, and the record
+written as docs/eval/verdicts.csv. `scripts/test_eval_run.py` (24
+checks): the plan from a sample csv and the fixture bundle, a reserve
+and a skipped row planning nothing, a function the bundle has no row
+on refused; the newest final release chosen from a hand-written PyPI
+record in eight cases (pre-, dev- and yanked releases passed over, the
+sdist before the wheel, a release with neither giving no source); one
+real run on the fixture project with the fixture site and bundle, the
+command pinned to §38.18's with no --apply, and the report parsed to
+scripts/test_fixer_rewrite.py's numbers (2 files, 48 lines, 50 hits of
+which 48 resolved and 2 unverified, R1 16/9/4, R2 26/10/2/3, 32
+rewritten, 13 withheld, 1 left to you, 2 need nothing, a diff of 2
+files); a report without hits, a run that stopped, a report cut off
+before its footer, a "[stderr]" trailer, the "were not read" line, a
+path with a space; the draw's allocation in five cases and the pooled
+fallback; the placed sdist read back by fixer/env.py; a single-module
+distribution. `scripts/test_eval_sheet.py` (9 checks) and
+`scripts/test_eval_verdicts.py` (6 checks) likewise. Guards broken on
+purpose, after the review below: 25 on the harness (21 caught by a
+check, 4 stopped the run, 0 survived, after one survivor, the pooled
+draw taken from the list's head, got its check), 8 on the sheet and 6
+on the verdicts (13 caught, 1 stopped the run, 0 survived, after three
+survivors got theirs: the new signature read from the old directory,
+which the fixture could not show while its "new" was its old; a drawn
+call the report lacks passed over silently; the signature looked up
+under the first of a call's symbols only).
+
+**The independent review of the harness (28 Oct), fifteen findings,
+all taken.** The important ones: (1) the counting unit was a printed
+decision line, not a call: the report prints a call's decision under
+every entry whose rows the call meets (scripts/test_fixer_rewrite.py
+asserts as much for a call resolving to two defining paths), so the
+harness would have counted such a call twice and could have drawn it
+twice; decisions are now merged on (file, line, column, use, kind,
+call) with the symbols collected, and the counts are of calls. (2) When
+even one call from every run that has one exceeds the budget, the
+allocation handed one call to the first runs alphabetically; now the
+calls are drawn from all of them as one list, proportional in
+expectation, and the manifest says which of the two ways applied
+[§38.18's draw paragraph, read with this]. (3) Two calls on one line at
+one column (`Client("h", 1).send(b"t", 5)`) were one identity; the use
+and the call's text now tell them apart, and draw.csv carries use,
+symbol and call. (4) A path with a space was not read as a hit. (5) A
+report cut off before its footer (a timeout) parsed as a clean zero;
+now an error, with the fixer's stderr kept. (6) pip's every failure
+sent the version to the sdist fallback; now only "No matching
+distribution found" does. (7) A skipped run or a FAILED version counted
+as done and was never retried without --redo. (8) The totals lacked
+the per-changed-package table and the unverified share §38.18 asks
+for; the record lacked griffe's and libcst's versions; the plan stage
+never wrote the manifest; a single-module distribution could not be
+placed from its sdist; an archive error aborted the stage instead of
+being recorded; `py2.py3-none-any` is a pure-Python wheel too and now
+counts as one [§38.18 says py3-none-any and means pure Python]. The
+test gained the ten checks that pin these. The reviewer re-read the
+reworked files, confirmed thirteen fixed and two partly, and found six
+more, all taken: a root-level single module (six.py) still could not
+be placed, and pip's offline message ends in the same line as its
+no-wheel message, so the fallback would have been tried offline and
+the recorded cause wrong (now "(from versions: none)" and "Retrying"
+mean not that); two chained method calls on one line, both withheld,
+still collided (the rule lines now enter the merge key, and the parser
+checks that the calls it counts add up to the footer, writing an error
+when they do not); a bare tool name on PATH gave the tool record
+garbage for the interpreter and its libraries (now resolved with
+shutil.which); a sample whose tree the manifest did not name had its
+source context read from the working directory; the rule lines were
+joined with " | ", which a withheld line itself contains ("| would be:
+..."), so they could not be split back (now " || ", which the report
+never prints); the signature was looked up under the first of a call's
+symbols while the fixer takes the first the old version can show (now
+the first that answers); and a re-run after a fix would have
+overwritten the first run's report and record (now each run record
+carries the tool's version and commit, and a superseded report is kept
+as <stem>.<commit>.txt). Eleven checks and eight guards came with
+these; the counts above are the final ones.
+
+**The run, 28 Oct, on the Linux machine.** The tool: breakrank-fix
+0.1.0 from the tree at edf076a (the fixer package unchanged since
+78e837a), Python 3.13.17, griffe 2.4.1, libcst 1.9.0, packaging 26.3;
+the old and new versions installed with Python 3.12's pip. The ten
+trees, the newest final release of each on PyPI that day (filename,
+size, upload date, the first twelve hex digits of the sha256 PyPI
+states and the download matched):
+
+    dask                       2026.8.0   dask-2026.8.0.tar.gz                       11,561,752  2026-08-24  8a94c37b5de6
+    imbalanced-learn           0.14.2     imbalanced_learn-0.14.2.tar.gz             19,172,446  2026-06-07  f80ce7eafbce
+    langchain-community        0.4.2      langchain_community-0.4.2.tar.gz           33,268,708  2026-05-22  a99308160d53
+    litellm                    1.106.5    litellm-1.106.5.tar.gz                     21,194,762  2026-10-27  c1a3869f31da
+    mlflow                     3.17.2     mlflow-3.17.2.tar.gz                       11,165,270  2026-10-21  3fcdb58c6833
+    prefect                    3.9.0      prefect-3.9.0.tar.gz                        6,319,483  2026-10-21  ef29cf3a1883
+    sentry-sdk                 2.73.0     sentry_sdk-2.73.0.tar.gz                    1,079,078  2026-10-22  4a2ab97b16e4
+    snowflake-snowpark-python  1.55.3     snowflake_snowpark_python-1.55.3.tar.gz     1,824,761  2026-10-22  c4a158545d0e
+    statsmodels                0.15.0     statsmodels-0.15.0.tar.gz                  15,736,853  2026-08-27  5d257fe58d07
+    wandb                      0.31.0     wandb-0.31.0.tar.gz                        40,420,416  2026-10-16  dcdaa635576f
+
+161,743,529 bytes in all, every one an sdist, no reserve needed. The
+39 old and 39 new versions: 38 of each from wheels; pyyaml 5.4.1 and
+6.0 from their sdists unpacked (their wheels stop before Python 3.12),
+`lib3/yaml` and `lib3/_yaml` placed beside a hand-written dist-info,
+as foreseen above. 86 runs, 40.3 minutes in all, the longest
+statsmodels against pandas 2.3.3 -> 3.0.0 at 232 s; 78 ended with hits
+(exit 1), 8 with none (exit 0: wandb against watchdog, langchain-
+community against datasets, and six more where the tree mentions the
+package without meeting a changed function), none stopped, none timed
+out. The counts, as the harness printed them (the unverified beside
+the hits as a count over a count; "R1 rw" and "R2 pin" the rules'
+footers; a call both rules rewrote counts once under rewritten):
+
+```
+sample package               runs  hits unverified/hits rewritten withheld left nothing R1 rw R2 pin  no report
+dask                            2  4137       3025/4137       250      206    0     179     0    250  0
+imbalanced-learn                6   996         776/996        64       83    0       4     0     64  0
+langchain-community            15   117          21/117        30        4    0       2     0     30  0
+litellm                        13  2369        149/2369        11       11    2      10     0     11  0
+mlflow                         12   319         236/319         8        7    0      13     1      7  0
+prefect                        13    58            1/58        12        1    0       5     0     12  0
+sentry-sdk                     12   321          20/321       112       12    1      56     0    112  0
+snowflake-snowpark-python       2   421         330/421         3        4    0      10     0      3  0
+statsmodels                     5  4468       3352/4468       150       27    0      35     0    150  0
+wandb                           6    47           37/47         3        1    0       1     0      3  0
+ALL                            86 13253      7947/13253       643      356    3     315     1    642  0
+
+changed package              runs  hits unverified/hits rewritten withheld left nothing R1 rw R2 pin  no report
+asyncpg                         2    36            0/36        35        1    0       0     0     35  0
+click                           2     2             0/2         1        0    0       0     0      1  0
+datasets                        1     0             0/0         0        0    0       0     0      0  0
+httpcore                        2     5             3/5         0        0    0       0     0      0  0
+httpx                           2   120          55/120         0        0    0      12     0      0  0
+httpx-sse                       1     2             0/2         0        2    0       0     0      0  0
+joblib                          1     3             0/3         0        0    0       3     0      0  0
+kubernetes                      1     1             0/1         0        0    0       1     0      0  0
+litellm                         2    67            0/67         0        6    0      57     0      0  0
+mcp                             6   780         112/780        40        8    1       0     0     40  0
+networkx                        2     4             0/4         2        2    0       0     0      2  0
+pandas                          7  8489       6190/8489       398      234    0     229     0    398  0
+protobuf                        2     7             0/7         0        0    0       3     0      0  0
+pyarrow                         1     4             0/4         2        2    0       0     0      2  0
+pydantic-settings               7    50            0/50         0        0    0       0     0      0  0
+pyyaml                          1    31           29/31         0        0    0       2     0      0  0
+redis                          22   190           0/190        45       15    2       0     0     45  0
+scikit-learn                   10   899         699/899        59       86    0       1     1     58  0
+scipy                           3   972         859/972        20        0    0       4     0     20  0
+tqdm                            2    28            0/28        18        0    0       0     0     18  0
+typing-extensions               5  1556          0/1556        23        0    0       0     0     23  0
+uvicorn                         2     5             0/5         0        0    0       3     0      0  0
+watchdog                        1     0             0/0         0        0    0       0     0      0  0
+websockets                      1     2             0/2         0        0    0       0     0      0  0
+ALL                            86 13253      7947/13253       643      356    3     315     1    642  0
+
+data/eval/counts.csv: 86 row(s)
+```
+
+Read before any verdict: of 13,253 hits, 7,947 (three in five) are
+unverified, almost all of them pandas's and scipy's methods on objects
+the tool cannot type (`df.groupby(...)`, the upper bound §38.16 warned
+of); 643 calls were rewritten and R1 accounts for ONE of them
+(mlflow's `sk_metrics.log_loss(y_true, y_pred=y_proba, ...)` against
+scikit-learn 1.8.0 -> 1.9.0, `y_pred` made keyword-only): downstream
+code passes moved parameters by name already, so on this sample the
+fixer's rewriting is R2's, the pinning of changed defaults, 642 calls.
+pandas 2.3.3 -> 3.0.0 alone gives 398 of them: `concat` 171 (`sort`
+and `copy`), `DataFrame.set_index` 77, `merge` 37, `astype` 27,
+`assert_index_equal` 16, `Series.rename` 13 and a tail of methods;
+then redis's constructors 45, mcp's two constructors 40, asyncpg's
+`connect` 35, typing-extensions's functional `TypedDict(...)` 23,
+scipy's `fsolve` and others 20, tqdm's constructor 18, scikit-learn's
+`make_scorer` and estimators. 356 calls were withheld, 234 of them
+pandas's; 315 needed nothing.
+
+**The draw, 28 Oct, 09:33 UTC.** Rewritten: 643 calls in 41 runs, 200
+drawn by Random(20261028) as the allocated way (three from every run
+with three, the rest in proportion), over 22 (sample, changed package)
+pairs: dask/pandas 47, statsmodels/pandas 26, imbalanced-learn/
+scikit-learn 20, sentry-sdk/mcp 15, sentry-sdk/redis 13, prefect/
+redis 12, sentry-sdk/asyncpg 9, langchain-community/redis 8, langchain-
+community/tqdm 8, statsmodels/scipy 8, and twelve pairs with 1 to 5.
+Withheld: 356 calls in 19 runs, 30 drawn by Random(20261029), one from
+every run and the eleven over in proportion (dask/pandas 8, litellm/
+redis 5, imbalanced-learn/scikit-learn 4, the rest 1 or 2). The sheet:
+230 calls, every one with both signatures read. The harness, its
+tests and this record through the draw are c0d6ea0 (28 Oct, 16:03;
+the three tests 28, 9 and 6 ok on the Mac). The verdicts follow, in
+docs/eval/verdicts.csv and here.
+
+**The sheet's suggestions, and their correction on 10 Nov before the
+reading.** Each of the 230 calls got a suggested verdict and a reason
+on 28 Oct, written from the new version's source (the files under
+data/eval/new, read beside data/eval/old): by group of (changed
+package, upgrade, function, parameters pinned), on the ground that one
+pin of one default means one thing. First tally of the suggestions:
+rewritten, correct 35, no-op 85, unsafe 68, wrong 12; withheld,
+justified 10, nothing needed 20. The reading began on 10 Nov, one call
+at a time with the author, and the second call showed the group grade
+wrong for its line: the 47 `concat` calls where `sort=False` was
+pinned had all been suggested unsafe with the caveat "no change where
+the other axis cannot be all dates", and dask's
+`_collection.py:4096` joins Series that share one index object, where
+nothing is combined or sorted in either version. A caveat the reader
+is left to resolve is not a suggestion, so before any further verdict
+each of the 47 was read on its own, in its tree, against the rule the
+two pandas sources give (pandas/core/indexes/api.py: the indexes of
+the other axis are first reduced to distinct objects; 2.3.3 set
+sort=True for a union of all-DatetimeIndex indexes whatever the caller
+passed; 3.0.0 does so only for the no_default sentinel and obeys an
+explicit False). The pin can change a result only where the other axis
+holds two or more different indexes, all DatetimeIndex, joined outer,
+their union not already in order. 43 of the 47 cannot meet that
+(Series joined end to end; frames joined end to end with string or
+identical columns; side-by-side joins on a RangeIndex, a PeriodIndex,
+a MultiIndex, string labels, or one shared index; one inner join) and
+are suggested no-op, each with its own reason. Four can, all through
+user data whose column labels are dates: mlflow's `load_table` over
+runs whose wide tables have one column per date (#105, unusual but
+real: read_json turns date-like labels into a DatetimeIndex, and runs
+arrive newest first), and three far-fetched ones (#103 mlflow's
+per-row predictions, #104 `log_table`'s append, #161 snowpark's
+`map_in_pandas`); those four stay unsafe, by the criterion now said
+outright: a rewritten call is unsafe when some input that can reach
+its line gives a different result than the original gave under the old
+version, however unusual, and no-op when none can. The same second
+look at the other caveats: scipy's three `diags` calls (statsmodels
+mixed_linear_model.py) pass 1 / vc_var, a float array, added into a
+float matrix, where the old and the new dtype inference agree: no-op,
+not unsafe; scikit-learn's four `BaggingClassifier()` examples fit
+without sample weights, as the suggestion assumed; redis's
+`driver_info=None` pins were re-read in 7.2.1 and 7.2.2
+(`resolve_driver_info`) and stand as unsafe: the old defaults announced
+redis-py and its version to the server, the pinned None announces
+nothing. Suggestions after the correction: rewritten, correct 35,
+no-op 131, unsafe 22, wrong 12; withheld unchanged. 46 suggestions
+changed, all from unsafe to no-op (ids 2, 3, 4, 5, 7, 8, 11, 13, 14,
+15, 21, 23, 24, 33, 34, 50 to 53, 76, 77, 102, 162, 164 to 170, 173,
+174, 175, 178, 179, 182 to 192). One verdict had been given before the
+correction, #1, no-op, which the correction does not touch.
+
+**What the pins cost, found in the same reading (10 Nov).** A default
+that changes to a sentinel is usually a parameter on its way out, and
+the new version says so when the parameter is passed at all. Of the
+200 rewritten calls on the sheet, the pins of 128 add a warning under
+the new version, each read in its source: pandas 3.0's Pandas4Warning
+for `copy` (concat, merge, astype, rename, rename_axis, to_timestamp)
+and for set_index's `verify_integrity`; scikit-learn's FutureWarning
+for `force_all_finite` (1.6), `response_method=None` (1.6),
+`force_int_remainder_cols` (1.7), `criterion` and `probability` (1.9)
+and the renamed `y_pred` (1.9, the one R1 call); redis's deprecated
+`lib_name`, `lib_version` and `cluster_error_retry_attempts`; scipy
+1.18's `lwork`; networkx 3.4's `link`. By suggestion: 102 of the 131
+no-ops, all 22 unsafe, 4 of the 35 correct. A warning is not a failure
+of the call, and the four verdicts of §38.6, fixed before the run, are
+about what the call does; but three of the ten sample packages run
+their own tests with such warnings as errors (pytest `filterwarnings`:
+dask "error", prefect "error", imbalanced-learn "error::FutureWarning"
+and "error::DeprecationWarning"), and 71 of the 128 are theirs (dask
+46, imbalanced-learn 16, prefect 9): applied there, the edit would
+fail the project's own suite wherever the line runs under it. Each
+such sheet says so in its reason, between brackets. Whether that
+changes a verdict is the author's decision, put to him on 10 Nov and
+recorded with his answer below.
+
+**Two readers, from 19 Nov (an amendment to "the author reads every
+drawn call").** The review is set for 1 Dec, and on 19 Nov one call of
+the 230 had a verdict. The reading is divided between the project's
+two authors, by sheet number, fixed before either reads further:
+Vaibhav reads the rewritten calls #1 to #100 and the withheld calls
+#201 to #215; Varad reads the rewritten calls #101 to #200 and the
+withheld calls #216 to #230; 115 each. The sheet's order is the draw's
+(sample package, changed package, upgrade, file, line), so the cut
+falls inside litellm's calls and gives each reader all four suggested
+verdicts: the first hundred are dask, imbalanced-learn, langchain-
+community and all but one of litellm's (suggested: correct 11, no-op
+76, unsafe 9, wrong 4); the second the last of litellm's, mlflow,
+prefect, sentry-sdk, snowflake-snowpark-python, statsmodels and wandb
+(correct 24, no-op 55, unsafe 13, wrong 8). Each reader's verdict
+stands for his calls and the record names the reader on every row.
+Both read from the same sheet, sorted for reading by kind of edit (the
+same function with the same parameters pinned, 53 kinds over the 200),
+each kind opened by a plain-language account of what the edit does and
+what the new version does with it; the verdict words, their meaning
+and the criterion for unsafe are stated once at the head of each
+reader's file, the same for both. No call is read by both: agreement
+between two readers who see the same suggestion would measure the
+readers and not the suggestion. What checks the suggestions is below.
+
+**A second, blind reading of the suggestions (19 Nov).** The
+suggestions were one reader's; before two more readers rely on them,
+one call of every kind of edit (43 calls; the 47 `concat` calls had
+their own call-by-call reading on 10 Nov) and all 30 withheld calls
+were given to readers who had the sheet without its suggestion and
+reason, the two versions' sources and the sample's tree, and the
+verdict definitions, and nothing else of this record. Their verdicts
+are set against the sheet's, every disagreement re-read in the source
+and settled with the lines that decide it; the outcome is recorded
+below before the readers' files go out.
+
+**The blind reading's outcome (19 Nov).** Three sets were read:
+22 and 21 rewritten calls, one from each of 43 of the 53 groups
+(package, upgrade, function, parameters pinned), and the 30 withheld
+calls. The ten groups not drawn: the 47 `concat` calls with `sort`
+pinned, read call by call on 10 Nov; six redis groups that differ from
+a drawn one only in the patch upgrade (7.3.0 to 7.3.1, 7.4.0 to
+7.4.1), whose `driver_info.py` and client defaults are the same files
+as 7.2.1's and 7.2.2's (diff, 19 Nov); and `pd.merge` beside
+`DataFrame.merge`, `make_column_transformer` beside
+`ColumnTransformer`, `diags_array` beside `diags`. Against the 10 Nov
+suggestions: the first set gave the same verdict on 22 of 22 and
+corrected two reasons in their mechanism (#68: scikit-learn 1.8's
+`make_scorer` refuses 'default' at the call, not when the scorer is
+used; #70: 1.9 builds the stage trees with squared_error whatever
+`criterion` says, so the pin cannot bring friedman_mse back). The
+withheld set gave the same verdict on 22 of 30; the other eight were
+all justified on the sheet and nothing needed in the reading (#209,
+#215 to #219, #223, #224): the 28 Oct suggestions had taken a true
+reason for holding back ("the call unpacks `**`") as justification by
+itself, where this section's own words ask first whether the line
+needed a change. The third set gave the same verdict on 15 of 21. Its
+six differences: #94 and #97 (litellm passes its own
+`connection_pool`, and redis reads the constructor's connection
+arguments only under `if not connection_pool:`, so the pins are never
+read: no-op, not unsafe and not correct); #128 (the helper is only
+called with `stateless=True`, where mcp keeps no session to time out:
+no-op, not correct); #86 (tqdm wraps a generator, has no total, draws
+no bar, and `ascii` is read only where a bar is built: no-op, not
+correct); #119 (asyncpg 0.30's `direct_tls=None` falls back to the
+same negotiation as False unless the connection string or the
+environment variable PGSSLNEGOTIATION says otherwise, and this
+connection string is fixed: no-op, not correct); #198 (click 8.3
+builds the Option without error and silently turns `--entity NAME`
+into a flag: unsafe, not wrong). The first three had already been
+corrected from the withheld set's reading of the same lines (#216 to
+#220 sit beside #94 to #97, #224 on #128's line) when the third set
+reported, and it reached them on its own. All 14 differences, of 73
+calls read blind, were re-read in the two versions' sources and
+settled as the blind reading had them: in every one the suggestion was
+the reading at fault, and in 12 of the 14 it had been the kinder of
+the two to the tool (a correct that is a no-op, a justified that is
+nothing needed).
+
+**What the differences had in common, and the re-reading it called
+for.** Each was a fact about the one call (what it passes, where it
+sits), which a grade given by kind cannot see: the lesson of the
+`concat` calls on 10 Nov, learnt a second time. So on 19 Nov every
+call of a kind where the call's own arguments can decide the grade was
+read on its own line: the 24 redis client calls for a
+`connection_pool` (#95 and #96 are #94's line; no other passes one);
+the eight tqdm calls for a total (#87 and #91 wrap `self.lazy_load()`,
+a generator, as #86 does; #88, #89, #92 and #93 pass a list and #90
+`total=len(items)`, so a bar is drawn and they stay correct); the nine
+asyncpg calls for their connection string (all built in the test file
+as postgresql://user:password@host, eight with /database, none with a
+query part: #120 to #127 follow #119); the eight mcp session managers
+for `stateless` (only #128 passes it); the nine `TypedDict` calls for
+`extra_items` (none); the three `force_all_finite` calls for an
+`ensure_all_finite` beside it (none); the two `assert_index_equal`
+calls for a MultiIndex (neither can get one); the pandas method calls
+whose receiver is a variable, for the receiver being pandas and not
+its dask twin (each is built by `pd.DataFrame(...)` in the same test).
+And the 66 calls then suggested other than no-op or nothing needed, on
+47 lines, were each read inside their function for whether the line
+can run under the new version at all. Three lines cannot.
+langchain-community's `falkordb_graph.py:129` (#78, #80, #82, #84)
+follows `from redis.commands.graph import Graph` in the same function,
+a module that none of the seven redis versions under data/eval has
+(7.2.1 to 8.0.0), and the caller turns the ImportError into its own.
+sentry-sdk's `test_mcp.py:1886` (#136) is in a test marked
+`skipif(IS_MCP_V2)`, so the pinned `version=None` is never built under
+mcp 2.0.0 and is the default under 1.30.0. snowpark's
+`resample_overrides.py:180` (#226, withheld) follows a call that
+always raises, as the comment above it says. One line is the opposite
+case: imbalanced-learn's `_easy_ensemble.py:285` (#55) is the
+project's own branch for scikit-learn 1.6 and later (the branch above
+it passes algorithm="SAMME" for 1.4 and 1.5), so it does not run under
+1.5.2 at all, and under 1.6.0 the pin puts the removed 'SAMME.R' on
+exactly the line written for the new version. Wrong stands, and it is
+the plainest case in the sample of what pinning an old default can do.
+Three final suggestions depart from the blind verdict, each on the
+caveat that reading wrote itself, that the line cannot run: #78 (read
+unsafe), #84 (read correct), #226 (read justified).
+
+**The criterion as it now stands, the same for both readers and
+printed at the head of each reader's file.** A rewritten call, three
+questions in order. (1) Does the new version refuse the edited line
+with an error, at the call or as soon as what it builds is used?
+Wrong. (2) If not, does the edited line do exactly what the unedited
+line does under the new version? No-op; a warning alone does not
+change this (it is counted beside the verdicts, below, and the
+author's word on it is still awaited). (3) If not, the edit changes
+something: it brings back what the call did before the upgrade,
+correct; or it does what the call did neither before the upgrade nor
+after it, for some value that can reach the line, however unusual,
+unsafe. A withheld call, two questions. Does the line need any change
+or decision for this upgrade? If not, nothing needed, even where the
+tool's reason for holding back is true. If it does, could the tool
+have made the edit safely by its rules? Then not justified; if it
+could not, justified. Three clauses hold for every call. The call is
+judged in its project, over the values that can reach its line. A line
+that cannot run under the new version, or a pinned parameter the
+library does not read on that call, changes nothing: no-op, or nothing
+needed. And the machine is an ordinary one: environment variables that
+exist for the library (PGSSLNEGOTIATION for asyncpg, tqdm's own
+overrides of its defaults) are unset, and an input only the new
+version accepts (scikit-learn 1.6's FrozenEstimator at wandb's two
+`CalibratedClassifierCV` calls) has no old result to keep and is not
+counted. The clauses are not free, and what each costs is said here so
+that the report can say it. Were the four calls on the falkordb line
+graded as if they ran, three would be unsafe and one correct; #136
+would be wrong; #226 would be justified. With PGSSLNEGOTIATION=direct
+set, the nine asyncpg pins keep 0.29's negotiation where the unedited
+call follows the variable, which by the letter is correct. And where a
+tqdm environment override sets `ascii`, an explicit keyword overrides
+it, so there the five tqdm pins graded correct would by the letter be
+unsafe.
+
+**The suggestions after the blind reading (19 Nov).** Rewritten:
+correct 20, no-op 153, unsafe 17, wrong 10. Withheld: justified 1
+(#220), nothing needed 29. Since 10 Nov 32 suggestions changed: 15
+lost a correct to no-op (#84, #86, #87, #91, #97, #119 to #127, #128),
+6 went from unsafe to no-op (#78, #80, #82, #94 to #96), one from
+wrong to no-op (#136), one from wrong to unsafe (#198), and 9 from
+justified to nothing needed (#209, #215 to #219, #223, #224, #226). By
+sample package: dask 49 no-op; imbalanced-learn 20 no-op, 4 wrong;
+langchain-community 6 correct, 11 no-op, 3 unsafe; litellm 8 no-op;
+mlflow 2 no-op, 3 unsafe; prefect 3 correct, 9 unsafe; sentry-sdk 11
+correct, 25 no-op, 6 wrong; snowflake-snowpark-python 2 no-op, 1
+unsafe; statsmodels 34 no-op; wandb 2 no-op, 1 unsafe. By changed
+package the 20 correct are redis 8.0's new defaults (8), mcp's idle
+timeout (7) and tqdm's `ascii` (5); the 17 unsafe are redis's
+`driver_info=None` (12), pandas's `sort=False` (4) and click's
+`flag_value=None` (1); the 10 wrong are mcp's `version=None` (6) and
+scikit-learn's removed or renamed values (4). These are suggestions
+and not verdicts: the verdicts are the two readers', and the record
+keeps both columns.
+
+**The warnings, recounted.** Of the 200, the pins of 116 add a warning
+under the new version, not 128 as counted on 10 Nov. The nine
+`RedisCluster(..., lib_name='redis-py')` calls (#143 to #151) add
+none: the cluster constructor's deprecation covers only
+`read_from_replicas` and `cluster_error_retry_attempts`; in 7.2.2 each
+connection warns about `lib_name` with or without the pin, because the
+cluster always hands it on, and from 7.3.1 the cluster resolves it
+first and nothing warns (found by the third set, confirmed in the
+three new versions). And the three `driver_info` pins on the falkordb
+line never run. By suggestion: 96 of the 153 no-ops, 16 of the 17
+unsafe, 4 of the 20 correct. The 71 in the three projects whose own
+tests turn warnings into errors are unchanged (dask 46,
+imbalanced-learn 16, prefect 9).
+
+**The readers' files (19 Nov).** `cards_vaibhav.txt` and
+`cards_varad.txt`, built from the sheet by a script kept with the
+working files and not committed: they are the sheet in another order,
+and the record is docs/eval/verdicts.csv. The 53 groups read alike in
+34 plain-language kinds (one pin of one default, whatever the patch
+upgrade or the function's spelling; "53 kinds" above meant the
+groups), 20 in each reader's file with the withheld calls as a 21st.
+Seven kinds hold more than one suggested grade, and each call that
+departs from its kind says why in its own reason. The first reader's
+115: correct 6, no-op 87, unsafe 3, wrong 4; nothing needed 15. The
+second's: correct 14, no-op 66, unsafe 14, wrong 6; justified 1,
+nothing needed 14. (The per-reader figures given with the split above
+were the 10 Nov suggestions'.) The split is unchanged: it was fixed
+before the reading, and that the calls which turned out to matter fall
+mostly in the second half is how the draw's order fell. The files went
+to the author on 19 Nov at 21:20.
+
+**The record before the reading is e0f81ca** (19 Nov, 21:15, on
+ml/db-writer; read back from the public branch on 22 Nov, the file the
+same to the byte as the one delivered): this section through the
+readers' files, committed by the author before his first verdict under
+the criterion. The files had gone to him at 21:12, not at 21:20 as the
+line above says: that line was written before they were sent and the
+time was a guess. The reading stopped that evening at its first kind,
+the 17 pandas calls with `copy=None` pinned, on the one question still
+open (whether a warning alone changes a no-op), and was taken up again
+on 22 Nov.
+
+**How the first reader's verdicts are entered (22 Nov, 01:50).** At
+his asking, in a spreadsheet built from the sheet and his card file:
+one row per call, in his file's order, with the suggested grade and
+its reason, the edit before and after, and a plain-language line
+beside them; his grade is picked from a list (the four words for a
+rewritten call, the three for a withheld one) in a column that starts
+empty, and an empty cell is a call not read. Card #1 carries his
+verdict of 10 Nov. A second tab holds each kind's account as his file
+gives it and a third the grade words, the three questions and the
+three clauses, the warning rule among them as it stands at the head of
+his file; grading a warning-only call no-op there is his word on that
+rule. The spreadsheet is read back into data/eval/sheet.csv when he
+says he is done, with the time of the reading; it changes no
+suggestion and holds nothing the card file does not.
+
+At 02:00 the second reader's 115 calls were added to the same workbook
+in the same form, on two tabs of his own (his cards, his kinds), his
+grade column empty, for him to enter his verdicts there once the first
+reader has shared it with him; a pasted answer in the form his card
+file asks for is taken as well. By then the first reader had graded
+his first kind, the 17 pandas calls with `copy=None` pinned, no-op,
+each of which only adds a warning: his word on the warning rule, given
+after being told that grading such a call no-op is what accepts it.
+
+**The first reader's verdicts (23 Nov, 17:57).** Read from his
+spreadsheet twice. At 17:45 every one of his 100 rewritten calls held
+a verdict, each the suggested one, and his 15 withheld calls held
+no-op, which is no word for a withheld call: a paste down the column
+had carried the rewritten calls' list of four over those rows. Nothing
+was taken from that. At his yes the 15 cells were cleared and the
+three-word list put back, and he graded them again; at 17:57 they read
+nothing needed, all 15, as suggested. So his 115: correct 6, no-op 87,
+unsafe 3, wrong 4; nothing needed 15; no call graded against its
+suggestion and no note written. That every verdict follows its
+suggestion is what a reader shown a suggestion with its reason mostly
+does, and is why the suggestions were read blind first (above): the
+verdicts are the authors' word on the sheet, and the check on the
+sheet is the blind reading, not the agreement. The second reader's two
+tabs were no longer in the workbook on 23 Nov; how his verdicts come
+is asked.
+
+**The record's columns, fixed before any verdict is counted (23
+Nov).** docs/eval/verdicts.csv gains three columns beside the verdict.
+`reader`: the one of the two whose call it is by the split of 19 Nov,
+sheet numbers 1 to 100 and 201 to 215 the first reader's, 101 to 200
+and 216 to 230 the second's; a number outside 1 to 230 has no reader
+and the sheet is refused. `reason`: the suggestion's reason as the
+sheet holds it, so that the record carries why each suggestion was
+what it was, the corrections of 10 and 19 Nov included.
+`adds_warning`: yes where the reason carries the mark the sheet writes
+for a pin that adds a warning under the new version ("[ADDS A
+WARNING"), empty otherwise. The warning rule stands as printed, by the
+first reader's word of 22 Nov: a warning alone leaves a no-op a no-op,
+and the warnings are counted beside the verdicts, never inside them.
+The summary gains one line per reader and one for the warnings, counts
+over counts as the rest. The expected values are in
+scripts/test_eval_verdicts.py before the code runs: eleven checks, the
+six of 28 Oct unchanged.
+
+The code followed the same afternoon: `reader_of`, `adds_warning`,
+`summarise_readers` and `print_readers` in scripts/eval_verdicts.py,
+the three columns in the record, the reader asked for as the sheet is
+read. The eleven checks passed on the first run. Eight guards were
+then broken on purpose, one at a time, with the bytecode cleared
+between runs: the first reader's span ended at 99, the second's at
+229, the two readers swapped, any mention of a warning taken for the
+mark, the reader left out of the record, the sheet read without asking
+for a reader, every rewritten call counted as warned, every record row
+marked yes. The test stopped or failed on each, and passes again on
+the script restored (the same file to the byte). On the sheet as it
+stood, its second half unread, the script refused at #101 and wrote
+nothing; on the first reader's half alone it printed his counts as
+above and, beside them, 72 of his 100 rewritten calls adding a warning
+(no-op 69, unsafe 3). This change had no second reader of its own: it
+is some sixty lines beside a test that names every one of them.
+.gitignore lets docs/eval/verdicts.csv through, the one csv kept under
+docs; the other two evaluation tests still give 28 and 9.
+
+**The second reader's answer (24 Nov, 18:06).** It came as the pasted
+answer his card file asks for, with a spreadsheet of his own making
+(his 115 cards, a grade beside each). Every one of his 115 calls is
+graded as suggested: correct 14, no-op 66, unsafe 14, wrong 6;
+justified 1, nothing needed 14. One reason is written, on #154, and
+ten questions, over 33 calls. Nothing was counted from it that
+evening. All but one of the ten bear on a grade, and turn on a fact
+the card does not give, so the facts were looked for first, by running
+the two versions of the library where a run can tell and in the source
+where it cannot, and they are set down here before his last word is
+asked. His 115 as entered are in the log of readings, beside the first
+reader's.
+
+**What the questions found (24 Nov).** Each is given with the check
+made and with what the criterion as printed makes of it.
+
+On #103 to #105 and #161: what does the unedited line do with date
+labels under pandas 3.0? If it also left them unsorted, the edit would
+be a no-op. Two frames whose date labels differ and are out of order
+were joined under 2.3.3 and under 3.0.0. 2.3.3 returns the labels
+sorted, with or without `sort=False`. 3.0.0 on the unedited call still
+sorts them, and warns that it will stop (Pandas4Warning, "Sorting by
+default when concatenating all DatetimeIndex is deprecated"). 3.0.0 on
+the edited call keeps the order of appearance. So the edited line does
+what the call did neither before the upgrade nor after it, and unsafe
+stands on the four. The cards said only that 3.0 obeys an explicit
+`sort=False`; what the unedited line does was missing from them.
+
+On #165 and #169: did anyone check the FRED dates? No one had; the
+cards said so. On 24 Nov the seven series were read on FRED's own data
+pages. IPMAN (monthly, from 1972-01), W875RX1 (from 1959-01), CMRMTSPL
+(from 1967-01) and PAYEMS (from 1939-01) each hold every month of the
+example's window, 1979-01 to 2014-12. GNPC96 and GNPDEF are quarterly
+from 1947-01, dated at quarter starts, and AMBSL is monthly from
+1918-01 to 2019-11 and is put on quarter starts by the example itself;
+the three cover 1948-01 to 2008-01. The frames of each call therefore
+hold the same dates, the union is the first index unchanged, and no-op
+stands on both, now on dates that were read and not supposed.
+
+On #106, #176 and #195: the edit is a no-op at this upgrade but writes
+in something the library is taking away (the old name `y_pred`, the
+keywords `verify_integrity` and `lwork`), so it would break at a later
+one; no grade says so; should the report? It should, and the count is
+already kept: these are three of the 116 rewritten calls whose edit
+adds a warning under the new version, and a warning of this kind is
+the library's notice that the keyword will go. The grade speaks of
+this upgrade only, by the warning rule fixed before the reading. The
+report is to give the 116 beside the verdicts and to say in words what
+the second reader says here.
+
+On #107 to #115: prefect's own tests turn warnings into errors; does
+that count toward wrong? It does not, by the same rule: the warning is
+counted beside the verdict, and of the 116 the 71 that lie in projects
+whose tests turn warnings into errors (dask 46, imbalanced-learn 16,
+prefect 9) are named as such. The nine are unsafe on another ground,
+the library's name no longer announced to the server, and stay unsafe.
+
+On #116 to #118: the tool's own line says the retry default also
+changed in redis 8.0 and was not pinned; is the edit still correct?
+The suggestion had not weighed the retry; its reason does not name it.
+It was measured on 24 Nov, with the socket's connect replaced by one
+that fails at once. redis 7.4.1 makes 4 attempts and sets no time
+limit on any. 8.0.0 on the unedited call makes 11 attempts of at most
+5 s each. 8.0.0 on the edited call makes 11 attempts with no time
+limit. The asyncio client of #118 counts the same. Where the host
+refuses the connection the edited line does what the unedited one
+does. Where the host never answers, an attempt without a limit lasts
+until the operating system gives up (about two minutes on Linux by its
+default, a figure not measured here), so the edited line waits some 23
+minutes where 7.4.1 waited some 8 and 8.0.0 unedited waits about one:
+a wait the call had neither before the upgrade nor after it. In
+prefect the host is a field of the user's block, so such a host can
+reach the three lines, and by the third question as printed that is
+unsafe and not correct. #85, the first reader's call of the same kind,
+is not touched: its host is "localhost" in an integration test, which
+answers or refuses at once, and there the edited line differs from the
+unedited one only where it brings 7.4.1 back (RESP2, no time limits,
+keepalive off). What #85 and the three share is a pin that is partial.
+The tool says so itself ("not pinned: retry"), and the report is to
+count such calls: 17 of the 200 rewritten calls carry a "not pinned"
+on their rule line (`lib_version` on 9, `retry` on 6,
+`max_connections` on 2).
+
+On #129 to #131 and #139 to #142: these lines are in tests; can a
+session there sit unused for thirty minutes? It cannot. The seven
+lines are in sentry-sdk's tests of its mcp integration. Each test
+drives the app in process, sends its requests and ends; none sleeps or
+moves the clock, and none turns on the integration that would see the
+timer's task. The timeout is thirty minutes in 1.30.0 and in 2.2.0 (30
+* 60), a cancel scope armed per session. No run of these tests can
+tell the edited line from the unedited one, and the clause printed on
+every card, the grade is for this line in this project, makes that a
+no-op. The suggestion said correct because the library reads the pin
+and `None` gives back the old meaning, which is true of the library
+and not of these seven lines. The second reader's reading is the one
+consistent with how the pyarrow and the concat calls were read.
+
+On #154 and #155, his reason and his question: `max_connections` also
+changed, from 2 ** 31 to 100, and was not pinned; can these tests open
+more than 100 connections? They open none. Both of sentry-sdk's
+cluster test files replace the cluster's network calls with stand-ins
+in an autouse fixture (`NodesManager.initialize`, `execute_command`,
+the pipeline's `execute`). The two fixtures were copied and run under
+7.4.1 and 8.0.0, edited and unedited, sync and async: the same results
+in every run, no socket opened in any, and on the edited lines one
+thing more, the DeprecationWarning for `cluster_error_retry_attempts`.
+Nothing reads `max_connections` here, and nothing reads the pins
+either. By the same clause the four cluster calls of the 8.0 upgrade,
+#152 to #155, are no-ops that add a warning, not correct. The cards'
+reasons did not mention `max_connections`; he is right that they
+should have.
+
+On #198: with the edit, `--entity my-team` no longer takes the name;
+does click then stop with an error? wandb's command class was copied
+and run under click 8.2.1 and 8.3.0. Unedited, both versions take the
+name in all four sandbox commands. Edited under 8.3.0, `ls`, `sh` and
+`logs` stop with a usage error and exit status 2 ("Got unexpected
+extra argument (my-team)"; with `--entity=my-team`, "Option '--entity'
+does not take a value"). `exec`, which hands unknown words on to the
+command it runs, does not stop: it takes `my-team` for the sandbox id
+and leaves the entity None. Without `--entity` nothing changes. The
+suggestion was first wrong and was moved to unsafe on 19 Nov because
+nothing fails where the option is made. But the first question as
+printed also counts an error "as soon as what it builds is used", and
+what this line builds is the option: used, it is refused in three
+commands of four and misread in the fourth. That is the second
+reader's reading, wrong, and the runs bear it out. The `exec` case is
+to be told with it in the report, being the worse of the two because
+it is silent.
+
+On #199 and #200: where does `clf` come from; can a frozen classifier
+reach these lines? It is whatever the caller of wandb's
+`plot_calibration_curve` passes, and under scikit-learn 1.6 a
+FrozenEstimator can be passed; the unedited line would then use
+ensemble False and the edited one would force True. The criterion of
+19 Nov leaves that input out, as one that only the new version accepts
+and that has no old result to keep. Two things are owed here. That
+half of the third clause was not printed at the head of the readers'
+files, which gave only the half about environment variables; so the
+words above, "printed at the head of each reader's file", were not
+true of it, and the second reader could not have known it. And its
+cost was not said with the other three: were such an input counted,
+#199 and #200 would be unsafe. No-op stands on the two by the rule
+fixed before the reading.
+
+**What follows for the counts, and what is awaited.** If the second
+reader takes the criterion's reading on these, 15 of his calls change:
+#116 to #118 from correct to unsafe; #129 to #131, #139 to #142 and
+#152 to #155 from correct to no-op; #198 from unsafe to wrong. His
+half would then read correct 0, no-op 77, unsafe 16, wrong 7, and the
+200 together correct 6, no-op 164, unsafe 19, wrong 11, against the
+suggestions' 20, 153, 17 and 10. The 116 warnings would then lie on
+no-op 100 and unsafe 16, where they lay on no-op 96, unsafe 16 and
+correct 4. The withheld calls do not move, and the first reader's 115
+stand. Fourteen of the 15 take a correct away. The blind reading of 19
+Nov had read each of these kinds as the suggestion has it (#84 for the
+redis 8.0 client, #139, #152, #154, #198): it set the two versions of
+the library side by side, and did not ask whether the line's
+surroundings let the difference show (a test that never waits, a
+fixture that never connects) or what the default left unpinned does
+beside the pinned ones. A reader's questions found what the blind
+reading and the suggestions both missed, which is what the second
+reader is for. The verdicts are his to give. They are asked of him
+with these answers, and nothing is counted until they come.
+
+**The second reader's verdicts (26 Nov, 11:35).** His spreadsheet came
+back with the 15 calls changed as the entry of 24 Nov sets out, and
+with nothing else changed: #116 to #118 from correct to unsafe; #129
+to #131, #139 to #142 and #152 to #155 from correct to no-op; #198
+from unsafe to wrong; the other 100 grades, the suggestions and their
+reasons as in his first file. Beside each of the 15 he wrote his
+reason, dated 24 Nov, in his own words. So his 115: correct 0, no-op
+77, unsafe 16, wrong 7; justified 1, nothing needed 14. The record's
+note column carries his reason as he wrote it. On #154 the reason cell
+still holds the remark made with his first grade (that
+`max_connections` is not restored); the record keeps it and says in
+brackets that his reason for no-op is the one on #152, which he says
+applies to #152 to #155. His ten questions are not in the record; they
+are above, with their answers.
+
+**The working copy lost, and the sheet rebuilt (25 and 26 Nov).** The
+working copy on the Linux machine did not outlive 25 Nov, and with it
+went everything under data/eval there: the ten trees, the old and new
+versions, the 86 reports with counts.csv and the manifest, the sheet
+with the suggestions of 19 Nov and the first reader's verdicts, and
+the log of readings that the entry of 24 Nov names. None of it was
+ever committed, by the rule of 28 Oct, and as far as is known the raw
+reports were kept nowhere else. What that leaves, and what was done
+about it, in three parts.
+
+First, the run's counts stand as printed above, committed on 28 Oct
+(c0d6ea0); the reports themselves no longer exist. The run can be made
+again from this section: the ten trees are named above with their
+sizes and hashes, and the upgrades are §38.16's. Until it is, the two
+totals the record's summary needs (643 rewritten calls, 356 withheld)
+are taken from the table above, its ten per-sample rows written to a
+file of their own, and not from counts.csv.
+
+Second, the sheet was rebuilt on 26 Nov from two things that had been
+delivered and kept: the sheet of 28 Oct (the 230 drawn calls, each
+with its edit, its rule lines, both signatures and the context) and
+the two readers' card files of 19 Nov, which print every call's
+suggested grade and its reason. Checked: every card's head and place
+are its row's, 230 of 230; the suggestions tally as recorded on 19
+Nov, 20, 153, 17 and 10 with 1 and 29, by half 6, 87, 3, 4 and 14, 66,
+14, 6; the mark for a warning stands in 116 reasons (no-op 96, unsafe
+16, correct 4; 72 and 44 by half); and the reasons are, to the letter,
+the second reader's file's on all 115 of his calls and the first
+reader's spreadsheet's on the six compared (#1, #6, #12, #84, #85,
+#97).
+
+Third, the log of readings was a working file and is not rebuilt; the
+readers' own files hold what it held. The first reader's spreadsheet
+was read again on 26 Nov, at the revision it had on 23 Nov: 115
+grades, each the suggestion beside it, and one filled cell in its note
+column, the mark "graded 10 Nov" on #1, put there when the spreadsheet
+was built; the record carries it. The second reader's first answer is
+his file of 24 Nov, all 115 as suggested, and his last is the file of
+26 Nov.
+
+**Expected of the count, written before it (26 Nov).** By the two
+readers' files. Vaibhav: rewritten 100 read, correct 6, no-op 87,
+unsafe 3, wrong 4; withheld 15 read, nothing needed 15. Varad:
+rewritten 100 read, correct 0, no-op 77, unsafe 16, wrong 7; withheld
+15 read, justified 1, not justified 0, nothing needed 14. Together:
+200 of the 643 rewritten calls read and 443 unread, correct 6, no-op
+164, unsafe 19, wrong 11; 30 of the 356 withheld calls read, justified
+1, not justified 0, nothing needed 29. Warnings: 116 of the 200, on
+no-op 100 and unsafe 16. Fifteen verdicts differ from their
+suggestion, the 15 above. By rule: R1 acted on one call of the 200
+(#106, mlflow's `log_loss`, no-op), so R2's line is the total less
+that one: 199 read, correct 6, no-op 163, unsafe 19, wrong 11. The
+split by sample package is the result and is not guessed here.
+
+**The count (26 Nov, 11:43), as the script printed it:**
+
+```
+rewritten calls read: 200 of 643 (443 unread): correct 6, no-op 164, unsafe 19, wrong 11
+  R1: 1 read: correct 0, no-op 1, unsafe 0, wrong 0
+  R2: 199 read: correct 6, no-op 163, unsafe 19, wrong 11
+  (a call both rules rewrote counts once above and in both rules' lines)
+  dask: 49 read: correct 0, no-op 49, unsafe 0, wrong 0
+  imbalanced-learn: 24 read: correct 0, no-op 20, unsafe 0, wrong 4
+  langchain-community: 20 read: correct 6, no-op 11, unsafe 3, wrong 0
+  litellm: 8 read: correct 0, no-op 8, unsafe 0, wrong 0
+  mlflow: 5 read: correct 0, no-op 2, unsafe 3, wrong 0
+  prefect: 12 read: correct 0, no-op 0, unsafe 12, wrong 0
+  sentry-sdk: 42 read: correct 0, no-op 36, unsafe 0, wrong 6
+  snowflake-snowpark-python: 3 read: correct 0, no-op 2, unsafe 1, wrong 0
+  statsmodels: 34 read: correct 0, no-op 34, unsafe 0, wrong 0
+  wandb: 3 read: correct 0, no-op 2, unsafe 0, wrong 1
+withheld calls read: 30 of 356 (326 unread): justified 1, not justified 0, nothing needed 29
+Vaibhav: rewritten 100 read: correct 6, no-op 87, unsafe 3, wrong 4; withheld 15 read: justified 0, not justified 0, nothing needed 15
+Varad: rewritten 100 read: correct 0, no-op 77, unsafe 16, wrong 7; withheld 15 read: justified 1, not justified 0, nothing needed 14
+pins that add a warning under the new version: 116 of the 200 rewritten calls read: correct 0, no-op 100, unsafe 16, wrong 0 (counted beside the verdicts, never inside them)
+15 verdict(s) differ from the sheet's suggestion: #116, #117, #118, #129, #130, #131, #139, #140, #141, #142, #152, #153, #154, #155, #198
+docs/eval/verdicts.csv: 230 row(s)
+```
+
+Every line written before the count came out as written. The split by
+sample package was not guessed, and it is lopsided. All six correct
+verdicts lie in one package, langchain-community: #85, redis 8.0's
+protocol and timeouts against a real server in an integration test,
+and five tqdm calls (#88, #89, #90, #92, #93), three of which keep
+what 4.68.2 changed back on purpose. prefect's twelve are all unsafe,
+the nine pins of the library's name and the three partial pins. The
+eleven wrong are imbalanced-learn's four (values scikit-learn 1.6 to
+1.8 refuse), sentry-sdk's six (mcp's `version=None`) and wandb's one
+(click). By changed package, which the script does not print: pandas
+86 read, no-op 82, unsafe 4; redis 37, correct 1, no-op 21, unsafe 15;
+scikit-learn 23, no-op 19, wrong 4; mcp 15, no-op 9, wrong 6; tqdm 8,
+correct 5, no-op 3; typing-extensions 9, asyncpg 9, scipy 8, pyarrow 2
+and networkx 2, all no-op; click 1, wrong. The 17 calls whose rule
+line says "not pinned": no-op 13, unsafe 3, correct 1.
+
+**The record.** docs/eval/verdicts.csv: 230 rows and the 19 columns
+fixed on 23 Nov; the first twelve digits of its sha256 are
+15aaf097db43. It was checked apart from the script that wrote it,
+against the readers' own files: the columns, the 230 rows, the numbers
+1 to 230, the kinds and the readers by the split; on all 115 of the
+second reader's calls his verdict, the suggestion, its reason and the
+warning column as his file has them, and his note his reason as
+written; the first reader's 115 each the suggestion, the grades other
+than no-op as read from his spreadsheet; the suggestion and reason the
+card's on all 230; the call, its place and its rule lines the sheet of
+28 Oct's on all 230; a warning marked on 116 calls, all rewritten; R1
+on #106 alone; the totals above; no field holding a line break. The
+three evaluation tests give 11, 9 and 28.
+
+**Two commits, the code first.** On 26 Nov the public branch still
+stood at e0f81ca: the script and the test of 23 Nov had not been
+committed. They go first, with the .gitignore line, and the record and
+this section after them, so that the history shows the code before the
+record. Both commits bear 26 Nov or later; the order of the work is as
+this section tells it, not as their dates do.
+
+**For the report (26 Nov), as counts.** On the ten sample packages, 86
+runs on 28 Oct: 13,253 hits, 7,947 of them unverified; 643 calls
+rewritten (R1 1, R2 642), 356 withheld, 3 left to the user, 315
+needing nothing. Of the 200 rewritten calls read by the two readers
+under the criterion of 19 Nov: correct 6, no-op 164, unsafe 19, wrong
+11; 443 unread. Of the 200, 116 add a warning under the new version
+(no-op 100, unsafe 16), 71 of them in packages whose own tests turn
+warnings into errors. Of the 30 withheld calls read: justified 1, not
+justified 0, nothing needed 29; 326 unread. R1 was read on one call,
+and nothing is said of it beyond that. No rate is given without its
+two counts, and no recall is claimed (§38.6). What the 200 are: the
+draw of 28 Oct from a convenience sample. What the verdicts are: two
+authors' reading of suggestions that had themselves been read blind
+once, fifteen of them corrected by the second reader's questions.
+
+**The run made again (26 Nov, 11:49 to 12:24).** To put back what was
+lost, and to see whether this section's counts can be had a second
+time, the 86 runs were repeated on the Linux machine the same morning,
+after the record above was built. The ten trees were pinned to the
+releases of 28 Oct, since the harness's resolve stage would otherwise
+take the newest of the day: PyPI's record of each of the ten versions
+was read and holds the same file, size, upload date and sha256 as the
+table above (161,743,529 bytes in all), and those records were written
+into the manifest before the stage ran. Nothing else was changed: the
+same harness; the tool at 0.1.0 from the tree at e0f81ca (the fixer
+package as it has been since 78e837a; the tree not clean, the scripts
+of 23 Nov and this file being uncommitted there); griffe 2.4.1 and
+libcst 1.9.0 as on 28 Oct, Python 3.13.18 for 3.13.17 and packaging
+26.4 for 26.3; the old and new versions by Python 3.12's pip. The
+plan: 86 runs over 39 old and 39 new versions, 38 of each from wheels
+and pyyaml 5.4.1 and 6.0 from their sdists, as before. The runs: 78
+ended with hits and 8 with none, none stopped, none timed out; 33.4
+minutes in all (40.3 on 28 Oct), the longest again statsmodels against
+pandas 2.3.3 -> 3.0.0, at 201 s. The counts: both tables above, by
+sample package and by changed package, came out the same in every
+cell. The draw, by the same two seeds: the same 230 calls; and the
+sheet built from it holds on all 230 rows the same 17 columns as the
+sheet of 28 Oct (the call, its place, the edit before and after, the
+rule lines, both signatures and the context), to the letter. So the
+reports exist again under data/eval, uncommitted as before, and the
+two totals of the record (643 and 356) are counts.csv's again. Two
+things the table above does not print, from the same counts.csv: of
+the 13,253 hits, 3,182 are resolved and 2,124 referenced, beside the
+7,947 unverified; and by rule, R1 rewrote 1 call, withheld 13 and
+found 524 needing nothing, while R2 pinned 642, withheld 344, left 3
+to the user and found 38 needing nothing.
+
+**The two commits (26 Nov).** 1f04001, at 11:53: the script, its test
+and the .gitignore line. b251ea2, at 12:44: the record and this
+section through "For the report". Both are on the public branch and
+were read back from it the same hour: the five files there are the
+ones built, to the byte, and the record's sha256 begins 15aaf097db43.
+The account of the run made again, above, was written after the file
+for b251ea2 had been sent and is not in it; it goes with the next
+commit.
+
+## 39. Counts and one check made on 27 Nov
+
+Made while the results were being put together for the review of 1 Dec.
+The first five are counts of something this notebook already holds, with
+no test behind them. The sixth is a check that was not in any rule fixed
+beforehand, and says so.
+
+**Used share by public depth, on the development data.** From the
+bundle, releases dated before 28 July 2026, `alias_user_count > 0`
+counted by `public_depth`:
+
+| public depth | changes | used | share |
+|---|---|---|---|
+| 1 | 868 | 233 | 26.8% |
+| 2 | 3,806 | 294 | 7.7% |
+| 3 | 5,199 | 57 | 1.1% |
+| 4 | 5,316 | 15 | 0.3% |
+| 5 | 648 | 6 | 0.9% |
+| 6 | 494 | 0 | 0.0% |
+| 7 | 249 | 0 | 0.0% |
+| all | 16,580 | 605 | 3.6% |
+
+It is §34's rule read as a table: the order the rule imposes is the
+order of these shares, except between depths 4 and 5. It is counted on
+the rows every comparison of §34 to §36 was made on and describes
+them; no test was fixed for it and none is claimed. The holdout's rows
+are not in it.
+
+**The guards broken for the two rewrite rules, added up.** §38.14's
+forty and §38.15's fifty-six make 96: 90 caught by a check, 2 that
+stopped the run, 4 equivalent.
+
+**The API's tests, counted.** On main at a1c11c1, `python -m pytest
+--collect-only -q` collects **49** tests in the five files under tests/:
+test_analyze.py 11, test_breakages.py 20, test_explanation.py 5,
+test_requirements_parser.py 11, test_startup.py 2. The full run on main
+the same day passed all 49. And 28 test scripts stand under scripts/ on
+ml/db-writer. *Corrected the same day:* the first count written here
+was 47 in four files. It was made by counting `def test_` in a file
+listing that had been cut short, and tests/test_startup.py was not in
+the listing. The run of the suite on main showed 49; the collection
+above confirms it by file.
+
+**The dataset's packages, against §20's table of the ingest.** §20
+accounts for the 500 packages of the fill: 314 with rows, 27 compared
+and clean, 159 that failed in one of four ways. The package table has
+351, ten more than 314 + 27, because it is not built from that log: it
+is every package in changes.csv (314) and every package in packages.csv
+that changes.csv does not have (37, F32's "37 that changed nothing",
+from the one run that also wrote releases.csv). Counted in the bundle:
+
+| | packages |
+|---|---|
+| with at least one change | 289 |
+| without a change, at least one release compared and clean | 54 |
+| without a change, no release compared | 8 |
+| all | 351 |
+
+The 54 are 25 + 29. Twenty-five are in changes.csv with nothing but
+version strings or metadata rows (314 - 289; §33.6's 1,815 rows not
+written took every row they had, and their releases were written
+analysed_clean). Twenty-nine are among F32's 37. The other 8 of the 37
+have releases and no comparison that succeeded: fastuuid, multiprocess,
+numpy, ruamel-yaml-clib, types-requests and types-toml (nine or ten
+releases each read analysis_failed, the rest no_baseline, no_source or
+yanked), playwright and psycopg-binary (no_source on all ten). So the
+37 are not §20's 27 plus its ten small failure rows, although 8 of
+them are packages of that kind; the two tables come from different
+runs and count different things.
+
+**The site's database beside the dataset.** For the record of which
+number is which: the dataset (changes.csv as loaded, and the bundle) is
+21,452 changes, 3,204 releases, 351 packages, analysed_clean 1,531. The
+table on Neon after §33.10 is 25,490 changes and 3,851 releases,
+analysed_clean 1,756: the same load plus the 4,038 aged-out rows of
+earlier loads and their releases (§8, §13.2). Every result of §24 to
+§36 and of §38 is on the dataset. A sentence about what the site can
+say (how many releases it can call clean) is about the table.
+
+**The locate step on the 230 read calls, checked by a second script.**
+§38.18's verdicts say whether an edit was right. They do not say
+whether the call is to the function the tool named, and nothing in
+§38.6 or §38.18 asked. This check was added on 27 Nov, after the
+reading; no rule for it was fixed before its first count was seen, and
+it is recorded as that.
+
+`scripts/eval_locate_check.py` imports nothing from fixer/. For each row
+of docs/eval/verdicts.csv it finds the call with `ast` at the record's
+line and column, follows the called name through the file's imports
+(and through the sample package's own re-exports) to a dotted path,
+follows that path through the library's re-exports in
+data/eval/old/<package>-<from> (griffe, `allow_inspection=False`) to
+where the function or class is defined, and compares the definition's
+path with the record's symbol. For an `__init__` the class's own or
+inherited `__init__` is looked up along its bases. A method on an object
+is settled only where the object comes from a constructor of a library
+class: the call is chained on it, or the object was assigned by a
+`name = Class(...)` statement that always runs before the call, with no
+other binding of the name that can reach the call. Anything else is
+left "by hand" with the reason.
+
+Result: **224 confirmed, 6 left by the script.** Of the 224, 195 are
+calls through an imported name, 20 are methods on an object assigned
+from the constructor and 9 are chained on the constructor. The six are
+sheet numbers 201 to 206, all `pdf.groupby(...)` in dask's
+`test_split_apply_combine_on_series`
+(dask/dataframe/tests/test_groupby.py, lines 478 to 663). `pdf` is bound
+twice there, in the two branches of `if empty:`, as
+`pd.DataFrame(...).iloc[:0]` (line 480) and as `pd.DataFrame(...)` (line
+486), and nowhere else in the function. A row slice through `.iloc` is
+a DataFrame (pandas 2.3.3: core/indexing.py 1766 returns
+`self.obj._slice(...)`, and `_slice`, core/generic.py 4383, builds its
+result with `_constructor_from_mgr`), so all six are
+`pandas.core.frame.DataFrame.groupby`, read by hand. **In all 230 calls
+the call is to the function the tool named.**
+
+How the count came about, in order. A first version of the script took
+the nearest earlier assignment for an object's class and confirmed all
+230. That rule cannot see a second binding in another branch or in a
+loop, so it was replaced by the stricter rule above before anything was
+written down, and the stricter rule is what left the six for reading.
+The self-test came after the first count: `--selftest` plants 28 calls
+in a made-up library and project, 9 right ones beside 19 look-alikes
+(the project's own function or class of the same name, another class
+with the same method, the asyncio twin of a class, a parameter, a name
+bound again in sequence, in a branch, in a loop, by a loop variable or
+twice at module level, two imports that disagree, a tuple assignment, a
+function's result, a record that points at no call). What each must
+give is written beside it in the script and was written before the
+self-test's first run, which gave 28 of 28.
+
+For 154 of the 230 calls the library defines another function or class
+with the record's last name (redis.client.Redis and
+redis.asyncio.client.Redis; pandas' concat and Styler.concat), so a
+match on the name alone would not have settled them.
+
+What it does not show. Only the record's calls are looked at, and all
+230 are `resolved` calls: nothing is said about the 7,947 unverified
+hits or about calls the tool missed, and no recall is claimed, as in
+§38.18. The library is read with griffe on both sides, so the check is
+separate from the fixer's code and not from griffe. It ran in the Linux
+environment, where data/eval/trees and data/eval/old are (the fetch and
+old stages of scripts/eval_run.py make them), in about a minute, on
+Python 3.13.18 with griffe 2.4.1, and again on Python 3.12 with griffe
+2.2.0, the oldest the repository allows: the same status and the same
+path on every one of the 230 rows, and 28 of 28 in the self-test. The
+self-test alone was also run on the Mac the same evening, which has no
+trees: 28 of 28.
+
+```
+python scripts/eval_locate_check.py --selftest
+python scripts/eval_locate_check.py
+```
+
+It writes data/eval/locate_check.csv, one row per call, which is not
+committed (data/ is ignored).

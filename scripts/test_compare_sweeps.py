@@ -145,6 +145,14 @@ def case_refusals(tmp: pathlib.Path) -> None:
         code, out = run(tmp, sweep(BEFORE), sweep(AFTER, **{col: other}))
         check(f"a sweep with another {col} is refused",
               (code != 0, f"{col} is" in out), (True, True))
+    # From 11 Oct a sweep says how it counted ties (NOTES §36.2); one from
+    # before has no stamp, and the two are not compared.
+    code, out = run(tmp, sweep(BEFORE), sweep(AFTER,
+                                              convention="ties-averaged"))
+    check("a sweep on the tie-averaged convention is not set beside one "
+          "from before it",
+          (code != 0, "convention is (none) before and ties-averaged after"
+           in out), (True, True))
 
 
 def main() -> None:

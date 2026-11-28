@@ -3,11 +3,11 @@ F41 (NOTES §34): does the model beat ranking by path length alone?
 Decided by the rule in NOTES §34.1, written before this was first run.
 
     python scripts/path_verdict.py
-    python scripts/path_verdict.py data/stability_label_alias_cv_tuned_at.csv
+    python scripts/path_verdict.py data/stability_label_alias_cv_tuned_at-20261010.csv
 
 Reads  the sweep at the seven reference dates that the retrain's
-       `ml/model/stability.py --at ...` wrote; by default the shipped
-       model's, data/stability_label_alias_cv_tuned_at.csv
+       `ml/model/stability.py --at ...` wrote on 10 Oct, kept aside as
+       data/stability_label_alias_cv_tuned_at-20261010.csv (the default)
 Writes nothing. Nothing is fitted either: at every date the sweep already
        scored the model and path length on the same test half.
 
@@ -41,6 +41,13 @@ model is run (label_alias, lambdarank, tuning cv, binary relevance,
 holdout from 2026-07-28), the file holds exactly the seven dates of §23.5,
 none skipped, and the path and tie-averaged columns are there: a sweep
 written before F41 has none.
+
+A RECORD FROM 11 OCT. The verdict is §34.2's, and item 15 (§36) has
+followed it. Every sweep since averages every number over the order of
+tied scores and says so (`convention`, NOTES §36.2), and this refuses
+it: the rule was written for, and applied to, the convention before.
+The sweep of 10 Oct it ruled on, and that of 11 Oct item 15 ruled on,
+are kept aside, and it runs on those as it did.
 """
 
 import argparse
@@ -64,9 +71,20 @@ MARGIN = 1.25   # the median PR-AUC ratio the model needs; 1/MARGIN, path
 NEED = 6        # dates of the 7 a side must win, on either measure
 COLUMNS = ("pr_auc_ties", "path", "ndcg_20", "path_ndcg_20", "p_at_10",
            "path_p_at_10", "floor")
-DEFAULT = pathlib.Path("data") / stability_name(
+# The sweeps the two verdicts were made on, kept aside (NOTES §36.2): 10
+# Oct's, which §34.2 ruled on, and 11 Oct's, which §36.2 ruled on. Each
+# script reads its own by default. A sweep written since is stamped with
+# the convention and refused (see refusal), so these are the exam.
+KEPT = pathlib.Path("data") / stability_name(
     LABEL, "cv", relevance=SHIPPED_RELEVANCE, at=True,
     tuning=SHIPPED_TUNING)
+KEPT_PATH = KEPT.with_name(KEPT.stem + "-20261010.csv")
+KEPT_SHIP = KEPT.with_name(KEPT.stem + "-20261011.csv")
+DEFAULT = KEPT_PATH
+AGAIN = ("The sweeps these rules were applied to are kept aside (NOTES "
+         f"§36.2):\n  {KEPT_PATH}  (§34.2's)\n  {KEPT_SHIP}  (§36.2's)\n"
+         "A sweep written since 11 Oct is stamped with the convention and "
+         "refused.")
 
 
 def across(model: list[float], path: list[float]) -> dict:
@@ -108,10 +126,19 @@ def within(model: list[float], path: list[float]) -> dict:
 
 def refusal(t: pd.DataFrame) -> str | None:
     """Why this file cannot be ruled on, or None."""
-    again = ("Run the sweep again at the seven dates:\n  python "
-             "ml/model/stability.py --at " + ",".join(DATES))
+    again = AGAIN
     if "cut" not in t or "skipped" not in t:
         return "This is not a sweep stability.py wrote. " + again
+    # From 11 Oct every sweep averages over the order of tied scores and
+    # says so (NOTES §36.2). The rules here were fixed for, and applied to,
+    # sweeps on the convention before it, so they are not applied again.
+    if "convention" in t:
+        return ("This sweep averages every number over the order of tied "
+                "scores, the convention\nfrom 11 Oct (NOTES §36.2). §34.1's "
+                "rule and §36.1's were applied to sweeps on the\nconvention "
+                "before it (§34.2, §36.2), and are not applied again. To "
+                "see those\nverdicts again, run this on the sweeps kept "
+                f"aside:\n  {KEPT_PATH}\n  {KEPT_SHIP}")
     want = {"label": LABEL, "objective": OBJECTIVE,
             "tuning": SHIPPED_TUNING, "relevance": SHIPPED_RELEVANCE,
             "holdout_from": str(HOLDOUT_START.date())}
@@ -148,8 +175,7 @@ def main() -> None:
     args = ap.parse_args()
     f = pathlib.Path(args.sweep)
     if not f.exists():
-        sys.exit(f"{f} not found. Run: python ml/model/stability.py --at "
-                 + ",".join(DATES))
+        sys.exit(f"{f} not found. " + AGAIN)
     t = pd.read_csv(f, dtype={"cut": str})
     why = refusal(t)
     if why:

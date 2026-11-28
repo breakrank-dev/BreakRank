@@ -11,7 +11,10 @@ Writes nothing
 WHY. A fix that changes which rows exist moves the sweep's quantile dates,
 and two sweeps at different dates are two different exams (§15, §23.2).
 So this refuses to compare unless both files measured the same cut dates
-and were run the same way (holdout boundary, relevance, tuning).
+and were run the same way (holdout boundary, relevance, tuning), and
+counted ties the same way: a sweep from before 11 Oct took
+scikit-learn's PR-AUC and one fixed order of tied scores, and a later
+one averages over every order of them (`convention`, NOTES §36.2).
 
 HOW TO READ IT (§23.2, §24.1). At each date, the lift over popularity
 before -> after, and the numbers under it. The sweep cannot tell apart
@@ -25,7 +28,7 @@ import sys
 
 import pandas as pd
 
-STAMPS = ("holdout_from", "relevance", "tuning")
+STAMPS = ("holdout_from", "relevance", "tuning", "convention")
 RESOLUTION = 0.25   # §24.1: what the sweep cannot resolve
 
 

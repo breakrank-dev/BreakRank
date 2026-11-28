@@ -6,6 +6,12 @@ data/
 !tests/fixtures/*.csv
 !data/.gitkeep
 
+# The fixer's bundle (fixer/data/breakrank.sqlite) IS committed, one copy,
+# rebuilt only when the dataset changes (python scripts/build_bundle.py;
+# NOTES §38.13). `data/` above matches any folder named data, so the
+# fixer's is let back in here.
+!fixer/data/
+
 # Models — only the current one
 artifacts/*
 !artifacts/ranker.txt
@@ -19,6 +25,9 @@ artifacts/*
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 .venv/
 venv/
 .pytest_cache/
@@ -32,5 +41,10 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+logs/
+
+
+# The evaluation record is the one csv kept under docs (NOTES 38.18)
+!docs/eval/verdicts.csv
 .vercel
 Project Content/

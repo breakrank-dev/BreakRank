@@ -4,15 +4,49 @@ Load the pipeline's CSVs into Postgres. The last piece before the site works.
     python ml/db.py --dry-run          # validate everything, touch nothing
     python ml/db.py                    # package, release, breakage, usage_index
     python ml/db.py --scores           # also model_run + prediction
+    python ml/db.py --scores --ranker model   # the model's, the fallback
 
 Reads  data/packages.csv        -> package
-       data/changes.csv         -> release, breakage
+       data/changes.csv         -> release, breakage (minus the rows that
+                                   are not changes; see not_a_change)
        data/releases.csv        -> release.analysis_status, n_changes, and
                                    the releases that changed nothing
                                    (optional; see release_plan)
        data/usage.csv           -> usage_index
-       artifacts/metrics.json   -> model_run          (only with --scores)
-       artifacts/ranker.txt     -> prediction         (only with --scores)
+       with --scores, the ranker that ships (NOTES §36.2), path length:
+       artifacts/path_metrics.json -> model_run
+       data/features.csv, holdout.csv -> prediction, minus public_depth
+       or with --ranker model, the model, kept as the fallback:
+       artifacts/metrics.json   -> model_run
+       artifacts/ranker.txt     -> prediction
+
+WHICH SCORES (--ranker, from 11 Oct). Item 15's rule (NOTES §36.1) found
+that no learned ranker beats path length alone, so --scores loads path
+length's under its own name (ml/model/ship.py), and the model's stay in
+the table as the fallback. A load under a new name is served only after
+the API restarts (§28.5). path_metrics.json is written by train.py, with
+path length's numbers on the single split and across the sweeps' dates.
+
+WHAT IS NOT WRITTEN, and what is written as unknown (NOTES §33.5, from
+12 Oct). A version constant or a package-metadata string that changed
+value describes a release; it does not change it (F1, F39), so those rows
+are not sent, by build.py's own two rules, and a release left with nothing
+is analysed_clean with 0 changes. A release the files cannot establish,
+one changes.csv names only as the older side of a pair, is written
+`unknown` where the database accepts the value (migration 007), in place
+of taking the column's default. scripts/db_drop_versions.py removes the
+rows of the first kind that earlier loads wrote.
+
+WHICH VERDICT WINS (NOTES §33.9, from 18 Oct). A status in releases.csv
+that says today's run did not compare a release (no_baseline,
+analysis_failed, no_source) does not replace a verdict a run before it
+made: a release the table holds as analysed_clean stays so, and one the
+table holds rows for is written `analysed` with those rows as its count
+(shield_verdicts). Until then each load wrote no_baseline over the verdict
+of the release a package's window had rolled its start onto. The same
+section gives db_prune the loader's reading of which releases today
+re-analysed (live_releases): changes.csv's version_to releases and the
+analysed_clean ones of a releases.csv that agrees.
 
 The database is the boundary between the two halves of this project. The
 pipeline writes, the API reads, neither calls the other's code — which
@@ -59,7 +93,10 @@ from packaging.version import InvalidVersion, Version
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from ml.contract import bump_type  # noqa: E402
+from ml.features.build import metadata_strings, version_strings  # noqa: E402
 from ml.holdout import HOLDOUT_FILE, HOLDOUT_START  # noqa: E402
+from ml.model.ship import (PATH_METRICS, RANKERS,  # noqa: E402
+                           SHIPPED_RANKER, path_scores)
 
 DATA = pathlib.Path("data")
 ART = pathlib.Path("artifacts")
@@ -67,17 +104,29 @@ CHANGES, PACKAGES, USAGE = (DATA / "changes.csv", DATA / "packages.csv",
                             DATA / "usage.csv")
 RELEASES = DATA / "releases.csv"
 
-# The values release.analysis_status accepts, from Varad's migrations 005
-# and 006. releases.csv also records `pre_release` and `dev_release`: the
-# ingest filtered those out before analysing anything, and the database
-# has no value for them, so they are skipped and counted rather than
-# forced into a value that means something else.
+# The values release.analysis_status accepts, from Varad's migrations 005,
+# 006 and 007. releases.csv also records `pre_release` and `dev_release`:
+# the ingest filtered those out before analysing anything, and the
+# database has no value for them, so they are skipped and counted rather
+# than forced into a value that means something else.
+UNKNOWN = "unknown"
 DB_STATUSES = {"analysed", "analysed_clean", "analysis_failed", "no_source",
-               "yanked", "no_baseline"}
+               "yanked", "no_baseline", UNKNOWN}
 # Releases that were part of a diffed chain. Only these can be a clean
 # release's predecessor, which is what its bump_type is measured from.
 CHAIN_STATUSES = {"analysed", "analysed_clean", "no_baseline",
                   "analysis_failed"}
+# Which statuses are a VERDICT, the pair (previous -> V) having been run,
+# and which say only that today's run did not compare V: the window
+# started at it, its download or diff failed, no sdist today (NOTES
+# §33.9). `yanked` is in neither set on purpose: it is PyPI's statement
+# about the release, not about our run, and is written as it comes.
+COMPARED = {"analysed", "analysed_clean"}
+NOT_COMPARED = {"no_baseline", "analysis_failed", "no_source"}
+# Varad's hand-written rows, for the API to be built against before the
+# pipeline produced any (NOTES §8.1). No changes.csv names this package,
+# and nothing on this side deletes or counts its rows as its own.
+FIXTURE_PACKAGE = "breakrank-fixture"
 FEATURES = DATA / "features.csv"
 METRICS, RANKER = ART / "metrics.json", ART / "ranker.txt"
 
@@ -103,7 +152,13 @@ def load_frames():
     if packages is None:
         print(f"note: {PACKAGES} missing, so github_repo will be null. "
               "Rerun ml/ingest/run_ingest.py to produce it.\n")
-    return pd.read_csv(CHANGES), pd.read_csv(USAGE), packages
+    # Version columns read as text: a file whose versions all look like
+    # numbers ("2.10") would otherwise come back as floats, "2.1", and
+    # match nothing in the table (score_everything reads features.csv the
+    # same way; load_releases too).
+    return (pd.read_csv(CHANGES, dtype={"version_from": str,
+                                        "version_to": str}),
+            pd.read_csv(USAGE), packages)
 
 
 def package_rows(changes: pd.DataFrame, packages) -> list[dict]:
@@ -144,6 +199,37 @@ def package_rows(changes: pd.DataFrame, packages) -> list[dict]:
 
     p = p[["name", "download_rank", "github_repo"]].astype(object)
     return p.where(pd.notna(p), None).to_dict("records")
+
+
+def not_a_change(changes: pd.DataFrame) -> pd.Series:
+    """True for the rows the database does not get (NOTES §33.5): F1's
+    version strings and F39's package-metadata strings, decided by
+    build.py's own two functions, the ones it drops rows by before any
+    feature is computed and scripts/db_model_check.py counts by. They read
+    the symbol, the kind and griffe's explanation: a version constant or a
+    copyright line whose VALUE changed describes the release and breaks
+    nobody; a removed one, or one changed to `unset`, is a change and
+    stays (§33.1, §32.1). One function, so the loader, the dry run, the
+    deletion step and db_prune's count cannot drift apart.
+    """
+    return (version_strings(changes) | metadata_strings(changes)).astype(bool)
+
+
+def written_counts(changes: pd.DataFrame) -> pd.Series:
+    """Rows the table will hold, per (package, version_to): the rows that
+    are changes, counted once per database key, since breakage_rows drops
+    the second of two rows with one key before the insert (griffe reports
+    pygments' CppLexer.tokens twice for one release, §8). This is what
+    release.n_changes is set to, so it equals the rows a load leaves in
+    the table, and what scripts/db_drop_versions.py recounts to."""
+    kept = changes[~not_a_change(changes)]
+    sub = (kept["sub_target"].map(lambda v: "" if v is None or v != v
+                                  else str(v))
+           if "sub_target" in kept.columns
+           else pd.Series("", index=kept.index))
+    key = ["package", "version_to", "symbol", "kind", "_sub"]
+    return (kept.assign(_sub=sub).drop_duplicates(key)
+            .groupby(["package", "version_to"]).size())
 
 
 def release_rows(changes: pd.DataFrame) -> list[dict]:
@@ -215,18 +301,33 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
     stamp one run's verdict onto another run's data. Those packages keep
     what the loader always did, and the report names them.
 
-    A release with no known status goes in without one: a new row takes
-    the database default and an existing row keeps what it has. Never
-    `analysed_clean` by guesswork, which would have the site say "safe to
-    upgrade" about a release nobody compared (NOTES §13.4).
+    A release with no known status goes in as `unknown` where the database
+    accepts the value (migration 007; write_all decides), and otherwise
+    without one. Never `analysed_clean` by guesswork, which would have the
+    site say "safe to upgrade" about a release nobody compared (NOTES
+    §13.4).
+
+    TWO COUNTS PER RELEASE (§33.5). The ingest's own, every row changes.csv
+    has, is what releases.csv's n_changes was written from, so it is the
+    one the agreement check compares. What is WRITTEN counts only the rows
+    that are changes (not_a_change), one per database key, as
+    breakage_rows sends them: a release whose rows were all its version
+    string was diffed and found nothing, so it is analysed_clean with 0
+    changes, not `analysed` with a count of rows the table will not hold.
+
+    This plan is the files' reading only. What the table already holds
+    has a say in write_all, through shield_verdicts (§33.9, rule B), and
+    db_prune reads its live set from this plan (live_releases, rule A).
     """
     base = {(r["package"], r["version"]): r for r in release_rows(changes)}
     counts = changes.groupby(["package", "version_to"]).size()
+    written = written_counts(changes)
     known, unknown = {}, {}
     for key, r in base.items():
         if key in counts.index:
-            known[key] = {**r, "analysis_status": "analysed",
-                          "n_changes": int(counts[key])}
+            n = int(written.get(key, 0))
+            known[key] = {**r, "analysis_status": "analysed" if n
+                          else "analysed_clean", "n_changes": n}
         else:
             unknown[key] = r
 
@@ -280,13 +381,151 @@ def release_plan(changes: pd.DataFrame, releases: pd.DataFrame | None,
     return list(known.values()), list(unknown.values()), report
 
 
-def describe_plan(known: list, unknown: list, report: dict) -> str:
+def planned_statuses(changes: pd.DataFrame, releases) -> dict:
+    """(package, version) -> the status today's files establish for it, as
+    the loader's plan reads them (release_plan's `known`: changes.csv's
+    version_to releases and, for the packages the two files agree on,
+    releases.csv's rows). A release not here is one today's files do not
+    name, or name only in a package the files disagree on, or name only as
+    the older side of a pair: the loader writes it no status of today's.
+    Varad's fixture package is left out whatever a file says (NOTES §8.1).
+    The reading db_prune's live set and the repair step's hold notes share
+    with the loader (§33.9)."""
+    known, _unknown, _report = release_plan(changes, releases)
+    return {(str(r["package"]), str(r["version"])): r["analysis_status"]
+            for r in known if r["package"] != FIXTURE_PACKAGE}
+
+
+def live_releases(changes: pd.DataFrame, releases) -> set:
+    """(package, version) for every release today's files say was
+    RE-ANALYSED: the pair (previous -> V) was run today, so a row of V in
+    the table that today did not produce is superseded (NOTES §33.9, rule
+    A; db_prune's live set).
+
+    That is every version_to of changes.csv, as it always was, and every
+    release releases.csv gives `analysed_clean` in a package the two files
+    agree on: the ingest writes analysed_clean only after diff_series ran
+    the pair and returned nothing (run_ingest.py, stage 4), which is
+    §13.2's definition of superseded. Nothing else: a version_from-only
+    release, one releases.csv calls no_baseline, analysis_failed,
+    no_source or yanked, or one in a package the files disagree on, was
+    not re-analysed today, and its rows are aged out (§8, §13.2). Read
+    from release_plan, so this is the same reading of the files the
+    loader writes from."""
+    return {key for key, status in planned_statuses(changes, releases).items()
+            if status in COMPARED}
+
+
+def table_state(conn) -> dict:
+    """What the release table holds now, before this load writes to it:
+    (package, version) -> (analysis_status, n_changes, rows in the
+    breakage table). One query, for rule B (NOTES §33.9)."""
+    from sqlalchemy import text
+
+    found = conn.execute(text("""
+        SELECT p.name, r.version, r.analysis_status, r.n_changes,
+               (SELECT count(*) FROM breakage b WHERE b.release_id = r.id)
+        FROM release r
+        JOIN package p ON p.id = r.package_id""")).fetchall()
+    return {(str(n), str(v)): (None if s is None else str(s),
+                               int(c or 0), int(k or 0))
+            for n, v, s, c, k in found}
+
+
+def shield_verdicts(known: list, state: dict) -> tuple[list, list, list]:
+    """RULE B (NOTES §33.9): a status that says today's run did not
+    compare a release (NOT_COMPARED) does not replace a verdict from a
+    run that did. Returns the release rows to write, the ones changed
+    here as (package, version, status in the file, status written,
+    n_changes written, rows in the table), and the analysed_clean
+    releases of today's files that still hold rows (rule A's, db_prune's
+    to remove), as (package, version, rows).
+
+    For a release the table holds as analysed_clean, the status and
+    count stay, rows or no rows (with rows it is §33.7's rule 3 hold, and
+    which of the two is stale cannot be read from the table, so it stays
+    listed). For any other release the table holds rows for, whatever its
+    status reads, `analysed` with n_changes equal to those rows: rows
+    under a release are the findings of a comparison and `analysed` is
+    what they mean; the status there is whatever a load since stamped
+    over it. Otherwise the file's status is written as before. `yanked`
+    and today's own verdicts (analysed, analysed_clean) are written as
+    they come: rows under today's analysed_clean are an earlier run's,
+    and rule A removes them. The rows counted are every row of the
+    release, so this assumes scripts/db_drop_versions.py has run (it
+    has, §33.6): on a table still holding version-string rows a release
+    with nothing else would read `analysed` until the deletion step
+    emptied it."""
+    out, shielded, clean_with_rows = [], [], []
+    for r in known:
+        key = (str(r["package"]), str(r["version"]))
+        status, count, rows = state.get(key, (None, 0, 0))
+        incoming = r["analysis_status"]
+        if incoming == "analysed_clean" and rows > 0:
+            clean_with_rows.append((key[0], key[1], rows))
+        if incoming in NOT_COMPARED and (status == "analysed_clean"
+                                         or rows > 0):
+            kept = (("analysed_clean", count) if status == "analysed_clean"
+                    else ("analysed", rows))
+            r = {**r, "analysis_status": kept[0], "n_changes": kept[1]}
+            shielded.append((key[0], key[1], incoming, kept[0], kept[1],
+                             rows))
+        out.append(r)
+    return out, shielded, clean_with_rows
+
+
+def describe_shield(shielded: list, clean_with_rows: list) -> str:
+    """The two rule B lines of the load, in words."""
+    lines = [f"  rule B (NOTES §33.9): releases today's releases.csv calls "
+             f"not compared that keep an\n  earlier run's verdict: "
+             f"{len(shielded):,}"]
+    for name, ver, incoming, kept, n, rows in shielded[:12]:
+        lines.append(f"    {name} {ver}: {incoming} in the file; written "
+                     f"{kept}, n_changes {n} ({rows} row(s) in the table)")
+    if len(shielded) > 12:
+        lines.append(f"    ... and {len(shielded) - 12:,} more")
+    lines.append(f"  analysed_clean today with rows still in the table: "
+                 f"{len(clean_with_rows):,}"
+                 + ("" if not clean_with_rows else
+                    "   (an earlier run's rows, db_prune's to remove; its "
+                    "dry run classes them, rule A)"))
+    for name, ver, rows in clean_with_rows[:12]:
+        lines.append(f"    {name} {ver}: {rows} row(s)")
+    if len(clean_with_rows) > 12:
+        lines.append(f"    ... and {len(clean_with_rows) - 12:,} more")
+    return "\n".join(lines)
+
+
+def describe_unknown(n: int, unknown_ok: bool | None) -> str:
+    """The line for the releases the files cannot establish (§33.5).
+    unknown_ok is whether this database accepts `unknown`, or None when
+    nothing has asked it yet (the dry run)."""
+    if unknown_ok is None:
+        return (f"  written as unknown, the files establish no status for "
+                f"them: {n:,}\n  (where the database accepts the value, "
+                "migration 007; else with no status)")
+    if unknown_ok:
+        return (f"  written as unknown, the files establish no status for "
+                f"them: {n:,}\n  (a row already there keeps a real status; "
+                "'analysed' with 0 changes, the old\n  default on a row "
+                "written without one, becomes unknown)")
+    return (f"  written with no status (existing rows keep theirs): {n:,}\n"
+            "  ** this database does not accept 'unknown': migration 007 is "
+            "not applied, so a\n  ** new row takes the column's default and "
+            "the old rows stay as they are.")
+
+
+def describe_plan(known: list, unknown: list, report: dict,
+                  unknown_ok: bool | None = None) -> str:
     """The release-status part of the load, in words, for both run modes."""
+    statuses = pd.Series([r["analysis_status"] for r in known]).value_counts()
     if not report["rows"] and not report["agree"]:
         return ("  release status: no data/releases.csv, so only releases "
-                "that changed something\n  get one (analysed, with their "
-                "count). Nothing else is claimed.")
-    statuses = pd.Series([r["analysis_status"] for r in known]).value_counts()
+                "that changed something\n  get one (analysed with their "
+                "count, or analysed_clean when every row was\n  its version "
+                "string). Nothing else is claimed.\n  statuses written: "
+                + "   ".join(f"{s} {n:,}" for s, n in statuses.items())
+                + "\n" + describe_unknown(len(unknown), unknown_ok))
     lines = [
         f"  release status: releases.csv has {report['rows']:,} rows. It "
         f"agrees with changes.csv on {len(report['agree']):,} package(s),",
@@ -295,8 +534,7 @@ def describe_plan(known: list, unknown: list, report: dict) -> str:
         "in it.",
         "  statuses written: " + "   ".join(
             f"{s} {n:,}" for s, n in statuses.items()),
-        f"  written with no status (existing rows keep theirs): "
-        f"{len(unknown):,}",
+        describe_unknown(len(unknown), unknown_ok),
     ]
     if report["skipped"]:
         lines.append("  skipped, the database has no value for them: " +
@@ -564,16 +802,22 @@ def check_schema(conn, allow_lossy: bool) -> dict[str, bool]:
                   "loads normally.")
 
     # WHICH STATUSES THIS DATABASE ACCEPTS, read from its own CHECK
-    # constraint rather than assumed. Migration 006 added no_baseline; a
-    # database without it would reject the whole load on the first such
-    # row, so the loader writes only what the constraint allows.
-    caps["statuses"] = set(DB_STATUSES)
+    # constraint rather than assumed. Migration 006 added no_baseline and
+    # 007 `unknown`; a database without them would reject the whole load on
+    # the first such row, so the loader writes only what the constraint
+    # allows, and `unknown` only when the constraint was read and names it.
+    caps["statuses"] = set(DB_STATUSES) - {UNKNOWN}
     found = conn.execute(text("""
         SELECT pg_get_constraintdef(oid) FROM pg_constraint
         WHERE conrelid = 'release'::regclass
           AND pg_get_constraintdef(oid) LIKE '%analysis_status%'""")).scalar()
     if found:
         caps["statuses"] = set(re.findall(r"'([a-z_]+)'", found))
+    if caps["analysis_status"] and UNKNOWN not in caps["statuses"]:
+        print("  note: this database does not accept the status 'unknown' — "
+              "migration 007 is\n        not applied, so releases the files "
+              "cannot establish are written with no\n        status, as "
+              "before (NOTES §33.5).")
     return caps
 
 
@@ -596,7 +840,10 @@ def executemany(conn, sql: str, rows: list[dict]) -> None:
 
 
 def write_all(conn, changes, usage, packages, caps, score_map,
-              releases=None) -> None:
+              releases=None, metrics=None) -> None:
+    """Every write, in one transaction. `metrics` is the model_run row the
+    scores go under: artifacts/metrics.json (METRICS) unless given, or
+    path length's, PATH_METRICS (NOTES §36.2)."""
     from sqlalchemy import text
 
     pkgs = package_rows(changes, packages)
@@ -614,6 +861,15 @@ def write_all(conn, changes, usage, packages, caps, score_map,
     known, unknown, plan = release_plan(changes, releases, caps["statuses"])
     known = [r for r in known if r["package"] in pkg_id]
     unknown = [r for r in unknown if r["package"] in pkg_id]
+    shielded, clean_with_rows = [], []
+    if caps["analysis_status"]:
+        # RULE B (NOTES §33.9): read what the table holds BEFORE writing
+        # to it, and let no not-compared status from releases.csv replace
+        # a verdict an earlier run made (analysed_clean, or rows in the
+        # table). Until 18 Oct every load wrote no_baseline over the
+        # verdict of the release the window's start had moved onto.
+        known, shielded, clean_with_rows = shield_verdicts(
+            known, table_state(conn))
     for r in known + unknown:
         r["package_id"] = pkg_id[r["package"]]
     upsert = """
@@ -624,13 +880,35 @@ def write_all(conn, changes, usage, packages, caps, score_map,
                                        release.released_at),
                 bump_type = COALESCE(EXCLUDED.bump_type, release.bump_type){s}
     """
+    with_status = dict(c=", analysis_status, n_changes",
+                       v=", :analysis_status, :n_changes")
+    unknown_ok = bool(caps["analysis_status"]) and UNKNOWN in caps["statuses"]
     if caps["analysis_status"]:
         executemany(conn, upsert.format(
-            c=", analysis_status, n_changes",
-            v=", :analysis_status, :n_changes",
+            **with_status,
             s=",\n                analysis_status = EXCLUDED.analysis_status,"
               "\n                n_changes = EXCLUDED.n_changes"), known)
         rest = unknown
+        if unknown_ok:
+            # THE RELEASES THE FILES CANNOT ESTABLISH ARE WRITTEN AS
+            # `unknown` (NOTES §33.5), not left to the column's default,
+            # which was `analysed` before migration 007 and made 232
+            # releases read "diffed, changes found, 0 changes". A row
+            # already in the table keeps a real status, since an earlier
+            # load's files established it and today's merely do not; it
+            # gives up only `analysed` with 0 changes, which was never a
+            # verdict but that old default on a row written without one.
+            for r in unknown:
+                r["analysis_status"], r["n_changes"] = UNKNOWN, 0
+            executemany(conn, upsert.format(
+                **with_status,
+                s=",\n                analysis_status = CASE"
+                  "\n                    WHEN release.analysis_status = "
+                  "'analysed' AND release.n_changes = 0"
+                  "\n                    THEN EXCLUDED.analysis_status"
+                  "\n                    ELSE release.analysis_status END"),
+                unknown)
+            rest = []
     else:
         rest = known + unknown
     executemany(conn, upsert.format(c="", v="", s=""), rest)
@@ -641,12 +919,41 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         SELECT r.id, p.name, r.version FROM release r
         JOIN package p ON p.id = r.package_id""")).fetchall()}
     print(f"  release       {len(known) + len(unknown):>7,}")
-    print(describe_plan(known, unknown, plan) if caps["analysis_status"] else
+    print(describe_plan(known, unknown, plan, unknown_ok)
+          if caps["analysis_status"] else
           "  release status: none written, this database has no "
           "analysis_status column\n  (migration 005).")
+    if caps["analysis_status"]:
+        print(describe_shield(shielded, clean_with_rows))
+        # What the old default left behind, after this load: a release
+        # reading `analysed` with 0 changes was written without a status
+        # before 007. With 007 every such row in today's files has just
+        # become unknown, so whatever is left is outside them, and each is
+        # looked at (§33.5), not guessed about.
+        stale = conn.execute(text("""
+            SELECT p.name, r.version FROM release r
+            JOIN package p ON p.id = r.package_id
+            WHERE r.analysis_status = 'analysed' AND r.n_changes = 0
+            ORDER BY p.name, r.version""")).fetchall()
+        print(f"  releases still reading 'analysed' with 0 changes: "
+              f"{len(stale):,}"
+              + ("" if not stale else
+                 (", none of them in today's files:" if unknown_ok else
+                  " (migration 007 is not applied, so they stay):")
+                 + "".join(f"\n    {n} {v}" for n, v in stale[:8])
+                 + (f"\n    ... and {len(stale) - 8:,} more"
+                    if len(stale) > 8 else "")))
 
     has_sub = caps["sub_target"]
-    rows, keys, dropped = breakage_rows(changes, rel_id)
+    # THE ROWS THAT ARE NOT CHANGES ARE NOT SENT (§33.5): build.py's two
+    # rules, through not_a_change(). Until 12 Oct every row went in, and
+    # the site listed a package's own version string as its first change.
+    kept = changes[~not_a_change(changes)]
+    print(f"  not written   {len(changes) - len(kept):>7,}   version strings "
+          f"and package metadata (F1, F39), by\n{'':25}build.py's rules"
+          + ("; a release left with nothing is analysed_clean"
+             if caps["analysis_status"] else ""))
+    rows, keys, dropped = breakage_rows(kept, rel_id)
     # Drop any optional column this database does not have, from both the
     # column list and the row dicts — a bound parameter with no column to
     # land in is as fatal as a column with no parameter.
@@ -716,7 +1023,7 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         return
 
     # RULE 2: model_run must exist before anything references its version.
-    run = json.loads(METRICS.read_text())
+    run = json.loads((metrics or METRICS).read_text())
 
     # THE FLOOR, AS A COLUMN. PR-AUC's floor is the positive rate, so a
     # stored pr_auc without it cannot be read by anyone who was not in the
@@ -804,8 +1111,10 @@ def write_all(conn, changes, usage, packages, caps, score_map,
         sys.exit(f"{run['version']} holds {before:,} scores, and this run has "
                  f"{len(preds):,}, under half. Nothing was written.\nA smaller "
                  "dataset under a name the site already serves would wipe the "
-                 "rest of its scores.\nGive it its own name: python "
-                 "ml/model/train.py --version <name>, then this again.")
+                 "rest of its scores.\nGive it its own name: for the model, "
+                 "python ml/model/train.py --version <name>; path\nlength's "
+                 "row is named by ml/model/ship.py (path_version). Then this "
+                 "again.")
     conn.execute(text("DELETE FROM prediction WHERE model_version = :v"),
                  {"v": run["version"]})
     executemany(conn, """
@@ -824,7 +1133,7 @@ def write_all(conn, changes, usage, packages, caps, score_map,
 
 # ----------------------------------------------------------------- scoring
 
-def score_everything() -> dict:
+def score_everything(ranker: str = "model") -> dict:
     """Score EVERY row, not just the test half.
 
     Training measures on held-out data; serving needs a score for every
@@ -832,12 +1141,15 @@ def score_everything() -> dict:
     are different things, and conflating them is how training scores end
     up being reported as results. The metrics in model_run come from the
     test half; these scores cover everything.
+
+    ranker "path" scores by path length alone (NOTES §36.2): minus
+    public_depth, nothing fitted, and a change with no depth scores as
+    the deepest in its own release (ship.path_scores). "model" scores by
+    artifacts/ranker.txt, the model.
     """
-    import lightgbm as lgb
-
-    from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC
-
-    for p in (FEATURES, RANKER, METRICS):
+    need = ((FEATURES, PATH_METRICS) if ranker == "path"
+            else (FEATURES, RANKER, METRICS))
+    for p in need:
         if not p.exists():
             sys.exit(f"{p} not found — run ml/model/train.py first.")
 
@@ -863,11 +1175,27 @@ def score_everything() -> dict:
         print(f"note: {HOLDOUT_FILE} not found, so releases from "
               f"{HOLDOUT_START.date()} on get no score this run. "
               "Rebuild with ml/features/build.py.")
-    for c in CATEGORICAL:
-        df[c] = df[c].astype("category")
-    raw = lgb.Booster(model_file=str(RANKER)).predict(
-        df[NUMERIC + BOOLEAN + CATEGORICAL])
-    df["score"] = raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
+    if ranker == "path":
+        # The site's lists are releases, so a change with no depth goes
+        # where the deepest of its own release goes (§36.1). public_depth
+        # is missing only where the module depth is (ship.py), so the
+        # count printed here should read 0.
+        none = int(pd.to_numeric(df["public_depth"], errors="coerce")
+                   .isna().sum())
+        df["score"] = path_scores(df, within=["package", "version_from",
+                                              "version_to"])
+        print(f"  path length alone: {len(df):,} rows scored, {none:,} with "
+              "no depth (scored as the deepest in their release)")
+    else:
+        import lightgbm as lgb
+
+        from ml.features.build import BOOLEAN, CATEGORICAL, NUMERIC
+
+        for c in CATEGORICAL:
+            df[c] = df[c].astype("category")
+        raw = lgb.Booster(model_file=str(RANKER)).predict(
+            df[NUMERIC + BOOLEAN + CATEGORICAL])
+        df["score"] = raw[:, 1] if getattr(raw, "ndim", 1) > 1 else raw
 
     return {(r.package, r.version_to, r.symbol, r.kind,
              _text(r, "sub_target")): r.score
@@ -889,7 +1217,8 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     # drops against a true figure of 1. A stub that stops being a stub is
     # worse than no stub.
     fake = {(r["package"], r["version"]): i for i, r in enumerate(rels, 1)}
-    rows, keys, dropped = breakage_rows(changes, fake)
+    kept = changes[~not_a_change(changes)]
+    rows, keys, dropped = breakage_rows(kept, fake)
 
     # Must go through package_rows(), not changes['package'].nunique().
     # Those two numbers are different and the difference is the point: the
@@ -911,6 +1240,22 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     print(f"  package       {analysed:>7,}")
     print(f"  release       {len(rels):>7,}")
     print(describe_plan(known, unknown, plan))
+    absent = sum(1 for r in known if r["analysis_status"] in NOT_COMPARED)
+    print(f"  rule B (NOTES §33.9): of the {absent:,} release(s) above that "
+          "releases.csv calls not compared\n  (no_baseline, analysis_failed, "
+          "no_source), one the table holds a verdict for keeps it:\n  "
+          "analysed_clean stays, rows in the table make it `analysed` with "
+          "their count. That\n  needs the table; the load names them.")
+    vs, meta = version_strings(changes), metadata_strings(changes)
+    diffed = set(zip(changes["package"], changes["version_to"]))
+    clean = sum(1 for r in known if r["analysis_status"] == "analysed_clean"
+                and (r["package"], r["version"]) in diffed)
+    n_vs, n_meta = int(vs.sum()), int((meta & ~vs).sum())
+    print(f"  not written   {len(changes) - len(kept):>7,}   {n_vs:,} "
+          f"version-string rows (F1) and {n_meta:,} package-metadata\n"
+          f"{'':25}rows (F39), by build.py's rules (NOTES §33.5); "
+          f"{clean:,} release(s) with\n{'':25}changes.csv rows are left with "
+          "nothing and written analysed_clean")
     print(f"  breakage      {len(rows):>7,}   (a row already in the database "
           "gets every column\n                         refreshed, "
           "inherited_by included)")
@@ -932,11 +1277,12 @@ def dry_run(changes, usage, packages, releases=None) -> None:
     else:
         print("no key collisions — every change survives the insert.")
 
-    priv = int(changes["is_private"].sum())
-    print(f"private rows kept: {priv:,} ({priv / len(changes):.1%}) — stored "
-          "and hidden, never dropped")
-    print(f"\nexample detail payload:\n  "
-          f"{json.dumps(detail_of(next(changes.itertuples(index=False))))}")
+    priv = int(kept["is_private"].sum())
+    print(f"private rows kept: {priv:,} ({priv / max(len(kept), 1):.1%}) — "
+          "stored and hidden, never dropped")
+    if len(kept):
+        print(f"\nexample detail payload:\n  "
+              f"{json.dumps(detail_of(next(kept.itertuples(index=False))))}")
 
 
 def main() -> None:
@@ -947,6 +1293,10 @@ def main() -> None:
                     help="also write model_run and prediction")
     ap.add_argument("--allow-missing-sub-target", action="store_true",
                     help="load a knowingly lossy copy before migration 004")
+    ap.add_argument("--ranker", choices=RANKERS, default=SHIPPED_RANKER,
+                    help="whose scores --scores loads: path, path length "
+                         "alone, the ranker that ships (NOTES §36.2); or "
+                         "model, the model, kept as the fallback")
     args = ap.parse_args()
 
     changes, usage, packages = load_frames()
@@ -967,11 +1317,15 @@ def main() -> None:
         dry_run(changes, usage, packages, releases)
         return
 
-    score_map = score_everything() if args.scores else None
+    score_map = score_everything(args.ranker) if args.scores else None
+    metrics = PATH_METRICS if args.ranker == "path" else METRICS
+    if args.scores:
+        print(f"scores: {args.ranker}, under the model_run row in {metrics}\n")
     engine = connect()
     with engine.begin() as conn:
         caps = check_schema(conn, args.allow_missing_sub_target)
-        write_all(conn, changes, usage, packages, caps, score_map, releases)
+        write_all(conn, changes, usage, packages, caps, score_map, releases,
+                  metrics=metrics)
     print("\ndone. Every write above is idempotent — rerun it any time.")
 
 
