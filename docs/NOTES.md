@@ -11281,3 +11281,164 @@ python scripts/eval_locate_check.py
 
 It writes data/eval/locate_check.csv, one row per call, which is not
 committed (data/ is ignored).
+
+## 40. ml/db-writer merged into main, and the CI workflow file (28 Nov)
+
+Two things done on 28 Nov. Neither is a measurement, and both change
+what someone who opens the repository sees first, so they are written
+down here with the commits and the counts. Times are IST.
+
+### 40.1 The merge
+
+Since 10 Oct the two halves of the project had been on two branches.
+The commit both share is c2fa88f (10 Oct). From there ml/db-writer had
+31 commits of its own, cb73049 of 11 Oct to a43276f of 28 Nov, and main
+had 47 that ml/db-writer did not have, 24 of them not merge commits,
+the last being a1c11c1 of 16 Oct. Until 28 Nov main therefore had no
+fixer and no evaluation harness, and its copy of this notebook ended in
+§35, at 6,022 lines.
+
+What each side had changed since c2fa88f:
+
+| side | files | where |
+|---|---|---|
+| main | 40 | api 15, db 5, tests 5, web 5, and one each of .env.example, .github, .gitignore, .python-version, Dockerfile, README.md, docs, notes, pytest.ini, requirements-dev.txt |
+| ml/db-writer | 74 | scripts 51, fixer 11, ml 8, docs 2, .gitignore, pyproject.toml |
+
+One file was changed on both sides, .gitignore, and it was the only
+conflict: each side had added lines at its end. ml/db-writer had added
+`logs/` and the exception that lets docs/eval/verdicts.csv be committed
+(§38.18); main had added `.vercel` and `Project Content/`. The lines of
+both sides were kept, the branch's first.
+
+It was done in two steps. main was merged into ml/db-writer first, so
+that the conflict was settled on the branch (f07a15c, 17:08), and pull
+request #37 then merged the branch into main (df9dd8f, 17:10). Against
+main as it stood before, df9dd8f changes 74 files, 48 added and 26
+modified, none deleted: 22,270 lines in and 439 out. Checked on the two
+trees: outside .gitignore, every file main's side had changed is in
+df9dd8f as it was on main, and every file the branch's side had changed
+is there as it was on the branch. The merge changed nothing under api/,
+db/, tests/, web/ or .github/, nor the Dockerfile or a requirements
+file.
+
+After it, on the deployed service, `/health` answered
+`{"ok": true, "model_version": "path-length"}` (17:14, in a browser).
+Whether Render had already rebuilt from the new commit at that minute
+was not looked at. One thing follows for the image, noted and not acted
+on: the Dockerfile ends with `COPY . .` and no .dockerignore is tracked,
+so an image built from main now also carries scripts/, ml/ and fixer/.
+The 48 added files are 29.5 MB, 28.6 MB of that the offline bundle
+(fixer/data/breakrank.sqlite). Nothing under api/, db/ or tests/ imports
+from the three folders. Whether to keep them out of the image is
+Varad's to decide.
+
+### 40.2 The CI workflow had not run a test since 14 Oct
+
+Seen the same hour: the run for the merge commit (run #54, df9dd8f on
+main) was red, and so was every run before it back to 14 Oct. The list
+of runs on the Actions page, read on 28 Nov, has 56 runs:
+
+| runs | what | result |
+|---|---|---|
+| #41 | main at ba97ec6, 14 Oct | passed (47 s); the last green before the gap |
+| #42 | pull request #32 as first opened (de116c4), 14 Oct | failed after 36 s: the job ran, and its last step, the tests, ended with exit code 1 |
+| #43 to #54 | seven pushes to branches and five merges into main (pull requests #32, #33, #34, #35 and #37), 14 Oct to 28 Nov | failed with no duration: no job started |
+| #55 | pull request #38, 28 Nov | passed (30 s) |
+| #56 | main at 97c56d9, 28 Nov | passed (34 s; the job `test` 31 s) |
+
+Run #42 is a failure of the ordinary kind, and the hand-run below
+shows what it was. de116c4 had moved CI from the live database to a
+throwaway one. On a throwaway database the fixture's model, v0-fake, is
+the only model there is, so it is the one served, and two tests are
+written to fail in exactly that case: one asserts that the served model
+is not v0-fake, the other that the fixture's release comes back in the
+usage order because nothing scores it. c43f0a7 (14 Oct, 23:44, "CI: add
+a stand-in live model so tests see production-like selection") is the
+cure for that: one more step, which inserts a newer model that scores
+nothing.
+
+The cause of the twelve that follow is the line that step was written
+on. Its command stood on the same line as `run:`, without quotes around
+the whole of it:
+
+```
+        run: psql "$DATABASE_URL" -c "INSERT INTO model_run (version, notes) VALUES ('ci-stand-in', 'CI only: newer than v0-fake, scores nothing')"
+```
+
+The value begins with `psql`, not with a quote, so YAML reads it as a
+plain value, and in a plain value a colon followed by a space starts a
+mapping. The colon after `CI only` is one. On run #43 GitHub says
+"Invalid workflow file: .github/workflows/ci.yml#L48" and "You have an
+error in your yaml syntax on line 48"; PyYAML, on the file as it was at
+df9dd8f, says "mapping values are not allowed here", line 48, column
+109, which is that colon. With the file unreadable its triggers cannot
+be read either, which is presumably why a failed run was recorded even
+for pushes to branches the workflow is not set to run on.
+
+What it meant: from 14 Oct to 28 Nov no commit had its tests run by CI,
+and pull requests #32 to #35 and #37 were merged into main under a red
+mark. Nothing was wrong with the suite. What was missing was the check,
+and nobody had looked at the mark.
+
+The correction is 3cff7cd (28 Nov, 17:21): the command is written as a
+block, which YAML does not read into.
+
+```
+        run: |
+          psql "$DATABASE_URL" -c "INSERT INTO model_run (version, notes) VALUES ('ci-stand-in', 'CI only: newer than v0-fake, scores nothing')"
+```
+
+Two lines in, one out, nothing else in the file touched. It went in as
+pull request #38 (merge 97c56d9, 17:24), and runs #55 and #56 are the
+first green ones since #41. ml/db-writer was then brought level with
+main by a fast-forward, f07a15c to 97c56d9, so the two branches are the
+same commit. The branch ci/valid-workflow still exists at 3cff7cd and
+can be deleted.
+
+**The job's steps, repeated by hand.** The log of a run can be read
+only when signed in, and the run's page shows no counts, so the seven
+steps of the job were repeated the same day on main at 97c56d9, exported
+to an empty directory: Python 3.12.3, requirements-dev.txt as pinned
+(fastapi 0.141.1, SQLAlchemy 2.0.52, psycopg 3.3.5, pytest 9.2.0), and
+an empty PostgreSQL 16.15 database in UTF8.
+
+| step | result |
+|---|---|
+| `python -m db.apply_migrations` | 001 to 007 applied, seven files |
+| `python -m db.seed` | "Seeded breakrank-fixture 2.2.0: 6 breakages, model_run v0-fake (pinned 2020)." |
+| the stand-in row, with psql | INSERT 0 1 |
+| `python -m pytest` | 49 collected: **48 passed, 1 skipped** |
+
+The one that skips is `test_real_data_ranks_by_model`
+(tests/test_breakages.py, line 155). It looks for a release with a
+score under the served model and skips with "no scored real data in the
+database" when there is none, and on the throwaway database there never
+is one: the fixture's scores belong to v0-fake, and the stand-in, being
+newer, is the model served. So in CI 48 of the 49 run, and the 49th is
+checked only against a database the pipeline has loaded.
+
+The same steps without the stand-in row, on a second empty database:
+**47 passed, 2 failed**, `test_fixture_model_never_wins_selection` and
+`test_unscored_falls_back_to_usage_ordering`. Both tests stood in the
+file at de116c4 as they do now, so this is what run #42 met; its own
+log was not read.
+
+*A sentence of §39 read against this.* §39 says that the full run of
+the suite on main on 27 Nov "passed all 49". The output of that run was
+not kept, and which database it had is not recorded. What is shown
+above is narrower and exact: 49 are collected; with the stand-in row on
+an empty database 48 pass and one skips; all 49 can pass only where the
+database holds real scores. §39's count of 49 tests in five files
+stands.
+
+One thing learnt in the repeat: the database has to be UTF8, as the
+postgres:16 image makes it. On a database in SQL_ASCII the first step
+stops with a TypeError inside SQLAlchemy, because the server's version
+comes back as bytes.
+
+Left as it is: the run's page carries a warning that
+actions/checkout@v4 and actions/setup-python@v5 target Node.js 20 and
+are being run on Node.js 24, and run #42's page a notice that
+ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026. Neither stops a
+run. The workflow is Varad's.
