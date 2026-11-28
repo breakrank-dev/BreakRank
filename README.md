@@ -2,15 +2,16 @@
 
 **Ranks Python dependency breaking changes by real-world impact.**
 
-Rule-based tools flag around 200 API changes per major release and about five
-of them actually matter to anyone. BreakRank ranks them, and checks its ranking
-against labels derived automatically by statically analysing 1,500 downstream
-packages — no hand labelling.
+A tool such as griffe can list every API change of a release: 134 for redis
+8.0.0 alone. Most of them concern names a given project never uses. BreakRank
+ranks them, and checks its ranking against labels derived automatically by
+statically analysing 1,500 downstream packages — no hand labelling.
 
 - **Website:** https://break-rank.vercel.app
 - **API docs:** https://breakrank.onrender.com/docs
 
-> 🚧 **In development.** Started 1 September 2026. The site is live; v1 demo target: 30 October 2026.
+> **Status, 28 November 2026.** Started 1 September 2026. The site and the API are live, and the
+> command-line fixer `breakrank-fix` 0.1.0 is in this repository. See Status and Limitations below.
 
 ---
 
@@ -26,21 +27,24 @@ version exists. It does not tell you whether that version will break you.
 
 [griffe](https://mkdocstrings.github.io/griffe/) goes further — give it two
 versions of a library and it lists every difference in the public API. That
-is accurate and genuinely useful. The problem is that it finds ~200
-differences per major release and roughly five of them matter. When a tool
-warns you two hundred times, you stop reading it.
+is accurate and genuinely useful. The problem is the volume: 134 differences
+for redis 8.0.0, and 2,296 for one release of sglang. In our data, 3.6% of the
+changes (605 of 16,580, in releases before 28 July 2026) touch a name that any
+scanned package uses. When a tool warns you two hundred times, you stop
+reading it.
 
 **BreakRank is the ranking layer on top.**
 
 ## How it works
 
 ```
-Track A: top 300 packages, every version
+Track A: the 500 most-downloaded packages, their newest releases
          → download sdists → griffe → candidate changes
 Track B: top 1,500 packages, latest version
          → AST scan → which symbols the ecosystem actually uses
 
 A + B → automatic labels → rankers compared on a time split → live API
+                                                            → offline fixer
 ```
 
 The label is computed, not hand-written: *does any downstream package in the
@@ -65,6 +69,20 @@ Releases from 28 July 2026 on are held back, unseen, for the final evaluation.
   release BreakRank holds, release by release.
 - A release with no changes says why: analysed and nothing found, can't
   confirm it was compared, no source code, and so on.
+- **In your own code, offline:** `breakrank-fix` reads a project, lists the
+  lines that use a changed name in the same order as the site, and prints the
+  mechanical fixes as a diff. Nothing is written unless you add `--apply`.
+
+```bash
+pipx install .                                 # from a clone of this repository; Python 3.11 or later
+breakrank-fix redis --to 8.0.0 --env .venv     # run inside the project; --env is its virtual environment
+breakrank-fix --list                           # the packages the tool holds
+```
+
+The tool carries its data with it (21,452 changes of 3,204 releases of 351
+packages) and needs no network. It rewrites two kinds of change, a moved
+parameter and a changed default, and only flags the rest. Read Limitations
+before trusting a rewrite.
 
 ## Status
 
@@ -74,9 +92,11 @@ Releases from 28 July 2026 on are held back, unseen, for the final evaluation.
 | 20,000 labelled rows + model beating baselines | 27 Sep 2026 | ☑ |
 | Public live URL | 11 Oct 2026 | ☑ |
 | `requirements.txt` → ranked risk list | 25 Oct 2026 | ☑ |
-| v1 demo ready | 30 Oct 2026 | ☐ |
+| v1 demo ready | 30 Oct 2026 | ☑ |
 
-Both cleared 5 Sep 2026; the learned model was later beaten by the path-length rule, which ships (NOTES §36).
+The first two were cleared on 5 Sep 2026; the learned model was later beaten by the path-length rule, which ships (NOTES §36).
+The demo checkpoint was met on 28 Oct 2026: `breakrank-fix` installed from a fresh clone and run with the network off (NOTES §38.17).
+The fixer was then evaluated on ten open-source projects, and the reading of 230 of its calls by hand ended on 26 Nov 2026 (NOTES §38.18).
 
 ## Running the pipeline locally (Vaibhav)
 
@@ -134,9 +154,6 @@ so only run it when you mean to.
 
 ## Limitations
 
-*(Filled in properly by week 11 — this section is not optional and not a
-weakness. Write it honestly.)*
-
 - The training label is a proxy: "a downstream package references this
   symbol", not "this change actually broke a build".
 - Usage counts come from import statements, so the scan sees module-level
@@ -144,6 +161,19 @@ weakness. Write it honestly.)*
   "not seen in the scan", not "nobody uses it".
 - Coverage is limited to packages that publish source distributions.
 - Python only, for now.
+- 149 of the 500 packages failed in the ingest for lack of memory, and the
+  usage scan covers the latest release of about 1,500 packages only.
+- The ranking figures are measured on releases before 28 July 2026. Later
+  releases are held back for one final evaluation, so no figure on unseen
+  data is given yet.
+- The path-length rule cannot order changes at the same depth, and it fails
+  for a name that is deep but widely used. The cryptography 47.0.0 preset on
+  the site shows such a case.
+- `breakrank-fix`: in all 230 calls that were read by hand, the tool had
+  named the right library function. Its rewriting is another matter: of 200
+  rewrites read, 6 were needed, 164 changed nothing, 19 changed the meaning
+  of the call and 11 would fail under the new version (NOTES §38.18). It only
+  prints a diff, and nothing is written without `--apply`.
 
 ## Credit where it is due
 
