@@ -46,3 +46,5 @@ logs/
 
 # The evaluation record is the one csv kept under docs (NOTES 38.18)
 !docs/eval/verdicts.csv
+.vercel
+Project Content/

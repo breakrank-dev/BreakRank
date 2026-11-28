@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres just for this run. Real data is never touched.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: breakrank
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/breakrank
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Create the schema
+        run: python -m db.apply_migrations
+
+      - name: Load the test package
+        run: python -m db.seed
+      
+      - name: Add a stand-in for the live model (CI only)
+        run: psql "$DATABASE_URL" -c "INSERT INTO model_run (version, notes) VALUES ('ci-stand-in', 'CI only: newer than v0-fake, scores nothing')"
+
+      - name: Run tests
+        run: python -m pytest

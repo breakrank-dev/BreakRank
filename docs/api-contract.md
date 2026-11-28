@@ -1,6 +1,6 @@
 # BreakRank API Contract — froze, 3rd sept
 
-Base URL: https://<render-service>.onrender.com
+Base URL: https://breakrank.onrender.com
 All timestamps: ISO 8601, UTC, e.g. "2024-01-19T00:00:00Z"
 All errors: {"error": {"code": "not_found", "message": "..."}}
 
@@ -22,15 +22,27 @@ All errors: {"error": {"code": "not_found", "message": "..."}}
 limit: default 20, max 100.
 Private symbols excluded unless ?include_private=true.
 ranking is "model" when scores exist, "usage_fallback" when they don't.
+total is the count BEFORE limit, so the UI can show "20 of 2296".
+analysis_status says why an empty list is empty.
+404 with code "not_tracked" if the release is unknown.
 {
-  "package": "pandas",
-  "version": "2.2.0",
-  "model_version": "v0-fake",
-  "ranking": "usage_fallback",
+  "package": "sglang",
+  "version": "0.5.10",
+  "model_version": "lambdarank-label_alias",
+  "ranking": "model",
+  "analysis_status": "analysed",
+  "total": 2296,
   "breakages": [
-    {"symbol": "pandas.DataFrame.append", "kind": "OBJECT_REMOVED",
-     "score": null, "explanation": "pandas.DataFrame.append was removed. 412 packages call it.",
-     "user_count": 412}
+    {
+      "symbol": "sglang.bench_serving.get_model",
+      "kind": "OBJECT_REMOVED",
+      "sub_target": "",
+      "score": -0.6179313,
+      "user_count": 0,
+      "inherited_by": 0,
+      "explanation": "sglang.bench_serving.get_model was removed.",
+      "is_private": false
+    }
   ]
 }
 
@@ -105,3 +117,21 @@ Input capped at 100 packages.
 12. package.github_repo is populated by the pipeline from PyPI's JSON
     info.project_urls. Best-effort, nullable, never fails ingest. Retained as
     the input to changelog/deprecation mining later.
+13. /stats and the About page never display pr_auc without positive_rate
+    beside it. PR-AUC's floor is the positive rate (0.0356), not 0.5 —
+    alone, 0.514 reads as poor; against its floor it is 14x.
+    precision@10 is never quoted without its n.
+    Preferred page copy: "Beats a popularity baseline at 6 of 7 evaluation
+    cut dates, by a median of 2.59x and never less than 2.32x."
+14. The usage index is built from import statements, so it observes
+    module-level symbols far better than methods called on instances.
+    Measured: 12.34% positive rate for module-level rows vs 1.12% for
+    methods, across 6,748 and 12,373 rows. This is a limit of observation,
+    not of impact — DataFrame.append being removed broke thousands of
+    codebases and our label barely registers it.
+
+    The ranker still works inside the blind spot (methods PR-AUC 0.3021
+    against a floor of 0.0120), so the model orders changes rather than
+    sorting symbol kinds. But the About page must name this limitation
+    rather than let an examiner find it, and no page may claim coverage
+    of method-level changes equal to module-level. 

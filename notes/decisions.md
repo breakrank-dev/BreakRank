@@ -8,6 +8,10 @@ The point of this file is that in April, when the report is being written and
 someone asks "why Render?" or "why isn't that an ORM?", the answer is here with
 a date on it instead of being guessed at four months late.
 
+Decisions that code comments and reviews refer to by number are numbered: 1 to
+8 are in the contract section below, 9 to 14 are in `docs/api-contract.md`, and
+15 onwards are at the end of this file.
+
 ---
 
 ## 1 September 2026 — Day 1
@@ -248,6 +252,11 @@ together loses the meaning: `unparseable`, `not_tracked`, `no_version_pinned`,
 Input is capped at 100 packages. A public endpoint with no input bound is a
 denial-of-service waiting to happen on a free tier.
 
+*Update (October 2026): the code allows 200 pinned packages and 20,000
+characters per request, and refuses anything bigger with a 422. Lines it can't
+use come back in `skipped` with a plain-English reason, and packages we don't
+track come back in `not_tracked`. See 17.*
+
 **6. `/analyze` is synchronous, and the model never runs in the API process.**
 
 Scores are precomputed nightly, so a 40-package request is one database query
@@ -275,6 +284,9 @@ naming the release that introduced each change.
 This affects the pipeline too: it needs a breakage row per consecutive release
 pair, not one row per package.
 
+*Superseded by 17 (October 2026): results are now grouped by package and then
+by release instead of merged into one list, so there is no `via_version`.*
+
 **8. The API serves the newest model, with an environment variable to pin an
 older one.**
 
@@ -286,13 +298,164 @@ The override costs five minutes and means that if a retrain goes badly the night
 before the demo, we set the variable on Render and roll back in thirty seconds
 without touching code or data.
 
+*Decisions 9 to 14 are in `docs/api-contract.md`. The numbering continues at
+15, at the end of this file.*
+
 ---
 
 ## Notes for later
 
 - Narrow CORS from `allow_origins=["*"]` to the Vercel domain before the demo.
+  *Done in October 2026: see 23.*
 - Add an Ignored Build Step on Vercel so ML branches don't trigger frontend
   builds and generate failure emails.
 - Measure the hot query with `EXPLAIN ANALYZE` in week 5, once there's real
   data, and record before/after index figures here.
 - Remove the seed data before the demo.
+
+### Rotated DATABASE_URL
+Connection string was pasted into a chat log while coordinating with the
+pipeline side. No evidence of misuse, but rotated the neondb_owner password
+and updated .env, the GitHub Actions secret, Render's environment, and the
+pipeline side. Secrets move over direct message only, never in a commit,
+issue, PR comment, or assistant conversation.
+
+## [date] — Migration 005 and the fixture rename
+
+### release.analysis_status is an enum, not a boolean
+A release can be absent from our data for five different reasons, and
+"analysed and found nothing" is a useful answer the schema could not express.
+Collapsing it to present/absent would make "safe to upgrade" indistinguishable
+from "we never looked".
+
+### n_changes denormalised onto release
+The homepage ranks releases by how much changed. A GROUP BY over 19,000
+breakage rows per request is wasteful when the value only changes when the
+pipeline runs.
+
+### positive_rate is nullable
+Older model runs genuinely do not have one. NOT NULL DEFAULT 0 would assert a
+floor of zero, which is false — same principle as returning null for an
+unscored breakage rather than 0.0.
+
+### Fixtures moved to a 'breakrank-fixture' package
+They were under 'pandas', which the real pipeline also loads. Worse, the
+fixture claims DataFrame.append was removed in 2.2.0 — it went in 2.0. On a
+site whose claim is "we tell you which release broke you", a fixture leaking
+into a demo must not make a false statement about a real package. Renamed
+rather than deleted so the migration-004 regression case survives.
+
+### Fixture model_run trained_at pinned to 2020-01-01
+Seeded with DEFAULT now(), the fixture became the newest model run on every
+re-seed and silently won ORDER BY trained_at DESC. Pinning makes it
+structurally incapable of being selected rather than relying on care.
+
+### Tests were passing vacuously because lifespan never ran
+TestClient only runs startup handlers inside a context manager. Created at
+module level, it does not — so config.MODEL_VERSION was None throughout the
+test run. Two tests passed for the wrong reason: a None model version matches
+no predictions, which makes the usage fallback look correct whether or not it
+is. Fixed with an autouse module-scoped fixture that enters the client's
+context, plus an explicit `is not None` assertion so it can't regress silently.
+
+## [date] — Day 3
+
+### API split into routes / services / schemas
+Routes handle HTTP, services hold logic, schemas define shape. The explanation
+renderer sits in services because it's business logic unrelated to HTTP, which
+means it can be tested without a request.
+
+### The API has its own engine, separate from db/ and ml/
+ml/db.py grew a pandas import during Day 2 and broke the migration runner. If
+the API imported from there, one pip install on the pipeline side would take
+the Render service down. Three engines, three consumers, no shared failure.
+
+### Connection pool bounded to 5 with 2 overflow
+Neon's free tier caps concurrent connections and Render may run multiple
+workers. An unbounded pool exhausts the database under any real load.
+
+### Model resolved by trained_at, never by version
+'v0-fake' sorts after the real model name as text, so ORDER BY version DESC
+would have served the fixture — 0.0 PR-AUC with six predictions behind it, and
+nothing would have looked like an error.
+
+### analysis_status is in the response, not just the schema
+An empty breakages list means at least six different things. Without the status
+the page would say "no breaking changes" when the truth is "we couldn't analyse
+this" — the exact dishonesty the contract exists to prevent.
+
+### Explanation rendering degrades rather than fails
+If detail lacks a key a template expects, or contains stray braces from a real
+griffe message, fall back to a generic sentence. A 500 over a dict key is the
+wrong failure for a user who wanted a ranked list.
+
+### Ordering has explicit tiebreakers
+score DESC NULLS LAST, then usage, then symbol_path, then sub_target. The last
+two exist only for determinism — an API returning the same rows in different
+orders across requests is very hard to debug.
+
+*Changed by 19 (12 Oct 2026): usage now breaks ties only between unscored rows;
+scored rows that tie are listed by name.*
+
+### Tests assert contract decisions, not implementation
+Each of the 17 tests maps to a numbered decision. If someone changes the code
+and breaks a promise we made, a test fails.
+
+### Known limitation: tests hit the real database
+They assume fixture rows exist and break if the table is truncated. Deliberate
+trade for real integration coverage now; the proper fix is a per-run test
+database.
+
+*Update (October 2026): CI now builds its own throwaway database (24). Local
+test runs still use whatever `DATABASE_URL` points at.*
+
+---
+
+## October 2026 — Decisions 15 to 25
+
+**15. The all-clear is decided by the pipeline (12 Oct 2026)**
+
+A version constant or package-metadata string whose value changed (`pkg.__version__`, `pkg.__author__`, ...) is not a change: build.py's rule (NOTES §33.1), which the model and the loader share, so no such row is written and the 2,336 already in the table were deleted on 15 Oct (§33.5). A removed one, or one changed to `unset`, stays a change; the bare names version, VERSION and version_tuple count only directly in a module. A release left with nothing reads analysed_clean.
+Why: one source of truth, and the API needs no list of names.
+
+**16. 'unknown' analysis status, and it is the default (migration 007)**
+
+A release the data can't establish as compared reads 'unknown', and the site says "We hold this release, but we can't confirm it was compared with the one before it."
+Why: "not measured" must not look like "measured, nothing found".
+
+**17. POST /analyze**
+
+Only exact pins (==) are used; every other line comes back in "skipped" with a reason. Results are grouped by package, then release, newest first, and each release is ranked on its own. Releases are never merged into one list, because a score only orders changes within one release. A change that appears in several releases is shown once, under the newest. At most 10 releases per package and 5 changes per release by default. Packages are listed by name.
+
+**18. A mistyped MODEL_VERSION stops the API at startup**
+
+Why: otherwise a typo on Render quietly ranks every list by usage, and nobody notices until a demo.
+
+**19. Path length ships; ties are listed by name (F45, 12 Oct 2026)**
+
+Each release's changes are ranked by shortest public import path, because neither learned ranker beat that rule. Changes at the same depth tie, and ties are listed by name, not by usage count, because a usage order was never measured and the label is built from those counts. Unscored rows keep the usage order. The site says "shortest import path first; changes at one depth are in no particular order." The model's scores stay in the table under their own model_run as the fallback.
+
+**20. The "none imported" note**
+
+The release endpoint returns n_imported. When a release has changes but none is imported by any scanned package, the site says so. Zero imports is not zero use: the scanner reads imports, not method calls.
+
+**21. Explanation wording**
+
+"N of the ~1,500 scanned packages import it", not "N packages in the ecosystem call it". The count covers the scan, not the whole ecosystem, and it measures imports, not calls.
+
+**22. One error shape**
+
+Every error is {"error": {"code", "message"}}; an untracked release is 404 with code not_tracked.
+
+**23. CORS limited to the site**
+
+Only https://break-rank.vercel.app and http://localhost:3000 may call the API from a browser. Vercel preview links are blocked, which is acceptable.
+
+**24. CI runs against a throwaway Postgres**
+
+CI builds an empty database from the migrations, loads the test package with db/seed.py, and adds a stand-in "live" model (newer than v0-fake, with no scores) so tests see the same model selection as production. The stand-in exists only in CI and must never be added to seed.py or Neon.
+Why: CI can't touch real data and no longer needs the database secret.
+
+**25. Deleting data: dry run, exact count, restore point (15 Oct 2026)**
+
+Every step that deletes or rewrites rows has a read-only dry run, and the two new steps (the version/metadata delete, the repair) apply only with --expect <the dry run's count> and refuse if the table changed in between; db_prune applies with --yes behind its 5% guard and recounts the releases it deletes from. A Neon branch is made just before as the restore point. Run on 15 Oct: 2,336 version/metadata rows deleted, 316 releases repaired, 72 rows pruned, 5 more releases repaired after the prune. The rules are NOTES §33.5 and §33.7, the runs §33.6 and §33.8.
